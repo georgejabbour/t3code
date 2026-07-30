@@ -37,11 +37,21 @@ export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectSc
 }
 
 /**
- * Reads the checked-in `t3.json` scripts rather than the imported project
- * scripts, so a repository that edits `t3.json` takes effect without re-importing.
+ * The flagged script from a checked-in `t3.json`, so a repository that edits
+ * that file takes effect without re-importing.
  */
 export function worktreeRemoveProjectScript(
   scripts: readonly T3ProjectFileScript[],
 ): T3ProjectFileScript | null {
+  return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
+}
+
+/**
+ * The same flag on the project's IMPORTED scripts — what the scripts dialog's
+ * toggle writes. Checked only after `t3.json`, so a repository that ships the
+ * flag keeps deciding for every clone while the toggle covers projects that
+ * check in nothing.
+ */
+export function worktreeRemoveScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
 }
