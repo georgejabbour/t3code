@@ -157,6 +157,17 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
 
+/**
+ * Run a project's `runOnWorktreeRemove` script WITHOUT removing the worktree.
+ * Archiving a thread retires it while leaving the checkout on disk, so the
+ * script has to be invoked on its own for the workspace's services to stop.
+ */
+export const VcsRunWorktreeArchiveScriptInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  path: TrimmedNonEmptyStringSchema,
+});
+export type VcsRunWorktreeArchiveScriptInput = typeof VcsRunWorktreeArchiveScriptInput.Type;
+
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,

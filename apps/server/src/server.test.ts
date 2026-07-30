@@ -5466,6 +5466,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("vcs.runWorktreeArchiveScript runs the script without removing the worktree", () =>
+    Effect.gen(function* () {
+      let removeCalls = 0;
+      let archiveCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            removeWorktree: () =>
+              Effect.sync(() => {
+                removeCalls += 1;
+              }),
+          },
+          worktreeArchiveScriptRunner: {
+            run: () =>
+              Effect.sync(() => {
+                archiveCalls += 1;
+                return { status: "ok" as const, scriptName: "Archive workspace" };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRunWorktreeArchiveScript]({ cwd: "/tmp/repo", path: "/tmp/wt" }),
+        ),
+      );
+
+      assert.equal(archiveCalls, 1);
+      // Archiving retires the thread; the checkout itself must survive.
+      assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("vcs.removeWorktree keeps the worktree when the archive script fails", () =>
     Effect.gen(function* () {
       const scriptError = new WorktreeArchiveScriptError({
