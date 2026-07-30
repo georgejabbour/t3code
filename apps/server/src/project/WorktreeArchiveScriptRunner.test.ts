@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "@effect/vitest";
+import { type OrchestrationProject, type ProjectScript, ProjectId } from "@t3tools/contracts";
 import type { T3ProjectFile } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 import * as WorktreeArchiveScriptRunner from "./WorktreeArchiveScriptRunner.ts";
@@ -27,16 +29,50 @@ const makeProjectFileLoaderLayer = (files: {
 const makeProcessRunnerLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"]) =>
   Layer.succeed(ProcessRunner.ProcessRunner, { run });
 
+/** The project's imported scripts — what the scripts dialog's toggle writes. */
+const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => {
+  const project = {
+    id: ProjectId.make("project-1"),
+    title: "Project",
+    workspaceRoot: WORKSPACE_ROOT,
+    defaultModelSelection: null,
+    scripts,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    deletedAt: null,
+  } satisfies OrchestrationProject;
+  return Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () => Effect.die("unused"),
+    getArchivedShellSnapshot: () => Effect.die("unused"),
+    getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
+    getCounts: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+      Effect.succeed(workspaceRoot === WORKSPACE_ROOT ? Option.some(project) : Option.none()),
+    getProjectShellById: () => Effect.succeed(Option.none()),
+    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+    getThreadCheckpointContext: () => Effect.die("unused"),
+    getFullThreadDiffContext: () => Effect.die("unused"),
+    getThreadShellById: () => Effect.die("unused"),
+    getThreadDetailById: () => Effect.die("unused"),
+    getThreadDetailSnapshot: () => Effect.die("unused"),
+    searchThreads: () => Effect.succeed({ matches: [] }),
+  });
+};
+
 const testLayer = (
   files: {
     readonly root?: T3ProjectFile | null;
     readonly worktree?: T3ProjectFile | null;
   },
   run: ProcessRunner.ProcessRunner["Service"]["run"],
+  importedScripts: readonly ProjectScript[] = [],
 ) =>
   WorktreeArchiveScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectFileLoaderLayer(files)),
     Layer.provideMerge(makeProcessRunnerLayer(run)),
+    Layer.provideMerge(makeProjectionSnapshotQueryLayer(importedScripts)),
   );
 
 const processOutput = (
@@ -50,6 +86,24 @@ const processOutput = (
   stderrTruncated: false,
   ...overrides,
 });
+
+const IMPORTED_SCRIPTS: readonly ProjectScript[] = [
+  {
+    id: "setup",
+    name: "Setup",
+    command: "./setup.sh",
+    icon: "configure",
+    runOnWorktreeCreate: true,
+  },
+  {
+    id: "archive",
+    name: "Imported archive",
+    command: "./imported.sh",
+    icon: "debug",
+    runOnWorktreeCreate: false,
+    runOnWorktreeRemove: true,
+  },
+];
 
 const archiveScript = {
   name: "Archive workspace",
@@ -163,26 +217,18 @@ describe("WorktreeArchiveScriptRunner", () => {
       expect(captured?.args.at(-1)).toBe("./worktree.sh");
     }).pipe(
       Effect.provide(
-        WorktreeArchiveScriptRunner.layer.pipe(
-          Layer.provideMerge(
-            makeProjectFileLoaderLayer({
-              root: {
-                scripts: [
-                  { name: "From the root", command: "./root.sh", runOnWorktreeRemove: true },
-                ],
-              },
-              worktree: {
-                scripts: [
-                  {
-                    name: "From the worktree",
-                    command: "./worktree.sh",
-                    runOnWorktreeRemove: true,
-                  },
-                ],
-              },
-            }),
-          ),
-          Layer.provideMerge(makeProcessRunnerLayer(run as never)),
+        testLayer(
+          {
+            root: {
+              scripts: [{ name: "From the root", command: "./root.sh", runOnWorktreeRemove: true }],
+            },
+            worktree: {
+              scripts: [
+                { name: "From the worktree", command: "./worktree.sh", runOnWorktreeRemove: true },
+              ],
+            },
+          },
+          run as never,
         ),
       ),
     );
@@ -206,18 +252,14 @@ describe("WorktreeArchiveScriptRunner", () => {
       expect(captured?.args.at(-1)).toBe("./root.sh");
     }).pipe(
       Effect.provide(
-        WorktreeArchiveScriptRunner.layer.pipe(
-          Layer.provideMerge(
-            makeProjectFileLoaderLayer({
-              root: {
-                scripts: [
-                  { name: "From the root", command: "./root.sh", runOnWorktreeRemove: true },
-                ],
-              },
-              worktree: null,
-            }),
-          ),
-          Layer.provideMerge(makeProcessRunnerLayer(run as never)),
+        testLayer(
+          {
+            root: {
+              scripts: [{ name: "From the root", command: "./root.sh", runOnWorktreeRemove: true }],
+            },
+            worktree: null,
+          },
+          run as never,
         ),
       ),
     );
@@ -235,28 +277,11 @@ describe("WorktreeArchiveScriptRunner", () => {
       const result = yield* runner.run({
         workspaceRoot: WORKSPACE_ROOT,
         worktreePath: WORKTREE_PATH,
-        importedScripts: [
-          {
-            id: "setup",
-            name: "Setup",
-            command: "./setup.sh",
-            icon: "configure",
-            runOnWorktreeCreate: true,
-          },
-          {
-            id: "archive",
-            name: "Imported archive",
-            command: "./imported.sh",
-            icon: "debug",
-            runOnWorktreeCreate: false,
-            runOnWorktreeRemove: true,
-          },
-        ],
       });
 
       expect(result).toEqual({ status: "ok", scriptName: "Imported archive" });
       expect(captured?.args.at(-1)).toBe("./imported.sh");
-    }).pipe(Effect.provide(testLayer({}, run as never)));
+    }).pipe(Effect.provide(testLayer({}, run as never, IMPORTED_SCRIPTS)));
   });
 
   it.effect("prefers a checked-in t3.json script over an imported one", () => {
@@ -271,16 +296,6 @@ describe("WorktreeArchiveScriptRunner", () => {
       const result = yield* runner.run({
         workspaceRoot: WORKSPACE_ROOT,
         worktreePath: WORKTREE_PATH,
-        importedScripts: [
-          {
-            id: "archive",
-            name: "Imported archive",
-            command: "./imported.sh",
-            icon: "debug",
-            runOnWorktreeCreate: false,
-            runOnWorktreeRemove: true,
-          },
-        ],
       });
 
       expect(result).toEqual({ status: "ok", scriptName: "Archive workspace" });
