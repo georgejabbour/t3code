@@ -11,25 +11,31 @@ import * as WorktreeArchiveScriptRunner from "./WorktreeArchiveScriptRunner.ts";
 const WORKSPACE_ROOT = "/repo/project";
 const WORKTREE_PATH = "/repo/worktrees/a";
 
-const makeProjectFileLoaderLayer = (projectFile: T3ProjectFile | null) =>
+/** Serves a different t3.json per path so precedence is observable. */
+const makeProjectFileLoaderLayer = (files: {
+  readonly root?: T3ProjectFile | null;
+  readonly worktree?: T3ProjectFile | null;
+}) =>
   Layer.succeed(T3ProjectFileLoader.T3ProjectFileLoader, {
-    load: (workspaceRoot) =>
-      Effect.succeed(
-        projectFile !== null && workspaceRoot === WORKSPACE_ROOT
-          ? Option.some(projectFile)
-          : Option.none(),
-      ),
+    load: (path) => {
+      const found =
+        path === WORKTREE_PATH ? files.worktree : path === WORKSPACE_ROOT ? files.root : null;
+      return Effect.succeed(found ? Option.some(found) : Option.none());
+    },
   });
 
 const makeProcessRunnerLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"]) =>
   Layer.succeed(ProcessRunner.ProcessRunner, { run });
 
 const testLayer = (
-  projectFile: T3ProjectFile | null,
+  files: {
+    readonly root?: T3ProjectFile | null;
+    readonly worktree?: T3ProjectFile | null;
+  },
   run: ProcessRunner.ProcessRunner["Service"]["run"],
 ) =>
   WorktreeArchiveScriptRunner.layer.pipe(
-    Layer.provideMerge(makeProjectFileLoaderLayer(projectFile)),
+    Layer.provideMerge(makeProjectFileLoaderLayer(files)),
     Layer.provideMerge(makeProcessRunnerLayer(run)),
   );
 
@@ -64,7 +70,7 @@ describe("WorktreeArchiveScriptRunner", () => {
 
       expect(result).toEqual({ status: "no-script" });
       expect(run).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer(null, run as never)));
+    }).pipe(Effect.provide(testLayer({}, run as never)));
   });
 
   it.effect("returns no-script when no script opts into runOnWorktreeRemove", () => {
@@ -82,7 +88,7 @@ describe("WorktreeArchiveScriptRunner", () => {
 
       expect(result).toEqual({ status: "no-script" });
       expect(run).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer(projectFile, run as never)));
+    }).pipe(Effect.provide(testLayer({ worktree: projectFile }, run as never)));
   });
 
   it.effect("runs the flagged script in the worktree with the project env", () => {
@@ -111,7 +117,7 @@ describe("WorktreeArchiveScriptRunner", () => {
       });
       // Teardown outlives ProcessRunner's 60s default, so the runner must override it.
       expect(captured?.timeout).toBe("10 minutes");
-    }).pipe(Effect.provide(testLayer(projectFile, run as never)));
+    }).pipe(Effect.provide(testLayer({ worktree: projectFile }, run as never)));
   });
 
   it.effect("fails with the script output when the script exits non-zero", () => {
@@ -136,7 +142,85 @@ describe("WorktreeArchiveScriptRunner", () => {
       expect(error.timedOut).toBe(false);
       expect(error.stderr).toBe("compose down failed");
       expect(error.worktreePath).toBe(WORKTREE_PATH);
-    }).pipe(Effect.provide(testLayer(projectFile, run as never)));
+    }).pipe(Effect.provide(testLayer({ worktree: projectFile }, run as never)));
+  });
+
+  it.effect("prefers the worktree's t3.json over the project root's", () => {
+    let captured: ProcessRunner.ProcessRunInput | undefined;
+    const run = vi.fn((input: ProcessRunner.ProcessRunInput) => {
+      captured = input;
+      return Effect.succeed(processOutput());
+    });
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+      });
+
+      expect(result).toEqual({ status: "ok", scriptName: "From the worktree" });
+      expect(captured?.args.at(-1)).toBe("./worktree.sh");
+    }).pipe(
+      Effect.provide(
+        WorktreeArchiveScriptRunner.layer.pipe(
+          Layer.provideMerge(
+            makeProjectFileLoaderLayer({
+              root: {
+                scripts: [
+                  { name: "From the root", command: "./root.sh", runOnWorktreeRemove: true },
+                ],
+              },
+              worktree: {
+                scripts: [
+                  {
+                    name: "From the worktree",
+                    command: "./worktree.sh",
+                    runOnWorktreeRemove: true,
+                  },
+                ],
+              },
+            }),
+          ),
+          Layer.provideMerge(makeProcessRunnerLayer(run as never)),
+        ),
+      ),
+    );
+  });
+
+  it.effect("falls back to the project root when the worktree has no t3.json", () => {
+    let captured: ProcessRunner.ProcessRunInput | undefined;
+    const run = vi.fn((input: ProcessRunner.ProcessRunInput) => {
+      captured = input;
+      return Effect.succeed(processOutput());
+    });
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+      });
+
+      expect(result).toEqual({ status: "ok", scriptName: "From the root" });
+      expect(captured?.args.at(-1)).toBe("./root.sh");
+    }).pipe(
+      Effect.provide(
+        WorktreeArchiveScriptRunner.layer.pipe(
+          Layer.provideMerge(
+            makeProjectFileLoaderLayer({
+              root: {
+                scripts: [
+                  { name: "From the root", command: "./root.sh", runOnWorktreeRemove: true },
+                ],
+              },
+              worktree: null,
+            }),
+          ),
+          Layer.provideMerge(makeProcessRunnerLayer(run as never)),
+        ),
+      ),
+    );
   });
 
   it.effect("fails and reports timedOut when the script exceeds its timeout", () => {
@@ -155,6 +239,6 @@ describe("WorktreeArchiveScriptRunner", () => {
       expect(error.timedOut).toBe(true);
       expect(error.exitCode).toBeUndefined();
       expect(error.stdout).toBe("stopping infra");
-    }).pipe(Effect.provide(testLayer(projectFile, run as never)));
+    }).pipe(Effect.provide(testLayer({ worktree: projectFile }, run as never)));
   });
 });
