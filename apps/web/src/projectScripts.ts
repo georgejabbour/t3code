@@ -13,6 +13,7 @@ export interface ProjectScriptInput {
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
+  readonly runOnWorktreeRemove: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
@@ -25,6 +26,9 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.runOnWorktreeCreate && input.waitForSetup ? { async: false } : {}),
+    // Omitted when false so a script that never opts in keeps the shape it had
+    // before the flag existed.
+    ...(input.runOnWorktreeRemove ? { runOnWorktreeRemove: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
