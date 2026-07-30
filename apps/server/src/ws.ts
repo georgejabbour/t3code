@@ -203,6 +203,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -1280,6 +1281,8 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const worktreeArchiveScriptRunner =
+        yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2827,7 +2830,18 @@ const layerWsRpc = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          Effect.flatMap(
+            input.skipArchiveScript === true
+              ? Effect.void
+              : worktreeArchiveScriptRunner.run({
+                  workspaceRoot: input.cwd,
+                  worktreePath: input.path,
+                }),
+            () =>
+              gitWorkflow
+                .removeWorktree(input)
+                .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>

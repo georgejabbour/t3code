@@ -105,6 +105,7 @@ import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -426,6 +427,11 @@ const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const layerWorktreeArchiveScriptRunner = WorktreeArchiveScriptRunner.layer.pipe(
+  Layer.provide(T3ProjectFileLoader.layer),
+  Layer.provide(ProcessRunner.layer),
+);
+
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   layerRelayClient,
   CloudManagedEndpointRuntime.layer.pipe(
@@ -614,7 +620,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layer))),
   Layer.provideMerge(layerWorkspace),
   Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
+  Layer.provideMerge(Layer.mergeAll(
+      NativeAppIconResolver.layer,
+      layerProjectFaviconResolver,
+      layerWorktreeArchiveScriptRunner,
+    )),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),

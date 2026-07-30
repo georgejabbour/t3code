@@ -15,6 +15,7 @@ import {
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
+  type WorktreeArchiveScriptError,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -60,6 +61,33 @@ import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+
+/** A native confirm dialog cannot scroll, so keep the tail — where a failure reports itself. */
+const MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS = 1500;
+
+function worktreeArchiveScriptError(result: {
+  readonly _tag: string;
+}): WorktreeArchiveScriptError | null {
+  if (result._tag !== "Failure") return null;
+  const error = squashAtomCommandFailure(result as never);
+  return error !== null &&
+    typeof error === "object" &&
+    "_tag" in error &&
+    (error as { _tag: unknown })._tag === "WorktreeArchiveScriptError"
+    ? (error as WorktreeArchiveScriptError)
+    : null;
+}
+
+function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
+  const output = [error.stderr, error.stdout]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  if (output === "") return "The script produced no output.";
+  return output.length > MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS
+    ? `…\n${output.slice(-MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS)}`
+    : output;
+}
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -577,7 +605,7 @@ export function useThreadActions() {
         return deleteResult;
       }
 
-      const removeResult = readEnvironmentScope(
+      let removeResult = readEnvironmentScope(
         threadRef.environmentId,
         AuthSourceControlWriteScope,
       )
@@ -597,6 +625,39 @@ export function useThreadActions() {
               }),
             ),
           );
+      // The project's runOnWorktreeRemove script failed, so the server left the
+      // worktree in place on purpose. Show what went wrong and let the user
+      // remove it regardless.
+      const archiveScriptError = worktreeArchiveScriptError(removeResult);
+      if (archiveScriptError && localApi) {
+        const overrideResult = await settlePromise(() =>
+          localApi.dialogs.confirm(
+            [
+              archiveScriptError.message,
+              "",
+              formatArchiveScriptOutput(archiveScriptError),
+              "",
+              "Remove the worktree anyway?",
+            ].join("\n"),
+          ),
+        );
+        if (overrideResult._tag === "Failure") {
+          return overrideResult;
+        }
+        if (!overrideResult.value) {
+          return removeResult;
+        }
+        removeResult = await removeWorktree({
+          environmentId: threadRef.environmentId,
+          input: {
+            cwd: threadProject.workspaceRoot,
+            path: orphanedWorktreePath,
+            force: true,
+            skipArchiveScript: true,
+          },
+        });
+      }
+
       const refreshResult =
         removeResult._tag === "Success"
           ? await refreshVcsStatus({
