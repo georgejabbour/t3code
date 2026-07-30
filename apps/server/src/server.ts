@@ -447,6 +447,10 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   // telemetry instead of waiting for the next status probe.
   Layer.provideMerge(ProviderUsageLimitsIngestionLive),
   Layer.provideMerge(ProviderLayerLive),
+  // Sits here, not beside the other project services: the runner reads the
+  // project's imported scripts, so it needs the orchestration projection that
+  // this layer provides.
+  Layer.provideMerge(WorktreeArchiveScriptRunnerLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
@@ -523,13 +527,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      NativeAppIconResolver.layer,
-      ProjectFaviconResolverLayerLive,
-      WorktreeArchiveScriptRunnerLayerLive,
-    ),
-  ),
+  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolverLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),

@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { type ProjectScript, WorktreeArchiveScriptError } from "@t3tools/contracts";
+import { WorktreeArchiveScriptError } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
 import {
   projectScriptRuntimeEnv,
@@ -22,6 +22,7 @@ import {
   worktreeRemoveScript,
 } from "@t3tools/shared/projectScripts";
 
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
@@ -37,12 +38,6 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 export interface WorktreeArchiveScriptRunnerInput {
   readonly workspaceRoot: string;
   readonly worktreePath: string;
-  /**
-   * The project's IMPORTED scripts, consulted only when no checked-in `t3.json`
-   * flags one. Passed in rather than queried so this service keeps a two-service
-   * dependency graph and stays trivial to construct in tests.
-   */
-  readonly importedScripts?: readonly ProjectScript[] | undefined;
 }
 
 export type WorktreeArchiveScriptRunnerResult =
@@ -61,6 +56,7 @@ export class WorktreeArchiveScriptRunner extends Context.Service<
 export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
   const run: WorktreeArchiveScriptRunner["Service"]["run"] = Effect.fn(
     "WorktreeArchiveScriptRunner.run",
@@ -80,7 +76,16 @@ export const make = Effect.gen(function* () {
       ? worktreeRemoveProjectScript(rootFile.value.scripts ?? [])
       : null;
 
-    const script = fileScript ?? worktreeRemoveScript(input.importedScripts ?? []);
+    const script =
+      fileScript ??
+      (yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(input.workspaceRoot).pipe(
+        Effect.map((project) =>
+          Option.isSome(project) ? worktreeRemoveScript(project.value.scripts) : null,
+        ),
+        // The checked-in file is the primary source and has already been read, so
+        // a projection read failure must not stop teardown resolving.
+        Effect.orElseSucceed(() => null),
+      ));
     if (!script) {
       return { status: "no-script" } as const;
     }
