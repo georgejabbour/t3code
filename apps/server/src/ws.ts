@@ -203,6 +203,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -1270,6 +1271,8 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const worktreeArchiveScriptRunner =
+        yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -3392,7 +3395,22 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            // The project's runOnWorktreeRemove script runs FIRST and must
+            // succeed: it tears down resources keyed to a path that is about to
+            // stop existing. A failure aborts the removal so the client can show
+            // why and offer to retry with skipArchiveScript.
+            Effect.flatMap(
+              input.skipArchiveScript === true
+                ? Effect.void
+                : worktreeArchiveScriptRunner.run({
+                    workspaceRoot: input.cwd,
+                    worktreePath: input.path,
+                  }),
+              () =>
+                gitWorkflow
+                  .removeWorktree(input)
+                  .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
