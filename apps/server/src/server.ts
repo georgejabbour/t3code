@@ -428,6 +428,7 @@ const layerAuth = EnvironmentAuth.layer.pipe(
 );
 
 const layerWorktreeArchiveScriptRunner = WorktreeArchiveScriptRunner.layer.pipe(
+  Layer.provide(RuntimeLayer.layerProjectService),
   Layer.provide(T3ProjectFileLoader.layer),
   Layer.provide(ProcessRunner.layer),
 );
