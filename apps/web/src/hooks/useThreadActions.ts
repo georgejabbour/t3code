@@ -62,7 +62,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
-/** A native confirm dialog cannot scroll, so keep the tail — where a failure reports itself. */
+/** A toast body is short, so keep the tail — where a failing script reports itself. */
 const MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS = 1500;
 
 function worktreeArchiveScriptError(result: {
@@ -343,7 +343,59 @@ export function useThreadActions() {
   const runWorktreeArchiveScript = useAtomCommand(vcsEnvironment.runWorktreeArchiveScript, {
     reportFailure: false,
   });
-  const localApiForArchive = readLocalApi();
+
+  /**
+   * Teardown can take minutes (compose down, volume and image pruning), so it
+   * never blocks the thread leaving the UI. The toast is the only signal the
+   * user gets that anything is happening — without it a slow archive looks
+   * exactly like a broken one.
+   */
+  const runArchiveScriptInBackground = useCallback(
+    (input: {
+      environmentId: EnvironmentId;
+      workspaceRoot: string;
+      worktreePath: string;
+      label: string;
+    }) => {
+      const toastId = toastManager.add(
+        stackedThreadToast({
+          type: "loading",
+          title: "Stopping workspace services",
+          description: `Running the archive script for ${input.label}.`,
+          timeout: 0,
+        }),
+      );
+      void (async () => {
+        const result = await runWorktreeArchiveScript({
+          environmentId: input.environmentId,
+          input: { cwd: input.workspaceRoot, path: input.worktreePath },
+        });
+        const error = worktreeArchiveScriptError(result);
+        if (error) {
+          toastManager.update(
+            toastId,
+            stackedThreadToast({
+              type: "error",
+              title: "Archive script failed",
+              description: `${error.message}\n\n${formatArchiveScriptOutput(error)}`,
+              timeout: 0,
+            }),
+          );
+          return;
+        }
+        toastManager.update(
+          toastId,
+          stackedThreadToast({
+            type: "success",
+            title: "Workspace services stopped",
+            description: input.label,
+            data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
+          }),
+        );
+      })();
+    },
+    [runWorktreeArchiveScript],
+  );
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -437,33 +489,6 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
-      if (archivingWorktreePath && archivingProject) {
-        const scriptResult = await runWorktreeArchiveScript({
-          environmentId: threadRef.environmentId,
-          input: {
-            cwd: archivingProject.workspaceRoot,
-            path: archivingWorktreePath,
-          },
-        });
-        const scriptError = worktreeArchiveScriptError(scriptResult);
-        if (scriptError && localApiForArchive) {
-          const overrideResult = await settlePromise(() =>
-            localApiForArchive.dialogs.confirm(
-              [
-                scriptError.message,
-                "",
-                formatArchiveScriptOutput(scriptError),
-                "",
-                "Archive the thread anyway?",
-              ].join("\n"),
-            ),
-          );
-          if (overrideResult._tag === "Failure") return overrideResult;
-          // Declining leaves the thread live so the cleanup can be retried.
-          if (!overrideResult.value) return scriptResult;
-        }
-      }
-
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -491,6 +516,17 @@ export function useThreadActions() {
         failureTitle: "Failed to undo archive",
       });
 
+      // AFTER the thread leaves the UI, never before: teardown is slow, and
+      // making the archive button wait on it reads as a dead button.
+      if (archivingWorktreePath && archivingProject) {
+        runArchiveScriptInBackground({
+          environmentId: threadRef.environmentId,
+          workspaceRoot: archivingProject.workspaceRoot,
+          worktreePath: archivingWorktreePath,
+          label: thread.title ?? formatWorktreePathForDisplay(archivingWorktreePath),
+        });
+      }
+
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
           handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -508,8 +544,7 @@ export function useThreadActions() {
       getCurrentRouteThreadRef,
       markThreadVisited,
       resolveThreadTarget,
-      localApiForArchive,
-      runWorktreeArchiveScript,
+      runArchiveScriptInBackground,
       unarchiveThread,
     ],
   );
@@ -655,7 +690,18 @@ export function useThreadActions() {
         return deleteResult;
       }
 
-      let removeResult = readEnvironmentScope(
+      // The thread is already gone from the UI by here, and the server runs the
+      // project's runOnWorktreeRemove script before it touches the worktree, so
+      // this can take minutes. Report progress rather than appearing to hang.
+      const removeToastId = toastManager.add(
+        stackedThreadToast({
+          type: "loading",
+          title: "Stopping workspace services",
+          description: `Running the archive script for ${displayWorktreePath ?? orphanedWorktreePath}.`,
+          timeout: 0,
+        }),
+      );
+      const removeResult = readEnvironmentScope(
         threadRef.environmentId,
         AuthSourceControlWriteScope,
       )
@@ -675,38 +721,55 @@ export function useThreadActions() {
               }),
             ),
           );
-      // The project's runOnWorktreeRemove script failed, so the server left the
-      // worktree in place on purpose. Show what went wrong and let the user
-      // remove it regardless.
+
+      // A failed script means the server deliberately left the worktree behind.
+      // Offer the override as a toast action instead of a modal: the thread has
+      // already disappeared, so a blocking dialog arrives out of nowhere.
       const archiveScriptError = worktreeArchiveScriptError(removeResult);
-      if (archiveScriptError && localApi) {
-        const overrideResult = await settlePromise(() =>
-          localApi.dialogs.confirm(
-            [
-              archiveScriptError.message,
-              "",
-              formatArchiveScriptOutput(archiveScriptError),
-              "",
-              "Remove the worktree anyway?",
-            ].join("\n"),
-          ),
+      if (archiveScriptError) {
+        toastManager.update(
+          removeToastId,
+          stackedThreadToast({
+            type: "error",
+            title: "Archive script failed — worktree kept",
+            description: `${archiveScriptError.message}\n\n${formatArchiveScriptOutput(archiveScriptError)}`,
+            timeout: 0,
+            actionProps: {
+              children: "Delete worktree anyway",
+              onClick: () => {
+                void (async () => {
+                  toastManager.close(removeToastId);
+                  const forced = await removeWorktree({
+                    environmentId: threadRef.environmentId,
+                    input: {
+                      cwd: threadProject.workspaceRoot,
+                      path: orphanedWorktreePath,
+                      force: true,
+                      skipArchiveScript: true,
+                    },
+                  });
+                  if (forced._tag === "Success") {
+                    await refreshVcsStatus({
+                      environmentId: threadRef.environmentId,
+                      input: { cwd: threadProject.workspaceRoot },
+                    });
+                  }
+                })();
+              },
+            },
+          }),
         );
-        if (overrideResult._tag === "Failure") {
-          return overrideResult;
-        }
-        if (!overrideResult.value) {
-          return removeResult;
-        }
-        removeResult = await removeWorktree({
-          environmentId: threadRef.environmentId,
-          input: {
-            cwd: threadProject.workspaceRoot,
-            path: orphanedWorktreePath,
-            force: true,
-            skipArchiveScript: true,
-          },
-        });
+        return removeResult;
       }
+      toastManager.update(
+        removeToastId,
+        stackedThreadToast({
+          type: "success",
+          title: "Workspace services stopped",
+          description: displayWorktreePath ?? orphanedWorktreePath,
+          data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
+        }),
+      );
 
       const refreshResult =
         removeResult._tag === "Success"
