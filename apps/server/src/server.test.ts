@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
+  WorktreeArchiveScriptError,
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
@@ -141,6 +142,7 @@ import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -460,6 +462,9 @@ const buildAppUnderTest = (options?: {
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
+    >;
+    worktreeArchiveScriptRunner?: Partial<
+      WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
@@ -812,11 +817,19 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
+      // Merged into one provide: this pipe is at TypeScript's 20-argument
+      // overload limit, and a 21st entry fails to typecheck.
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
-          runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          ...options?.layers?.projectSetupScriptRunner,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.projectSetupScriptRunner,
+          }),
+          Layer.mock(WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner)({
+            run: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.worktreeArchiveScriptRunner,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(TerminalManager.TerminalManager)({
@@ -6262,6 +6275,88 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(diffFileContents.oldContents, "before\n");
       assert.equal(diffFileContents.newContents, "after\n");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("vcs.removeWorktree keeps the worktree when the archive script fails", () =>
+    Effect.gen(function* () {
+      const scriptError = new WorktreeArchiveScriptError({
+        scriptName: "Archive workspace",
+        command: "bash .agents/workspaces/archive.sh",
+        worktreePath: "/tmp/wt",
+        exitCode: 1,
+        timedOut: false,
+        stdout: "",
+        stderr: "compose down failed",
+      });
+      let removeCalls = 0;
+      let archiveCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            removeWorktree: () =>
+              Effect.sync(() => {
+                removeCalls += 1;
+              }),
+          },
+          worktreeArchiveScriptRunner: {
+            run: () =>
+              Effect.sync(() => {
+                archiveCalls += 1;
+              }).pipe(Effect.andThen(Effect.fail(scriptError))),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRemoveWorktree]({ cwd: "/tmp/repo", path: "/tmp/wt" }),
+        ).pipe(Effect.result),
+      );
+
+      assertFailure(result, scriptError);
+      assert.equal(archiveCalls, 1);
+      // The worktree outliving a failed cleanup is the whole point of the hook.
+      assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("vcs.removeWorktree skips the archive script when the caller overrides it", () =>
+    Effect.gen(function* () {
+      let removeCalls = 0;
+      let archiveCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            removeWorktree: () =>
+              Effect.sync(() => {
+                removeCalls += 1;
+              }),
+          },
+          worktreeArchiveScriptRunner: {
+            run: () =>
+              Effect.sync(() => {
+                archiveCalls += 1;
+                return { status: "no-script" as const };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRemoveWorktree]({
+            cwd: "/tmp/repo",
+            path: "/tmp/wt",
+            skipArchiveScript: true,
+          }),
+        ),
+      );
+
+      assert.equal(archiveCalls, 0);
+      assert.equal(removeCalls, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
