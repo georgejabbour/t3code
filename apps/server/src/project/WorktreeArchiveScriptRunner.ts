@@ -14,11 +14,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { WorktreeArchiveScriptError } from "@t3tools/contracts";
+import { type ProjectScript, WorktreeArchiveScriptError } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
 import {
   projectScriptRuntimeEnv,
   worktreeRemoveProjectScript,
+  worktreeRemoveScript,
 } from "@t3tools/shared/projectScripts";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -36,6 +37,12 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 export interface WorktreeArchiveScriptRunnerInput {
   readonly workspaceRoot: string;
   readonly worktreePath: string;
+  /**
+   * The project's IMPORTED scripts, consulted only when no checked-in `t3.json`
+   * flags one. Passed in rather than queried so this service keeps a two-service
+   * dependency graph and stays trivial to construct in tests.
+   */
+  readonly importedScripts?: readonly ProjectScript[] | undefined;
 }
 
 export type WorktreeArchiveScriptRunnerResult =
@@ -58,25 +65,22 @@ export const make = Effect.gen(function* () {
   const run: WorktreeArchiveScriptRunner["Service"]["run"] = Effect.fn(
     "WorktreeArchiveScriptRunner.run",
   )(function* (input) {
-    // The WORKTREE's own t3.json wins: it is the checkout being torn down, and
-    // the script that runs is its file too (the command is relative and runs
-    // with cwd set to the worktree), so config and script stay on one branch.
-    // Fall back to the project root when the worktree has none — a branch made
-    // before t3.json existed still gets cleaned up.
-    const projectFile = yield* projectFileLoader
-      .load(input.worktreePath)
-      .pipe(
-        Effect.flatMap((found) =>
-          Option.isSome(found)
-            ? Effect.succeed(found)
-            : projectFileLoader.load(input.workspaceRoot),
-        ),
-      );
-    if (Option.isNone(projectFile)) {
-      return { status: "no-script" } as const;
-    }
+    // Resolution order, most specific first:
+    //   1. the WORKTREE's t3.json — it is the checkout being torn down, and the
+    //      script that runs is its file too (relative command, cwd = worktree),
+    //      so config and script stay on one branch;
+    //   2. the project root's t3.json — a branch made before the file existed;
+    //   3. the project's IMPORTED scripts, which the scripts dialog's toggle
+    //      writes, for projects that check nothing in.
+    const worktreeFile = yield* projectFileLoader.load(input.worktreePath);
+    const rootFile = Option.isSome(worktreeFile)
+      ? worktreeFile
+      : yield* projectFileLoader.load(input.workspaceRoot);
+    const fileScript = Option.isSome(rootFile)
+      ? worktreeRemoveProjectScript(rootFile.value.scripts ?? [])
+      : null;
 
-    const script = worktreeRemoveProjectScript(projectFile.value.scripts ?? []);
+    const script = fileScript ?? worktreeRemoveScript(input.importedScripts ?? []);
     if (!script) {
       return { status: "no-script" } as const;
     }
