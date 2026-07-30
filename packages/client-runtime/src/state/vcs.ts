@@ -318,6 +318,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    // No onSettled: the worktree and its refs are untouched, only its services.
+    runWorktreeArchiveScript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:run-worktree-archive-script",
+      tag: WS_METHODS.vcsRunWorktreeArchiveScript,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     createRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-ref",
       tag: WS_METHODS.vcsCreateRef,
