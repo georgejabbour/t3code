@@ -16,11 +16,7 @@ import * as Option from "effect/Option";
 
 import { WorktreeArchiveScriptError } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
-import {
-  projectScriptRuntimeEnv,
-  worktreeRemoveProjectScript,
-  worktreeRemoveScript,
-} from "@t3tools/shared/projectScripts";
+import { projectScriptRuntimeEnv, worktreeRemoveScript } from "@t3tools/shared/projectScripts";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -73,7 +69,7 @@ export const make = Effect.gen(function* () {
       ? worktreeFile
       : yield* projectFileLoader.load(input.workspaceRoot);
     const fileScript = Option.isSome(rootFile)
-      ? worktreeRemoveProjectScript(rootFile.value.scripts ?? [])
+      ? worktreeRemoveScript(rootFile.value.scripts ?? [])
       : null;
 
     const script =

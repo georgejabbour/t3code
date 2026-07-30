@@ -504,6 +504,23 @@ import {
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
 
+/**
+ * Both lifecycle flags are single-holder: the selectors take the FIRST match, so
+ * a second flagged script would win or lose by array order. Clearing the
+ * siblings keeps that resolution well-defined.
+ */
+function clearSiblingLifecycleFlags(
+  scripts: readonly ProjectScript[],
+  input: { readonly runOnWorktreeCreate: boolean; readonly runOnWorktreeRemove: boolean },
+): readonly ProjectScript[] {
+  return scripts.map((script) => {
+    const next = { ...script };
+    if (input.runOnWorktreeCreate) next.runOnWorktreeCreate = false;
+    if (input.runOnWorktreeRemove) next.runOnWorktreeRemove = false;
+    return next;
+  });
+}
+
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -4178,14 +4195,7 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectScripts.map((script) => script.id),
       );
       const nextScript = buildProjectScript(nextId, input);
-      const nextScripts = input.runOnWorktreeCreate
-        ? [
-            ...activeProjectScripts.map((script) =>
-              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-            ),
-            nextScript,
-          ]
-        : [...activeProjectScripts, nextScript];
+      const nextScripts = [...clearSiblingLifecycleFlags(activeProjectScripts, input), nextScript];
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -4212,12 +4222,8 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const updatedScript = buildProjectScript(existingScript.id, input);
-      const nextScripts = activeProjectScripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
+      const nextScripts = clearSiblingLifecycleFlags(activeProjectScripts, input).map((script) =>
+        script.id === scriptId ? updatedScript : script,
       );
 
       return persistProjectScripts({
