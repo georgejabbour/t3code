@@ -204,6 +204,10 @@ export function useThreadActions() {
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
   });
+  const runWorktreeArchiveScript = useAtomCommand(vcsEnvironment.runWorktreeArchiveScript, {
+    reportFailure: false,
+  });
+  const localApiForArchive = readLocalApi();
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -255,6 +259,50 @@ export function useThreadActions() {
         );
       }
 
+      // Archiving retires the thread but leaves the worktree on disk, so nothing
+      // else ever stops its services. Run the project's runOnWorktreeRemove
+      // script first — but only when no OTHER live thread still uses this
+      // worktree, and treat already-archived siblings as gone.
+      const liveThreads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        if (shell === null) return [];
+        return shell.id === threadRef.threadId || shell.archivedAt === null ? [shell] : [];
+      });
+      const archivingWorktreePath = getOrphanedWorktreePathForThread(
+        liveThreads,
+        threadRef.threadId,
+      );
+      const archivingProject = readProject({
+        environmentId: threadRef.environmentId,
+        projectId: thread.projectId,
+      });
+      if (archivingWorktreePath && archivingProject) {
+        const scriptResult = await runWorktreeArchiveScript({
+          environmentId: threadRef.environmentId,
+          input: {
+            cwd: archivingProject.workspaceRoot,
+            path: archivingWorktreePath,
+          },
+        });
+        const scriptError = worktreeArchiveScriptError(scriptResult);
+        if (scriptError && localApiForArchive) {
+          const overrideResult = await settlePromise(() =>
+            localApiForArchive.dialogs.confirm(
+              [
+                scriptError.message,
+                "",
+                formatArchiveScriptOutput(scriptError),
+                "",
+                "Archive the thread anyway?",
+              ].join("\n"),
+            ),
+          );
+          if (overrideResult._tag === "Failure") return overrideResult;
+          // Declining leaves the thread live so the cleanup can be retried.
+          if (!overrideResult.value) return scriptResult;
+        }
+      }
+
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -285,7 +333,14 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [
+      archiveThreadMutation,
+      getCurrentRouteThreadRef,
+      markThreadVisited,
+      resolveThreadTarget,
+      runWorktreeArchiveScript,
+      localApiForArchive,
+    ],
   );
 
   const unarchiveThread = useCallback(
