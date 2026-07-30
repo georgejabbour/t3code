@@ -1,4 +1,4 @@
-import type { ProjectScript } from "@t3tools/contracts";
+import type { ProjectScript, T3ProjectFileScript } from "@t3tools/contracts";
 
 interface ProjectScriptRuntimeEnvInput {
   project: {
@@ -34,4 +34,14 @@ export function projectScriptRuntimeEnv(
 
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
+}
+
+/**
+ * Reads the checked-in `t3.json` scripts rather than the imported project
+ * scripts, so a repository that edits `t3.json` takes effect without re-importing.
+ */
+export function worktreeRemoveProjectScript(
+  scripts: readonly T3ProjectFileScript[],
+): T3ProjectFileScript | null {
+  return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
 }
