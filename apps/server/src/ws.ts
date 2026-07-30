@@ -569,6 +569,15 @@ const makeWsRpcLayer = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const worktreeArchiveScriptRunner =
         yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+
+      // The scripts dialog's runOnWorktreeRemove toggle writes to the project's
+      // imported scripts, which the runner consults only when no checked-in
+      // t3.json flags one. Resolved here because ws already holds the query.
+      const importedScriptsFor = (workspaceRoot: string) =>
+        projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(workspaceRoot).pipe(
+          Effect.map((project) => (Option.isSome(project) ? project.value.scripts : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        );
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2525,9 +2534,16 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRunWorktreeArchiveScript]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRunWorktreeArchiveScript,
-            worktreeArchiveScriptRunner
-              .run({ workspaceRoot: input.cwd, worktreePath: input.path })
-              .pipe(Effect.asVoid),
+            importedScriptsFor(input.cwd).pipe(
+              Effect.flatMap((importedScripts) =>
+                worktreeArchiveScriptRunner.run({
+                  workspaceRoot: input.cwd,
+                  worktreePath: input.path,
+                  importedScripts,
+                }),
+              ),
+              Effect.asVoid,
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
@@ -2540,10 +2556,15 @@ const makeWsRpcLayer = (
             Effect.flatMap(
               input.skipArchiveScript === true
                 ? Effect.void
-                : worktreeArchiveScriptRunner.run({
-                    workspaceRoot: input.cwd,
-                    worktreePath: input.path,
-                  }),
+                : importedScriptsFor(input.cwd).pipe(
+                    Effect.flatMap((importedScripts) =>
+                      worktreeArchiveScriptRunner.run({
+                        workspaceRoot: input.cwd,
+                        worktreePath: input.path,
+                        importedScripts,
+                      }),
+                    ),
+                  ),
               () =>
                 gitWorkflow
                   .removeWorktree(input)
