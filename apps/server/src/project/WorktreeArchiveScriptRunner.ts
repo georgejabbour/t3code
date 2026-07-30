@@ -58,7 +58,20 @@ export const make = Effect.gen(function* () {
   const run: WorktreeArchiveScriptRunner["Service"]["run"] = Effect.fn(
     "WorktreeArchiveScriptRunner.run",
   )(function* (input) {
-    const projectFile = yield* projectFileLoader.load(input.workspaceRoot);
+    // The WORKTREE's own t3.json wins: it is the checkout being torn down, and
+    // the script that runs is its file too (the command is relative and runs
+    // with cwd set to the worktree), so config and script stay on one branch.
+    // Fall back to the project root when the worktree has none — a branch made
+    // before t3.json existed still gets cleaned up.
+    const projectFile = yield* projectFileLoader
+      .load(input.worktreePath)
+      .pipe(
+        Effect.flatMap((found) =>
+          Option.isSome(found)
+            ? Effect.succeed(found)
+            : projectFileLoader.load(input.workspaceRoot),
+        ),
+      );
     if (Option.isNone(projectFile)) {
       return { status: "no-script" } as const;
     }
