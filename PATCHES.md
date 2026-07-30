@@ -53,6 +53,12 @@ silently leaks one.
   `T3ProjectFileLoader`, not from imported project scripts, so editing that file
   takes effect on the next removal with no re-import. This is the one deliberate
   divergence from how `runOnWorktreeCreate` resolves its script.
+- The **worktree's** `t3.json` wins, falling back to the project root when the
+  worktree has none. The worktree is the checkout being torn down, and the script
+  that runs is its file too — the command is relative and executes with `cwd` set
+  to the worktree — so config and script stay on one branch. Reading only the
+  project root would let a branch ship an `archive.sh` its own `t3.json` entry
+  could not enable.
 - 10 minute timeout, not `ProcessRunner`'s 60 second default: compose teardown
   plus image and build-cache pruning routinely exceeds a minute.
 - Two `Layer` pipes sat at TypeScript's 20-argument overload limit, so the new
