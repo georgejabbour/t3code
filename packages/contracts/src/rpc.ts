@@ -56,6 +56,7 @@ import {
   GitPullRequestRefInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
+  VcsRunWorktreeArchiveScriptInput,
   WorktreeArchiveScriptError,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -259,6 +260,7 @@ export const WS_METHODS = {
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsRunWorktreeArchiveScript: "vcs.runWorktreeArchiveScript",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -875,6 +877,11 @@ export const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsRunWorktreeArchiveScriptRpc = Rpc.make(WS_METHODS.vcsRunWorktreeArchiveScript, {
+  payload: VcsRunWorktreeArchiveScriptInput,
+  error: Schema.Union([EnvironmentAuthorizationError, WorktreeArchiveScriptError]),
+});
+
 export const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
   payload: VcsRemoveWorktreeInput,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError, WorktreeArchiveScriptError]),
@@ -1229,6 +1236,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
+  WsVcsRunWorktreeArchiveScriptRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
