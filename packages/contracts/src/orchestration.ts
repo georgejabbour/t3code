@@ -263,6 +263,12 @@ export const ProjectScript = Schema.Struct({
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   /**
+   * When true, this script runs to completion before the worktree is archived
+   * or removed, and a non-zero exit cancels that. Optional rather than required
+   * so scripts persisted before the flag existed still decode.
+   */
+  runOnWorktreeRemove: Schema.optional(Schema.Boolean),
+  /**
    * URL to open in the in-app browser preview when this script runs (or
    * when the user explicitly requests a preview). Optional; only honored on
    * the desktop build.
