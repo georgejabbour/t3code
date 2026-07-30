@@ -48,6 +48,12 @@ export const T3ProjectFileScript = Schema.Struct({
         "Only for runOnWorktreeCreate scripts. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
     }),
   ),
+  runOnWorktreeRemove: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, the script runs to completion before a worktree is removed, and a non-zero exit cancels the removal.",
+    }),
+  ),
   previewUrl: Schema.optionalKey(
     trimmedNonEmpty({
       description:
