@@ -2829,6 +2829,10 @@ const layerWsRpc = (
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.vcsRunWorktreeArchiveScript]: (input) =>
+          worktreeArchiveScriptRunner
+            .run({ workspaceRoot: input.cwd, worktreePath: input.path })
+            .pipe(Effect.asVoid),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           Effect.flatMap(
             input.skipArchiveScript === true
