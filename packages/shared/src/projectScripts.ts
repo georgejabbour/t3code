@@ -1,4 +1,4 @@
-import type { ProjectScript, T3ProjectFileScript } from "@t3tools/contracts";
+import type { ProjectScript } from "@t3tools/contracts";
 
 interface ProjectScriptRuntimeEnvInput {
   project: {
@@ -37,21 +37,12 @@ export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectSc
 }
 
 /**
- * The flagged script from a checked-in `t3.json`, so a repository that edits
- * that file takes effect without re-importing.
+ * The flagged teardown script, from either script shape — a checked-in
+ * `t3.json` entry or one of the project's imported scripts. Callers decide the
+ * precedence between the two sources; this only answers "which one opted in".
  */
-export function worktreeRemoveProjectScript(
-  scripts: readonly T3ProjectFileScript[],
-): T3ProjectFileScript | null {
-  return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
-}
-
-/**
- * The same flag on the project's IMPORTED scripts — what the scripts dialog's
- * toggle writes. Checked only after `t3.json`, so a repository that ships the
- * flag keeps deciding for every clone while the toggle covers projects that
- * check in nothing.
- */
-export function worktreeRemoveScript(scripts: readonly ProjectScript[]): ProjectScript | null {
+export function worktreeRemoveScript<
+  T extends { readonly runOnWorktreeRemove?: boolean | undefined },
+>(scripts: readonly T[]): T | null {
   return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
 }

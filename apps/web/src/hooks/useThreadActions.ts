@@ -10,7 +10,7 @@ import {
   EnvironmentId,
   type ScopedThreadRef,
   ThreadId,
-  type WorktreeArchiveScriptError,
+  WorktreeArchiveScriptError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -48,17 +48,14 @@ import { useAtomCommand } from "../state/use-atom-command";
 /** A toast body is short, so keep the tail — where a failing script reports itself. */
 const MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS = 1500;
 
+const isWorktreeArchiveScriptError = Schema.is(WorktreeArchiveScriptError);
+
 function worktreeArchiveScriptError(result: {
   readonly _tag: string;
 }): WorktreeArchiveScriptError | null {
   if (result._tag !== "Failure") return null;
   const error = squashAtomCommandFailure(result as never);
-  return error !== null &&
-    typeof error === "object" &&
-    "_tag" in error &&
-    (error as { _tag: unknown })._tag === "WorktreeArchiveScriptError"
-    ? (error as WorktreeArchiveScriptError)
-    : null;
+  return isWorktreeArchiveScriptError(error) ? error : null;
 }
 
 function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
