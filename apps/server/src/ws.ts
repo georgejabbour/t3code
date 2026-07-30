@@ -2026,6 +2026,18 @@ const makeWsRpcLayer = (
             gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
+        // Archiving a thread retires it but leaves the worktree on disk, so the
+        // removal hook below never fires and the workspace's services run on
+        // forever. The client calls this before archiving the last thread on a
+        // worktree; a failure surfaces the same way, and archiving is abandoned.
+        [WS_METHODS.vcsRunWorktreeArchiveScript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsRunWorktreeArchiveScript,
+            worktreeArchiveScriptRunner
+              .run({ workspaceRoot: input.cwd, worktreePath: input.path })
+              .pipe(Effect.asVoid),
+            { "rpc.aggregate": "vcs" },
+          ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
