@@ -474,15 +474,6 @@ const makeWsRpcLayer = (
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeArchiveScriptRunner =
         yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
-
-      // The scripts dialog's runOnWorktreeRemove toggle writes to the project's
-      // imported scripts, which the runner consults only when no checked-in
-      // t3.json flags one. Resolved here because ws already holds the query.
-      const importedScriptsFor = (workspaceRoot: string) =>
-        projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(workspaceRoot).pipe(
-          Effect.map((project) => (Option.isSome(project) ? project.value.scripts : undefined)),
-          Effect.orElseSucceed(() => undefined),
-        );
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2153,21 +2144,15 @@ const makeWsRpcLayer = (
           ),
         // Archiving a thread retires it but leaves the worktree on disk, so the
         // removal hook below never fires and the workspace's services run on
-        // forever. The client calls this before archiving the last thread on a
-        // worktree; a failure surfaces the same way, and archiving is abandoned.
+        // forever. The client calls this after archiving the last thread on a
+        // worktree, and reports a failure in a toast — the thread stays archived
+        // either way, because the checkout it describes is untouched.
         [WS_METHODS.vcsRunWorktreeArchiveScript]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRunWorktreeArchiveScript,
-            importedScriptsFor(input.cwd).pipe(
-              Effect.flatMap((importedScripts) =>
-                worktreeArchiveScriptRunner.run({
-                  workspaceRoot: input.cwd,
-                  worktreePath: input.path,
-                  importedScripts,
-                }),
-              ),
-              Effect.asVoid,
-            ),
+            worktreeArchiveScriptRunner
+              .run({ workspaceRoot: input.cwd, worktreePath: input.path })
+              .pipe(Effect.asVoid),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
@@ -2180,15 +2165,10 @@ const makeWsRpcLayer = (
             Effect.flatMap(
               input.skipArchiveScript === true
                 ? Effect.void
-                : importedScriptsFor(input.cwd).pipe(
-                    Effect.flatMap((importedScripts) =>
-                      worktreeArchiveScriptRunner.run({
-                        workspaceRoot: input.cwd,
-                        worktreePath: input.path,
-                        importedScripts,
-                      }),
-                    ),
-                  ),
+                : worktreeArchiveScriptRunner.run({
+                    workspaceRoot: input.cwd,
+                    worktreePath: input.path,
+                  }),
               () =>
                 gitWorkflow
                   .removeWorktree(input)
