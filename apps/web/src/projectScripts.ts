@@ -14,7 +14,7 @@ export interface ProjectScriptInput {
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
   readonly runOnSettle: boolean;
-  readonly runOnWorktreeRemove: boolean;
+  readonly runOnWorktreeRemove: Exclude<ProjectScript["runOnWorktreeRemove"], undefined>;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
