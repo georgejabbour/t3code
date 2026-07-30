@@ -12,7 +12,7 @@ export interface ProjectScriptInput {
   readonly command: ProjectScript["command"];
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
-  readonly runOnWorktreeRemove: boolean;
+  readonly runOnWorktreeRemove: Exclude<ProjectScript["runOnWorktreeRemove"], undefined>;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
