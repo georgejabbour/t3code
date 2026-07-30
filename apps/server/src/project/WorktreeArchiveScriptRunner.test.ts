@@ -223,6 +223,71 @@ describe("WorktreeArchiveScriptRunner", () => {
     );
   });
 
+  it.effect("falls back to an imported script flagged by the dialog toggle", () => {
+    let captured: ProcessRunner.ProcessRunInput | undefined;
+    const run = vi.fn((input: ProcessRunner.ProcessRunInput) => {
+      captured = input;
+      return Effect.succeed(processOutput());
+    });
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+        importedScripts: [
+          {
+            id: "setup",
+            name: "Setup",
+            command: "./setup.sh",
+            icon: "configure",
+            runOnWorktreeCreate: true,
+          },
+          {
+            id: "archive",
+            name: "Imported archive",
+            command: "./imported.sh",
+            icon: "debug",
+            runOnWorktreeCreate: false,
+            runOnWorktreeRemove: true,
+          },
+        ],
+      });
+
+      expect(result).toEqual({ status: "ok", scriptName: "Imported archive" });
+      expect(captured?.args.at(-1)).toBe("./imported.sh");
+    }).pipe(Effect.provide(testLayer({}, run as never)));
+  });
+
+  it.effect("prefers a checked-in t3.json script over an imported one", () => {
+    let captured: ProcessRunner.ProcessRunInput | undefined;
+    const run = vi.fn((input: ProcessRunner.ProcessRunInput) => {
+      captured = input;
+      return Effect.succeed(processOutput());
+    });
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+        importedScripts: [
+          {
+            id: "archive",
+            name: "Imported archive",
+            command: "./imported.sh",
+            icon: "debug",
+            runOnWorktreeCreate: false,
+            runOnWorktreeRemove: true,
+          },
+        ],
+      });
+
+      expect(result).toEqual({ status: "ok", scriptName: "Archive workspace" });
+      expect(captured?.args.at(-1)).toBe(archiveScript.command);
+    }).pipe(Effect.provide(testLayer({ worktree: { scripts: [archiveScript] } }, run as never)));
+  });
+
   it.effect("fails and reports timedOut when the script exceeds its timeout", () => {
     const run = vi.fn(() =>
       Effect.succeed(processOutput({ code: null, timedOut: true, stdout: "stopping infra" })),
