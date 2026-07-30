@@ -162,6 +162,8 @@ export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
+  /** Skip the project's `runOnWorktreeRemove` script. Set when the user chooses to remove the worktree after that script failed. */
+  skipArchiveScript: Schema.optional(Schema.Boolean),
 });
 export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
@@ -352,6 +354,29 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 }) {
   override get message(): string {
     return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+  }
+}
+
+/**
+ * A project's `runOnWorktreeRemove` script did not succeed, so the worktree was
+ * left in place. Carries the script output so the client can show why before
+ * offering to remove the worktree anyway.
+ */
+export class WorktreeArchiveScriptError extends Schema.TaggedErrorClass<WorktreeArchiveScriptError>()(
+  "WorktreeArchiveScriptError",
+  {
+    scriptName: Schema.String,
+    command: Schema.String,
+    worktreePath: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    timedOut: Schema.Boolean,
+    stdout: Schema.String,
+    stderr: Schema.String,
+  },
+) {
+  override get message(): string {
+    const reason = this.timedOut ? "timed out" : `exited with ${this.exitCode ?? "no status"}`;
+    return `Worktree archive script '${this.scriptName}' ${reason} in ${this.worktreePath}.`;
   }
 }
 
