@@ -414,6 +414,10 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
+  // Sits here, not beside the other project services: the runner reads the
+  // project's imported scripts, so it needs the orchestration projection that
+  // this layer provides.
+  Layer.provideMerge(WorktreeArchiveScriptRunnerLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
@@ -486,15 +490,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(WorkspaceLayerLive),
-  // Merged rather than piped separately: this pipe is at TypeScript's 20-argument
-  // overload limit, and a 21st entry fails to typecheck.
-  Layer.provideMerge(
-    Layer.mergeAll(
-      NativeAppIconResolver.layer,
-      ProjectFaviconResolverLayerLive,
-      WorktreeArchiveScriptRunnerLayerLive,
-    ),
-  ),
+  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
