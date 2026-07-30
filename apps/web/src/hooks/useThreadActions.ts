@@ -16,7 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef } from "react";
+import { type ComponentPropsWithoutRef, useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -70,6 +70,39 @@ function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
   return output.length > MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS
     ? `…\n${output.slice(-MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS)}`
     : output;
+}
+
+/** One shape for the teardown toast, so archive and delete cannot drift apart. */
+function teardownStartedToast(label: string) {
+  return stackedThreadToast({
+    type: "loading",
+    title: "Stopping workspace services",
+    description: `Running the archive script for ${label}.`,
+    timeout: 0,
+  });
+}
+
+function teardownSucceededToast(label: string) {
+  return stackedThreadToast({
+    type: "success",
+    title: "Workspace services stopped",
+    description: label,
+    data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
+  });
+}
+
+function teardownFailedToast(
+  error: WorktreeArchiveScriptError,
+  title: string,
+  actionProps?: ComponentPropsWithoutRef<"button">,
+) {
+  return stackedThreadToast({
+    type: "error",
+    title,
+    description: `${error.message}\n\n${formatArchiveScriptOutput(error)}`,
+    timeout: 0,
+    ...(actionProps ? { actionProps } : {}),
+  });
 }
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
@@ -241,14 +274,7 @@ export function useThreadActions() {
       worktreePath: string;
       label: string;
     }) => {
-      const toastId = toastManager.add(
-        stackedThreadToast({
-          type: "loading",
-          title: "Stopping workspace services",
-          description: `Running the archive script for ${input.label}.`,
-          timeout: 0,
-        }),
-      );
+      const toastId = toastManager.add(teardownStartedToast(input.label));
       void (async () => {
         const result = await runWorktreeArchiveScript({
           environmentId: input.environmentId,
@@ -256,26 +282,10 @@ export function useThreadActions() {
         });
         const error = worktreeArchiveScriptError(result);
         if (error) {
-          toastManager.update(
-            toastId,
-            stackedThreadToast({
-              type: "error",
-              title: "Archive script failed",
-              description: `${error.message}\n\n${formatArchiveScriptOutput(error)}`,
-              timeout: 0,
-            }),
-          );
+          toastManager.update(toastId, teardownFailedToast(error, "Archive script failed"));
           return;
         }
-        toastManager.update(
-          toastId,
-          stackedThreadToast({
-            type: "success",
-            title: "Workspace services stopped",
-            description: input.label,
-            data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
-          }),
-        );
+        toastManager.update(toastId, teardownSucceededToast(input.label));
       })();
     },
     [runWorktreeArchiveScript],
@@ -559,14 +569,8 @@ export function useThreadActions() {
       // The thread is already gone from the UI by here, and the server runs the
       // project's runOnWorktreeRemove script before it touches the worktree, so
       // this can take minutes. Report progress rather than appearing to hang.
-      const removeToastId = toastManager.add(
-        stackedThreadToast({
-          type: "loading",
-          title: "Stopping workspace services",
-          description: `Running the archive script for ${displayWorktreePath ?? orphanedWorktreePath}.`,
-          timeout: 0,
-        }),
-      );
+      const removeLabel = displayWorktreePath ?? orphanedWorktreePath;
+      const removeToastId = toastManager.add(teardownStartedToast(removeLabel));
       const removeResult = await removeWorktree({
         environmentId: threadRef.environmentId,
         input: {
@@ -583,47 +587,33 @@ export function useThreadActions() {
       if (archiveScriptError) {
         toastManager.update(
           removeToastId,
-          stackedThreadToast({
-            type: "error",
-            title: "Archive script failed — worktree kept",
-            description: `${archiveScriptError.message}\n\n${formatArchiveScriptOutput(archiveScriptError)}`,
-            timeout: 0,
-            actionProps: {
-              children: "Delete worktree anyway",
-              onClick: () => {
-                void (async () => {
-                  toastManager.close(removeToastId);
-                  const forced = await removeWorktree({
+          teardownFailedToast(archiveScriptError, "Archive script failed — worktree kept", {
+            children: "Delete worktree anyway",
+            onClick: () => {
+              void (async () => {
+                toastManager.close(removeToastId);
+                const forced = await removeWorktree({
+                  environmentId: threadRef.environmentId,
+                  input: {
+                    cwd: threadProject.workspaceRoot,
+                    path: orphanedWorktreePath,
+                    force: true,
+                    skipArchiveScript: true,
+                  },
+                });
+                if (forced._tag === "Success") {
+                  await refreshVcsStatus({
                     environmentId: threadRef.environmentId,
-                    input: {
-                      cwd: threadProject.workspaceRoot,
-                      path: orphanedWorktreePath,
-                      force: true,
-                      skipArchiveScript: true,
-                    },
+                    input: { cwd: threadProject.workspaceRoot },
                   });
-                  if (forced._tag === "Success") {
-                    await refreshVcsStatus({
-                      environmentId: threadRef.environmentId,
-                      input: { cwd: threadProject.workspaceRoot },
-                    });
-                  }
-                })();
-              },
+                }
+              })();
             },
           }),
         );
         return removeResult;
       }
-      toastManager.update(
-        removeToastId,
-        stackedThreadToast({
-          type: "success",
-          title: "Workspace services stopped",
-          description: displayWorktreePath ?? orphanedWorktreePath,
-          data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
-        }),
-      );
+      toastManager.update(removeToastId, teardownSucceededToast(removeLabel));
 
       const refreshResult =
         removeResult._tag === "Success"
