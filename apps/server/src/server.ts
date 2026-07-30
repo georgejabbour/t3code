@@ -431,6 +431,7 @@ const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
 );
 
 const WorktreeArchiveScriptRunnerLayerLive = WorktreeArchiveScriptRunner.layer.pipe(
+  Layer.provide(ProjectServiceLayerLive),
   Layer.provide(T3ProjectFileLoader.layer),
   Layer.provide(ProcessRunner.layer),
 );
