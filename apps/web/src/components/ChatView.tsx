@@ -352,6 +352,23 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
+/**
+ * Both lifecycle flags are single-holder: the selectors take the FIRST match, so
+ * a second flagged script would win or lose by array order. Clearing the
+ * siblings keeps that resolution well-defined.
+ */
+function clearSiblingLifecycleFlags(
+  scripts: readonly ProjectScript[],
+  input: { readonly runOnWorktreeCreate: boolean; readonly runOnWorktreeRemove: boolean },
+): readonly ProjectScript[] {
+  return scripts.map((script) => {
+    const next = { ...script };
+    if (input.runOnWorktreeCreate) next.runOnWorktreeCreate = false;
+    if (input.runOnWorktreeRemove) next.runOnWorktreeRemove = false;
+    return next;
+  });
+}
+
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
@@ -3152,14 +3169,7 @@ function ChatViewContent(props: ChatViewProps) {
         activeProject.scripts.map((script) => script.id),
       );
       const nextScript = buildProjectScript(nextId, input);
-      const nextScripts = input.runOnWorktreeCreate
-        ? [
-            ...activeProject.scripts.map((script) =>
-              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-            ),
-            nextScript,
-          ]
-        : [...activeProject.scripts, nextScript];
+      const nextScripts = [...clearSiblingLifecycleFlags(activeProject.scripts, input), nextScript];
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -3186,12 +3196,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const updatedScript = buildProjectScript(existingScript.id, input);
-      const nextScripts = activeProject.scripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
+      const nextScripts = clearSiblingLifecycleFlags(activeProject.scripts, input).map((script) =>
+        script.id === scriptId ? updatedScript : script,
       );
 
       return persistProjectScripts({
