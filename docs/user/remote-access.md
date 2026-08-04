@@ -32,6 +32,22 @@ That gives you:
 - transport security at the network layer
 - less exposure than opening the server to the public internet
 
+### Prefer an HTTPS Address in the Browser
+
+A browser gives its newest features only to a "secure context". An address counts as secure when it
+starts with `https://`, or when it is `http://localhost`. A plain `http://` address on a LAN IP or a
+MagicDNS name does not count.
+
+On a plain HTTP address the browser removes the modern clipboard interface, so T3 Code falls back to
+the older copy command. Copy still works, in the terminal and everywhere else. Other browser
+features may still be missing, so an HTTPS address is the better setup.
+
+To get HTTPS on a tailnet, use either of the two Tailscale Serve routes already described below:
+
+- the CLI flag, in [Option 2](#option-2-headless-server-cli): `npx t3 serve --tailscale-serve`
+- the desktop switch, in [Tailscale Endpoints](#tailscale-endpoints): **Enable Tailscale HTTPS** in
+  **Settings** → **Connections**
+
 ## Enabling Network Access
 
 There are three ways to reach your server from another device: expose the desktop app's backend,
