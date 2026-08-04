@@ -78,6 +78,12 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Clipboard access
+
+T3 Code copies text on plain HTTP addresses through the browser's older copy command.
+This includes terminal text. The copy command preserves keyboard focus and page text selection.
+An HTTPS address permits more browser features. Use the Tailscale HTTPS setup below when possible.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
