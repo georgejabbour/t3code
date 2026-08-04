@@ -42,7 +42,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { isClipboardWriteSupported, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -632,10 +632,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   // Never render a QR for a loopback URL, even in the manual-copy fallback.
   const isRevealValueQrShareable =
     endpointCopyOptions.find((option) => option.url === revealValue)?.qrShareable ?? true;
-  const canCopyToClipboard =
-    typeof window !== "undefined" &&
-    window.isSecureContext &&
-    navigator.clipboard?.writeText != null;
+  // A plain-HTTP origin has no `navigator.clipboard`, but the shared helper
+  // still copies there through document.execCommand. So this only hides the
+  // copy buttons where no path at all exists.
+  const canCopyToClipboard = isClipboardWriteSupported();
 
   const { copyToClipboard } = useCopyToClipboard<{
     value: string;
@@ -666,14 +666,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: canCopyToClipboard
-            ? kind === "hosted-link"
+          title:
+            kind === "hosted-link"
               ? "Could not copy hosted app link"
               : kind === "link"
                 ? "Could not copy pairing URL"
-                : "Could not copy pairing code"
-            : "Clipboard copy unavailable",
-          description: canCopyToClipboard ? error.message : "Showing the full value instead.",
+                : "Could not copy pairing code",
+          description: `${error.message} Showing the full value instead.`,
         }),
       );
     },
@@ -786,9 +785,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 <DialogDescription>
                   {isRevealValueUrl
                     ? isRevealValueHostedAppPairingUrl
-                      ? "Clipboard copy is unavailable here. Open or manually copy this hosted app link on the device you want to connect."
-                      : "Clipboard copy is unavailable here. Open or manually copy this full pairing URL on the device you want to connect."
-                    : "Clipboard copy is unavailable here. Manually copy this code into another client."}
+                      ? "Copy did not work here. Open or manually copy this hosted app link on the device you want to connect."
+                      : "Copy did not work here. Open or manually copy this full pairing URL on the device you want to connect."
+                    : "Copy did not work here. Manually copy this code into another client."}
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel className="space-y-4">

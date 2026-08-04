@@ -61,6 +61,12 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Clipboard access
+
+T3 Code copies text on plain HTTP addresses through the browser's older copy command.
+This includes terminal text. The copy command preserves keyboard focus and page text selection.
+An HTTPS address permits more browser features. Use the Tailscale HTTPS setup below when possible.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
