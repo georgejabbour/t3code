@@ -169,6 +169,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "archive-confirmation",
   },
   {
+    id: "agent-idle-timeout",
+    title: "Agent idle timeout",
+    to: "/settings/general",
+    targetId: "archive-confirmation",
+  },
+  {
     id: "delete-confirmation",
     title: "Delete confirmation",
     to: "/settings/general",
