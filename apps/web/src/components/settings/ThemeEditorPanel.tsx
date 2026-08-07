@@ -357,6 +357,9 @@ export function ThemeEditorPanel({
     };
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
+    // `clampPosition` stays out of the dependency list on purpose. It reads the
+    // panel's live size and the window size at call time, so an older copy of
+    // the function computes the same answer as a fresh one.
   }, [isMinimized, open]);
 
   // The draft only reaches the live app once this open has been seeded;
