@@ -25,6 +25,7 @@ import * as ServerConfig from "../src/config.ts";
 import * as ServerEnvironment from "../src/environment/ServerEnvironment.ts";
 import * as Keybindings from "../src/keybindings.ts";
 import { OrchestrationLayerLive } from "../src/orchestration/runtimeLayer.ts";
+import * as ArchivedThreadReaper from "../src/orchestration/Services/ArchivedThreadReaper.ts";
 import * as OrchestrationEngine from "../src/orchestration/Services/OrchestrationEngine.ts";
 import * as OrchestrationReactor from "../src/orchestration/Services/OrchestrationReactor.ts";
 import * as ProjectionSnapshotQuery from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -74,6 +75,11 @@ const startupDependencies = Layer.mergeAll(
     start: () => Effect.void,
   }),
   Layer.succeed(ProviderSessionReaper.ProviderSessionReaper, {
+    start: () => Effect.void,
+  }),
+  // Added by this fork. Startup also parks the archived-thread sweep, so this
+  // upstream test has to name it; see PATCHES.md.
+  Layer.succeed(ArchivedThreadReaper.ArchivedThreadReaper, {
     start: () => Effect.void,
   }),
   ServerLifecycleEvents.layer,
