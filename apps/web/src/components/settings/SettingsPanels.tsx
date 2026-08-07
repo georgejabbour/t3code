@@ -527,6 +527,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly
         ? ["Delete archived threads daily"]
         : []),
+      ...(Duration.toMillis(settings.providerSessionIdleTimeout) !==
+      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout)
+        ? ["Agent idle timeout"]
+        : []),
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
@@ -551,6 +555,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.deleteArchivedThreadsNightly,
+      settings.providerSessionIdleTimeout,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -664,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       deleteArchivedThreadsNightly: DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+      providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -2262,6 +2268,47 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Delete archived threads daily"
             />
+          }
+        />
+
+        <SettingsRow
+          title={searchableSetting("agent-idle-timeout").title}
+          description="Stop the agent behind a thread once it has been idle this long, so it stops holding memory. Set 0 to keep idle agents running. A thread with a turn in progress, or with subagents or workflows still working, is never stopped."
+          resetAction={
+            Duration.toMillis(settings.providerSessionIdleTimeout) !==
+            Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout) ? (
+              <SettingResetButton
+                label="agent idle timeout"
+                onClick={() =>
+                  updateSettings({
+                    providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={Math.round(Duration.toMillis(settings.providerSessionIdleTimeout) / 60_000)}
+                min={0}
+                step={5}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings({
+                    providerSessionIdleTimeout: Duration.minutes(normalizeIntervalSeconds(value)),
+                  })
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease agent idle timeout" />
+                  <NumberFieldInput aria-label="Agent idle timeout in minutes" />
+                  <NumberFieldIncrement aria-label="Increase agent idle timeout" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">minutes</span>
+            </div>
           }
         />
 
