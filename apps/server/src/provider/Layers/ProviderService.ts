@@ -50,6 +50,7 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import { describeUnusableSessionCwd } from "../SessionWorkingDirectory.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -174,6 +175,25 @@ function readPersistedCwd(
   if (typeof rawCwd !== "string") return undefined;
   const trimmed = rawCwd.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Stops a session start when the thread's folder is unusable.
+ *
+ * Providers build their agent process lazily, so a start against a deleted
+ * folder still reports the session as ready. The failure then arrives on the
+ * first turn, wrapped in a provider error that names the agent program instead
+ * of the folder. Reject the start here so the user reads the true reason.
+ */
+function ensureUsableCwd(
+  operation: string,
+  cwd: string | undefined,
+): Effect.Effect<void, ProviderValidationError> {
+  if (cwd === undefined) {
+    return Effect.void;
+  }
+  const issue = describeUnusableSessionCwd(cwd);
+  return issue === undefined ? Effect.void : Effect.fail(toValidationError(operation, issue));
 }
 
 const dieOnMissingBindingInstanceId = (
@@ -454,6 +474,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
+      yield* ensureUsableCwd(input.operation, persistedCwd);
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
         .startSession({
@@ -669,6 +690,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
         });
+        yield* ensureUsableCwd("ProviderService.startSession", effectiveCwd);
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
