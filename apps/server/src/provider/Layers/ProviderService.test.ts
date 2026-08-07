@@ -22,7 +22,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { it, assert, describe, vi } from "@effect/vitest";
+import { afterAll, it, assert, describe, vi } from "@effect/vitest";
 
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -78,6 +78,20 @@ const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+
+// `startSession` refuses a folder that is not on disk, so a test that only
+// needs "some session folder" has to name a real one. Calls with the same name
+// return the same folder, which lets a test set a cwd and assert it later.
+const sessionCwdRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-cwd-"));
+const sessionCwd = (name: string): string => {
+  const dir = NodePath.join(sessionCwdRoot, name);
+  NodeFS.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
+afterAll(() => {
+  NodeFS.rmSync(sessionCwdRoot, { recursive: true, force: true });
+});
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -845,7 +859,7 @@ it.effect(
         const session = yield* provider.startSession(threadId, {
           provider: ProviderDriverKind.make("codex"),
           providerInstanceId: codexInstanceId,
-          cwd: "/tmp/project",
+          cwd: sessionCwd("project"),
           runtimeMode: "full-access",
           threadId,
         });
@@ -915,7 +929,7 @@ it.effect(
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.equal(startPayload.cwd, sessionCwd("project"));
         assert.deepEqual(startPayload.resumeCursor, updatedResumeCursor);
         assert.equal(startPayload.threadId, startedSession.threadId);
       }
@@ -937,7 +951,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-1"),
-        cwd: "/tmp/project",
+        cwd: sessionCwd("project"),
         runtimeMode: "full-access",
       });
       assert.equal(session.provider, "codex");
@@ -1007,7 +1021,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.equal(startPayload.cwd, sessionCwd("project"));
         assert.deepEqual(startPayload.resumeCursor, session.resumeCursor);
         assert.equal(startPayload.threadId, session.threadId);
       }
@@ -1185,7 +1199,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-1"),
-        cwd: "/tmp/project",
+        cwd: sessionCwd("project"),
         runtimeMode: "full-access",
       });
       yield* routing.codex.stopSession(initial.threadId);
@@ -1208,13 +1222,40 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.equal(startPayload.cwd, sessionCwd("project"));
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect("refuses to recover a stale session whose folder was deleted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const deletedCwd = sessionCwd("project-deleted-recovery");
+
+      const initial = yield* provider.startSession(asThreadId("thread-deleted-recovery"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-deleted-recovery"),
+        cwd: deletedCwd,
+        runtimeMode: "full-access",
+      });
+      yield* routing.codex.stopSession(initial.threadId);
+      NodeFS.rmSync(deletedCwd, { recursive: true, force: true });
+      routing.codex.startSession.mockClear();
+
+      const failure = yield* Effect.flip(
+        provider.rollbackConversation({ threadId: initial.threadId, numTurns: 1 }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, deletedCwd);
+      assert.include(failure.issue, "no longer exists");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
     }),
   );
 
@@ -1227,7 +1268,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-reap-preserve"),
-        cwd: "/tmp/project-reap-preserve",
+        cwd: sessionCwd("project-reap-preserve"),
         runtimeMode: "full-access",
       });
 
@@ -1262,7 +1303,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project-reap-preserve");
+        assert.equal(startPayload.cwd, sessionCwd("project-reap-preserve"));
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
       }
@@ -1278,7 +1319,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("claudeAgent"),
         providerInstanceId: claudeAgentInstanceId,
         threadId: asThreadId("thread-claude"),
-        cwd: "/tmp/project-claude",
+        cwd: sessionCwd("project-claude"),
         runtimeMode: "full-access",
       });
 
@@ -1294,7 +1335,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         };
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.providerInstanceId, claudeAgentInstanceId);
-        assert.equal(startPayload.cwd, "/tmp/project-claude");
+        assert.equal(startPayload.cwd, sessionCwd("project-claude"));
       }
     }),
   );
@@ -1309,7 +1350,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId,
-        cwd: "/tmp/project-binding-mismatch",
+        cwd: sessionCwd("project-binding-mismatch"),
         runtimeMode: "full-access",
       });
       yield* directory.upsert({
@@ -1339,7 +1380,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId,
-        cwd: "/tmp/project-provider-replacement",
+        cwd: sessionCwd("project-provider-replacement"),
         runtimeMode: "full-access",
       });
 
@@ -1350,7 +1391,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("claudeAgent"),
         providerInstanceId: claudeAgentInstanceId,
         threadId,
-        cwd: "/tmp/project-provider-replacement",
+        cwd: sessionCwd("project-provider-replacement"),
         runtimeMode: "full-access",
       });
 
@@ -1377,7 +1418,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-1"),
-        cwd: "/tmp/project-send-turn",
+        cwd: sessionCwd("project-send-turn"),
         runtimeMode: "full-access",
       });
 
@@ -1402,7 +1443,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project-send-turn");
+        assert.equal(startPayload.cwd, sessionCwd("project-send-turn"));
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
       }
@@ -1418,7 +1459,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("claudeAgent"),
         providerInstanceId: claudeAgentInstanceId,
         threadId: asThreadId("thread-claude-send-turn"),
-        cwd: "/tmp/project-claude-send-turn",
+        cwd: sessionCwd("project-claude-send-turn"),
         modelSelection: createModelSelection(
           ProviderInstanceId.make("claudeAgent"),
           "claude-opus-4-6",
@@ -1449,7 +1490,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "claudeAgent");
-        assert.equal(startPayload.cwd, "/tmp/project-claude-send-turn");
+        assert.equal(startPayload.cwd, sessionCwd("project-claude-send-turn"));
         assert.deepEqual(
           startPayload.modelSelection,
           createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
@@ -1634,7 +1675,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider: ProviderDriverKind.make("claudeAgent"),
           providerInstanceId: claudeAgentInstanceId,
           threadId: asThreadId("thread-claude-start"),
-          cwd: "/tmp/project-claude-start",
+          cwd: sessionCwd("project-claude-start"),
           runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(firstProviderLayer));
@@ -1675,7 +1716,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider: ProviderDriverKind.make("claudeAgent"),
           providerInstanceId: claudeAgentInstanceId,
           threadId: initial.threadId,
-          cwd: "/tmp/project-claude-start",
+          cwd: sessionCwd("project-claude-start"),
           runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(secondProviderLayer));
@@ -1691,7 +1732,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           threadId?: string;
         };
         assert.equal(startPayload.provider, "claudeAgent");
-        assert.equal(startPayload.cwd, "/tmp/project-claude-start");
+        assert.equal(startPayload.cwd, sessionCwd("project-claude-start"));
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
       }
@@ -1742,7 +1783,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
             provider: ProviderDriverKind.make("claudeAgent"),
             providerInstanceId: claudeAgentInstanceId,
             threadId: asThreadId("thread-claude-cwd"),
-            cwd: "/tmp/project-claude-cwd",
+            cwd: sessionCwd("project-claude-cwd"),
             runtimeMode: "full-access",
           });
         }).pipe(Effect.provide(firstProviderLayer));
@@ -1793,7 +1834,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
             threadId?: string;
           };
           assert.equal(startPayload.provider, "claudeAgent");
-          assert.equal(startPayload.cwd, "/tmp/project-claude-cwd");
+          assert.equal(startPayload.cwd, sessionCwd("project-claude-cwd"));
           assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
           assert.equal(startPayload.threadId, initial.threadId);
         }
@@ -1987,7 +2028,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         provider: ProviderDriverKind.make("claudeAgent"),
         providerInstanceId: claudeAgentInstanceId,
         threadId: asThreadId("thread-metrics"),
-        cwd: "/tmp/project",
+        cwd: sessionCwd("project"),
         runtimeMode: "full-access",
       });
 
@@ -2065,7 +2106,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: ProviderDriverKind.make("claudeAgent"),
           providerInstanceId: claudeAgentInstanceId,
           threadId: asThreadId("thread-send-metrics"),
-          cwd: "/tmp/project-send-metrics",
+          cwd: sessionCwd("project-send-metrics"),
           runtimeMode: "full-access",
         });
 
@@ -2113,6 +2154,32 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
       assert.instanceOf(failure, ProviderValidationError);
       assert.include(failure.issue, "Provider instance id is required for provider 'codex'.");
+      assert.equal(validation.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects a session start when the requested folder was deleted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const deletedCwd = sessionCwd("project-deleted-request");
+      NodeFS.rmSync(deletedCwd, { recursive: true, force: true });
+
+      validation.codex.startSession.mockClear();
+      const failure = yield* Effect.flip(
+        provider.startSession(asThreadId("thread-deleted-request"), {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-deleted-request"),
+          cwd: deletedCwd,
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, deletedCwd);
+      assert.include(failure.issue, "no longer exists");
+      // The agent process starts inside this folder, so reaching the adapter at
+      // all would report a ready session that fails on its first turn.
       assert.equal(validation.codex.startSession.mock.calls.length, 0);
     }),
   );
@@ -2191,7 +2258,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-missing"),
-        cwd: "/tmp/project",
+        cwd: sessionCwd("project"),
         runtimeMode: "full-access",
       });
 
