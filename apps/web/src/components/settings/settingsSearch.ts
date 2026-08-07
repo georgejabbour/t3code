@@ -168,6 +168,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "delete-archived-nightly",
+    title: "Delete archived threads daily",
+    to: "/settings/general",
+    targetId: "archive-confirmation",
+  },
+  {
     id: "delete-confirmation",
     title: "Delete confirmation",
     to: "/settings/general",
