@@ -12,13 +12,12 @@ import {
   type ProviderSessionReaperShape,
 } from "../Services/ProviderSessionReaper.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
-const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface ProviderSessionReaperLiveOptions {
-  readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
 }
 
@@ -27,14 +26,21 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
     const providerService = yield* ProviderService;
     const directory = yield* ProviderSessionDirectory;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const serverSettings = yield* ServerSettingsService;
 
-    const inactivityThresholdMs = Math.max(
-      1,
-      options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
-    );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
 
     const sweep = Effect.gen(function* () {
+      // Read on every sweep, not once at construction, so raising the timeout
+      // takes effect without restarting the server — a restart would kill the
+      // very sessions the higher timeout is meant to protect.
+      const settings = yield* serverSettings.getSettings;
+      const inactivityThresholdMs = Duration.toMillis(settings.providerSessionIdleTimeout);
+      // Zero means the user chose to keep idle agents alive.
+      if (inactivityThresholdMs <= 0) {
+        return;
+      }
+
       const bindings = yield* directory.listBindings();
       const now = yield* Clock.currentTimeMillis;
       let reapedCount = 0;
@@ -136,7 +142,6 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
         );
 
         yield* Effect.logInfo("provider.session.reaper.started", {
-          inactivityThresholdMs,
           sweepIntervalMs,
         });
       });

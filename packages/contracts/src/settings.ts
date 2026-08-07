@@ -557,6 +557,7 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+export const DEFAULT_PROVIDER_SESSION_IDLE_TIMEOUT = Duration.minutes(30);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -649,6 +650,20 @@ export const ServerSettings = Schema.Struct({
    */
   deleteArchivedThreadsNightly: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
+   * How long a provider session may sit idle before the server stops its agent
+   * process. Zero means never stop one.
+   *
+   * Stopping a session is not free: the next message restarts the agent from
+   * its transcript, not from the live process, so anything the old process was
+   * still doing is lost. Raise this when long background runs matter more than
+   * the memory an idle agent holds.
+   */
+  providerSessionIdleTimeout: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_SESSION_IDLE_TIMEOUT)),
+    ),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -850,6 +865,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   deleteArchivedThreadsNightly: Schema.optionalKey(Schema.Boolean),
+  providerSessionIdleTimeout: Schema.optionalKey(Schema.DurationFromMillis),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
