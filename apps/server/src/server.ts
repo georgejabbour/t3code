@@ -41,6 +41,7 @@ import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import { ArchivedThreadReaperLive } from "./orchestration/Layers/ArchivedThreadReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -412,7 +413,14 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
+const ProviderRuntimeLayerLive = Layer.mergeAll(
+  ProviderSessionReaperLive,
+  // Rides with the session reaper because it needs the same orchestration
+  // projection and the same worktree teardown runner. `Layer.mergeAll` rather
+  // than another `provideMerge` argument: this pipe is at TypeScript's
+  // 20-argument overload limit.
+  ArchivedThreadReaperLive.pipe(Layer.provide(GitWorkflowLayerLive)),
+).pipe(
   Layer.provideMerge(ProviderLayerLive),
   // Sits here, not beside the other project services: the runner reads the
   // project's imported scripts, so it needs the orchestration projection that
