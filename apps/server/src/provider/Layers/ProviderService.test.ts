@@ -2051,6 +2051,33 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("refuses to recover a stale session whose folder was deleted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const deletedCwd = fixtureCwd("project-deleted-recovery");
+
+      const initial = yield* provider.startSession(asThreadId("thread-deleted-recovery"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-deleted-recovery"),
+        cwd: deletedCwd,
+        runtimeMode: "full-access",
+      });
+      yield* routing.codex.stopSession(initial.threadId);
+      NodeFS.rmSync(deletedCwd, { recursive: true, force: true });
+      routing.codex.startSession.mockClear();
+
+      const failure = yield* Effect.flip(
+        provider.rollbackConversation({ threadId: initial.threadId, numTurns: 1 }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, deletedCwd);
+      assert.include(failure.issue, "no longer exists");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("preserves the persisted binding when stopping a session", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -4159,6 +4186,31 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
       assert.instanceOf(failure, ProviderValidationError);
       assert.include(failure.issue, "Provider instance id is required for provider 'codex'.");
+      assert.equal(validation.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects a session start when the requested folder was deleted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const deletedCwd = fixtureCwd("project-deleted-request");
+      NodeFS.rmSync(deletedCwd, { recursive: true, force: true });
+
+      validation.codex.startSession.mockClear();
+      const failure = yield* Effect.flip(
+        provider.startSession(asThreadId("thread-deleted-request"), {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-deleted-request"),
+          cwd: deletedCwd,
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderWorkspaceMissingError);
+      assert.equal(failure.cwd, deletedCwd);
+      // The agent process starts inside this folder, so reaching the adapter at
+      // all would report a ready session that fails on its first turn.
       assert.equal(validation.codex.startSession.mock.calls.length, 0);
     }),
   );
