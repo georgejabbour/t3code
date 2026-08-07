@@ -43,6 +43,8 @@ import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/ProviderEventLoggers.ts";
+import { ArchivedThreadReaperLive } from "./orchestration/Layers/ArchivedThreadReaper.ts";
+import * as ArchivedThreadReaper from "./orchestration/Services/ArchivedThreadReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./provider/OpenCodeServerLedger.ts";
 import * as AcpRegistryCatalog from "./provider/AcpRegistryCatalog.ts";
@@ -534,6 +536,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  Layer.effectDiscard(
+    Effect.flatMap(ArchivedThreadReaper.ArchivedThreadReaper, (service) => service.start()),
+  ).pipe(
+    Layer.provide(ArchivedThreadReaperLive),
+    Layer.provide(layerGitWorkflow),
+    Layer.provide(layerWorktreeArchiveScriptRunner),
+  ),
   layerThreadSettlementWorker,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
