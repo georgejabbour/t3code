@@ -42,6 +42,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
+import { ArchivedThreadReaperLive } from "./orchestration/Layers/ArchivedThreadReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -414,7 +415,14 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
+const ProviderRuntimeLayerLive = Layer.mergeAll(
+  ProviderSessionReaperLive,
+  // Rides with the session reaper because it needs the same orchestration
+  // projection and the same worktree teardown runner. `Layer.mergeAll` rather
+  // than another `provideMerge` argument: this pipe is at TypeScript's
+  // 20-argument overload limit.
+  ArchivedThreadReaperLive.pipe(Layer.provide(GitWorkflowLayerLive)),
+).pipe(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   Layer.provideMerge(ProviderUsageLimitsIngestionLive),

@@ -262,6 +262,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["ask before thread second click inline action"],
   },
   {
+    id: "delete-archived-nightly",
+    title: "Delete archived threads daily",
+    to: "/settings/general",
+    targetId: "archive-confirmation",
+  },
+  {
     id: "delete-confirmation",
     title: "Delete confirmation",
     to: "/settings/general",

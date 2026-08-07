@@ -583,6 +583,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
+      ...(settings.deleteArchivedThreadsNightly !==
+      DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly
+        ? ["Delete archived threads daily"]
+        : []),
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
@@ -610,6 +614,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadUnpin,
       settings.composerCollapseOnBlur,
       settings.composerCollapseOnScroll,
+      settings.deleteArchivedThreadsNightly,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -738,6 +743,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      deleteArchivedThreadsNightly: DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -2711,6 +2717,35 @@ export function GeneralSettingsPanel() {
                 updateSettings({ confirmThreadArchive: Boolean(checked) })
               }
               aria-label="Confirm thread archiving"
+            />
+          }
+        />
+
+        <SettingsRow
+          className="bg-muted/20 sm:pl-9"
+          title={searchableSetting("delete-archived-nightly").title}
+          description="Deletes every archived thread once a day, and removes the worktree it owns. Runs the project's worktree removal script first. This cannot be undone."
+          resetAction={
+            settings.deleteArchivedThreadsNightly !==
+            DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly ? (
+              <SettingResetButton
+                label="delete archived threads daily"
+                onClick={() =>
+                  updateSettings({
+                    deleteArchivedThreadsNightly:
+                      DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.deleteArchivedThreadsNightly}
+              onCheckedChange={(checked) =>
+                updateSettings({ deleteArchivedThreadsNightly: Boolean(checked) })
+              }
+              aria-label="Delete archived threads daily"
             />
           }
         />
