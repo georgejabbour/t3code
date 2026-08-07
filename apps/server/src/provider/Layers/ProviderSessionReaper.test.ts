@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -18,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
@@ -175,6 +178,7 @@ describe("ProviderSessionReaper", () => {
 
   async function createHarness(input: {
     readonly readModel: ReturnType<typeof makeReadModel>;
+    readonly idleTimeout?: Duration.Duration;
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
@@ -225,9 +229,13 @@ describe("ProviderSessionReaper", () => {
       Layer.provide(runtimeRepositoryLayer),
     );
     const layer = makeProviderSessionReaperLive({
-      inactivityThresholdMs: 1_000,
       sweepIntervalMs: 60_000,
     }).pipe(
+      Layer.provideMerge(
+        ServerSettings.layerTest({
+          providerSessionIdleTimeout: input.idleTimeout ?? Duration.millis(1_000),
+        }),
+      ),
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
