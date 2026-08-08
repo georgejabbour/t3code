@@ -2270,6 +2270,160 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("ends the session when the agent reports a dead credential", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      // The CLI reports a dead credential as a SUCCESSFUL result: the body
+      // carries the error and only `terminal_reason` marks it.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        terminal_reason: "api_error",
+        result: "Not logged in · Please run /login",
+        session_id: "sdk-session-auth",
+        uuid: "result-auth",
+      } as unknown as SDKMessage);
+
+      // Stopping the session runs several steps after the turn completes, so
+      // this needs more scheduler turns than a plain result does.
+      yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { discard: true });
+      runtimeEventsFiber.interruptUnsafe();
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.include(runtimeError.payload.message, "Not logged in");
+        assert.include(runtimeError.payload.message, "fresh agent");
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+      }
+
+      // The point of the fix: the thread must not stay bound to an agent that
+      // will fail every later turn the same way.
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        true,
+      );
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a session whose answer merely talks about being logged out", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "why did my agent fail?",
+        attachments: [],
+      });
+
+      // A real answer, quoting the error it is explaining. No `api_error`, so
+      // it must be treated as an ordinary reply.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        terminal_reason: "completed",
+        result: "Your agent printed 'Not logged in · Please run /login' because its token expired.",
+        session_id: "sdk-session-quoted",
+        uuid: "result-quoted",
+      } as unknown as SDKMessage);
+
+      yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { discard: true });
+
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a rate limit on the same session", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      // Also an api_error, but restarting the agent fixes nothing here.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        terminal_reason: "api_error",
+        result: "Rate limit reached. Try again later.",
+        session_id: "sdk-session-rate-limit",
+        uuid: "result-rate-limit",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        false,
+      );
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps Claude stream failure events structural", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
