@@ -14,8 +14,9 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { afterEach } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach } from "vite-plus/test";
 
+import * as ServerConfig from "../../config.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -96,13 +97,37 @@ describe("ArchivedThreadReaper", () => {
     for (const dir of tempDirs.splice(0)) {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
+    // Clear the managed folder too, so one test's worktrees cannot be seen by
+    // the next. `beforeEach` puts the folder itself back.
+    NodeFS.rmSync(MANAGED_ROOT, { recursive: true, force: true });
   });
 
-  const makeWorktree = (): string => {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-archived-reaper-"));
+  const makeTempDir = (label: string): string => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `t3-archived-reaper-${label}-`));
     tempDirs.push(dir);
     return dir;
   };
+
+  // The base directory T3 was told to use. `worktreesDir` hangs off it exactly
+  // as deriveServerPaths builds it, so a folder under MANAGED_ROOT is one T3
+  // created and owns, and anything else belongs to somebody else. It outlives
+  // the per-test cleanup, so it is not registered with `tempDirs`.
+  const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-archived-reaper-home-"));
+  const MANAGED_ROOT = NodePath.join(baseDir, "worktrees");
+
+  beforeEach(() => {
+    NodeFS.mkdirSync(MANAGED_ROOT, { recursive: true });
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  /** A worktree T3 created, under the folder it manages. */
+  const makeWorktree = (): string => NodeFS.mkdtempSync(NodePath.join(MANAGED_ROOT, "wt-"));
+
+  /** A folder T3 never created, like George's maintained fork checkout. */
+  const makeExternalWorktree = (): string => makeTempDir("external");
 
   const runSweep = (input: {
     readonly enabled: boolean;
@@ -164,6 +189,7 @@ describe("ArchivedThreadReaper", () => {
         }),
       ),
       Layer.provideMerge(ServerSettings.layerTest({ deleteArchivedThreadsNightly: input.enabled })),
+      Layer.provideMerge(ServerConfig.layerTest(WORKSPACE_ROOT, baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -171,7 +197,9 @@ describe("ArchivedThreadReaper", () => {
       const reaper = yield* ArchivedThreadReaper;
       yield* reaper.start();
       // The repeat schedule runs the sweep before its first wait, so the work
-      // is queued as soon as start returns; yield until it drains.
+      // is queued as soon as start returns; yield until it drains. A real sleep
+      // would hang here, because the test clock never advances on its own, so
+      // every check the sweep makes on the disk stays synchronous.
       yield* Effect.forEach(Array.from({ length: 40 }), () => Effect.yieldNow, {
         discard: true,
       });
@@ -265,6 +293,70 @@ describe("ArchivedThreadReaper", () => {
 
       assert.deepEqual(result.deletedThreadIds, []);
       assert.deepEqual(result.removedWorktreePaths, []);
+    }),
+  );
+
+  // On 7 and 8 August 2026 this sweep ran `git worktree remove` against
+  // George's maintained fork checkout, which lives in ~/Development and which
+  // T3 never created. The command exceeded its time limit part way through and
+  // left 140 tracked files deleted. A thread may name any folder on the disk;
+  // only the ones under the folder T3 manages are T3's to take apart.
+  describe("worktrees it does not own", () => {
+    const refuses = (label: string, makePath: () => string) =>
+      it.effect(label, () =>
+        Effect.gen(function* () {
+          const worktreePath = makePath();
+
+          const result = yield* runSweep({
+            enabled: true,
+            threads: [{ id: "thread-foreign", worktreePath }],
+          });
+
+          // Nothing ran inside the folder, so nothing in it can be damaged.
+          assert.deepEqual(result.scriptedWorktreePaths, []);
+          assert.deepEqual(result.removedWorktreePaths, []);
+          // The thread stays archived, so the sweep can try again once the
+          // path becomes one T3 owns, or once somebody fixes the record.
+          assert.deepEqual(result.deletedThreadIds, []);
+        }),
+      );
+
+    refuses("refuses a checkout outside the managed folder", makeExternalWorktree);
+
+    refuses("refuses the managed folder itself", () => MANAGED_ROOT);
+
+    refuses("refuses a sibling folder whose name merely starts the same", () => {
+      const sibling = `${MANAGED_ROOT}-elsewhere`;
+      NodeFS.mkdirSync(sibling, { recursive: true });
+      tempDirs.push(sibling);
+      return sibling;
+    });
+
+    refuses("refuses a path that climbs back out with ..", () => {
+      const escaped = makeExternalWorktree();
+      return NodePath.join(MANAGED_ROOT, "..", NodePath.basename(escaped));
+    });
+
+    refuses("refuses a link inside the managed folder that points outside it", () => {
+      const target = makeExternalWorktree();
+      const link = NodePath.join(MANAGED_ROOT, "link-to-elsewhere");
+      NodeFS.symlinkSync(target, link);
+      return link;
+    });
+  });
+
+  it.effect("still removes a worktree inside the managed folder", () =>
+    Effect.gen(function* () {
+      const worktreePath = makeWorktree();
+
+      const result = yield* runSweep({
+        enabled: true,
+        threads: [{ id: "thread-managed", worktreePath }],
+      });
+
+      assert.deepEqual(result.scriptedWorktreePaths, [worktreePath]);
+      assert.deepEqual(result.removedWorktreePaths, [worktreePath]);
+      assert.deepEqual(result.deletedThreadIds, ["thread-managed"]);
     }),
   );
 });
