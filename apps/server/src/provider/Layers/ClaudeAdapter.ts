@@ -427,6 +427,45 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
   return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
 }
 
+/**
+ * Text the CLI produces when its stored credential is missing, expired or
+ * rejected. Deliberately narrow: only failures a NEW agent process could fix
+ * belong here. A rate limit or an overloaded upstream must not match, because
+ * restarting the agent does nothing for those.
+ */
+const AUTH_FAILURE_PATTERN =
+  /not logged in|please run \/login|oauth token (?:has )?(?:expired|been revoked)|authentication_error|invalid[_ ]api[_ ]key|unauthorized/i;
+
+/**
+ * Reports a dead credential, and the text to show for it.
+ *
+ * The agent reads its OAuth token once, at startup, and holds that copy for
+ * its whole life. When the token dies mid-session the user can sign in again,
+ * but the running process never sees the new one — it keeps presenting the
+ * dead token and every later turn fails the same way.
+ *
+ * The CLI delivers this as a `success` result whose `terminal_reason` is
+ * `api_error` and whose body is the error text, so neither the subtype nor
+ * `errors` marks it as a failure.
+ */
+function resultAuthFailure(result: SDKResultMessage): string | undefined {
+  // Read as unknown: the CLI sends `api_error`, but the SDK's `TerminalReason`
+  // union does not list it yet, so comparing against the typed field fails to
+  // compile. This flag is what separates a real API failure from an ordinary
+  // answer that merely quotes the words below — a chat ABOUT this bug must not
+  // end its own session.
+  const terminalReason = (result as { readonly terminal_reason?: unknown }).terminal_reason;
+  if (terminalReason !== "api_error") {
+    return undefined;
+  }
+  const body = (result as { readonly result?: unknown }).result;
+  const bodyText = typeof body === "string" ? body : "";
+  if (!AUTH_FAILURE_PATTERN.test(`${bodyText} ${resultErrorsText(result)}`)) {
+    return undefined;
+  }
+  return bodyText.trim().length > 0 ? bodyText.trim() : "Claude is not signed in.";
+}
+
 function isInterruptedResult(result: SDKResultMessage): boolean {
   // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
   // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
@@ -3020,6 +3059,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     message: SDKMessage,
   ) {
     if (message.type !== "result") {
+      return;
+    }
+
+    // A dead credential cannot be repaired inside this process, so end the
+    // session rather than leave the thread bound to an agent that will fail
+    // every future turn the same way. Signing in again then works, because the
+    // next turn starts a new agent that reads the new token.
+    const authFailure = resultAuthFailure(message);
+    if (authFailure !== undefined) {
+      yield* emitRuntimeError(
+        context,
+        `${authFailure} T3 Code stopped this agent, so sign in again and send your message — the next one starts a fresh agent.`,
+      );
+      yield* completeTurn(context, "failed", authFailure, message);
+      // Detached on purpose. This runs inside the stream fiber, and stopping a
+      // session interrupts that fiber — calling it directly would kill this
+      // effect partway and the exit event would never be emitted.
+      yield* Effect.forkDetach(stopSessionInternal(context, { emitExitEvent: true }));
       return;
     }
 
