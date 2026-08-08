@@ -12,9 +12,14 @@
  * The sweep runs behind `deleteArchivedThreadsNightly`, which is off by
  * default because deleting a thread cannot be undone.
  *
+ * A thread records the path its worktree had, not proof that T3 made it, so the
+ * sweep removes a folder only when it sits inside the server's `worktreesDir`.
+ * See `isManagedWorktree`.
+ *
  * @module ArchivedThreadReaper
  */
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { CommandId, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -25,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 
+import * as ServerConfig from "../../config.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -59,6 +65,58 @@ const worktreeExists = (path: string): boolean => {
   }
 };
 
+/**
+ * The real location of `value`, with every symbolic link followed.
+ *
+ * A worktree removed by hand no longer exists, and a path that is not there
+ * cannot be resolved. Its parent almost always still is, so the parent is
+ * resolved instead and the last segment put back. That step matters on macOS,
+ * where the temporary and home folders are themselves links: comparing an
+ * unresolved `/var/…` against a resolved `/private/var/…` never matches, and
+ * every removed worktree would then read as somebody else's.
+ *
+ * When neither the path nor its parent resolves, the plain resolved form comes
+ * back. It will not sit inside the managed folder, so the caller refuses to
+ * touch it, which is the safe direction.
+ */
+const canonicalPath = (value: string): string => {
+  const resolved = NodePath.resolve(value);
+  try {
+    return NodeFS.realpathSync(resolved);
+  } catch {
+    try {
+      const parent = NodeFS.realpathSync(NodePath.dirname(resolved));
+      return NodePath.join(parent, NodePath.basename(resolved));
+    } catch {
+      return resolved;
+    }
+  }
+};
+
+/**
+ * Whether `worktreePath` sits inside `managedRoot`, and may therefore be taken
+ * apart.
+ *
+ * A thread stores whatever path its worktree had, and that path can name any
+ * folder on the disk. Only the ones inside the server's `worktreesDir` were
+ * made by T3. Removing anything else destroys a folder somebody else depends
+ * on, which is what happened to George's maintained fork checkout in August
+ * 2026: two nightly sweeps ran `git worktree remove` against it, and each one
+ * left that checkout with 140 tracked files deleted.
+ *
+ * Both sides are resolved through the filesystem first, so a link inside the
+ * managed folder cannot stand in for a folder outside it. Containment is then
+ * decided with `path.relative` rather than by comparing text, because a
+ * sibling named `worktrees-elsewhere` shares the managed folder's spelling
+ * without being inside it. The managed folder itself is not a worktree, so an
+ * empty result is refused along with everything above it.
+ */
+const isManagedWorktree = (managedRoot: string, worktreePath: string): boolean => {
+  const relative = NodePath.relative(managedRoot, canonicalPath(worktreePath));
+  const climbsOut = relative === ".." || relative.startsWith(`..${NodePath.sep}`);
+  return relative !== "" && !climbsOut && !NodePath.isAbsolute(relative);
+};
+
 const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
   Effect.gen(function* () {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -67,6 +125,11 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
     const gitWorkflow = yield* GitWorkflowService;
     const archiveScriptRunner = yield* WorktreeArchiveScriptRunner;
     const crypto = yield* Crypto.Crypto;
+    const config = yield* ServerConfig.ServerConfig;
+
+    // The folder T3 manages does not move while the server runs, so it is
+    // resolved once here rather than once per thread on every sweep.
+    const managedRoot = canonicalPath(config.worktreesDir);
 
     const tickInterval = options?.tickInterval ?? DEFAULT_TICK_INTERVAL;
     const sweepPeriodMs = Duration.toMillis(options?.sweepPeriod ?? DEFAULT_SWEEP_PERIOD);
@@ -86,6 +149,21 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
       readonly worktreePath: string;
       readonly workspaceRoot: string;
     }) {
+      // Ownership is settled before anything reads or runs inside the folder.
+      // A refusal returns false, so the thread keeps its record of the path and
+      // the sweep can try again; nothing in the folder is touched either way.
+      if (!isManagedWorktree(managedRoot, input.worktreePath)) {
+        yield* Effect.logWarning("orchestration.archived-thread.reaper.refused-foreign-worktree", {
+          threadId: input.threadId,
+          worktreePath: input.worktreePath,
+          managedWorktreesDir: config.worktreesDir,
+          detail:
+            "T3 did not create this folder, so the sweep will not remove it. " +
+            "Clear the thread's worktree path, or delete the thread by hand.",
+        });
+        return false;
+      }
+
       // A worktree removed by hand is the common case here — most archived
       // threads on a long-lived install already point at nothing. There is no
       // folder to run a teardown script in and nothing for git to remove, so
