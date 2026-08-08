@@ -39,10 +39,11 @@ After an install, the script reads the built output and looks for one text marke
 from each patch. A missing marker means the build lost that patch, and the script
 stops with an error.
 
-| Patch | Marker                | File that holds the marker                  |
-| ----- | --------------------- | ------------------------------------------- |
-| 1     | `runOnWorktreeRemove` | `dist/bin.mjs`, the server bundle           |
-| 2     | `execCommand("copy")` | `dist/client/assets`, the web client bundle |
+| Patch | Marker                     | File that holds the marker                  |
+| ----- | -------------------------- | ------------------------------------------- |
+| 1     | `runOnWorktreeRemove`      | `dist/bin.mjs`, the server bundle           |
+| 2     | `execCommand("copy")`      | `dist/client/assets`, the web client bundle |
+| 3     | `refused-foreign-worktree` | `dist/bin.mjs`, the server bundle           |
 
 The second marker is the whole call, not the method name on its own. Upstream
 already ships a syntax-highlighting grammar chunk that contains the word
@@ -158,3 +159,67 @@ secure context.
 **Upstream status.** Not filed, for the reason given in Patch 1. Upstream serves
 the web application over plain HTTP through `t3 serve --host`, so upstream carries
 this fault too.
+
+## Patch 3 — the archived-thread sweep only removes folders T3 made
+
+**Commit:** `fix(server): stop the archived-thread sweep removing foreign worktrees`
+
+**Why.** This fork adds a sweep that deletes archived threads once a day and
+removes the worktree each one owns. See the commit `feat(server): delete archived
+threads once a day, behind a setting`. The sweep trusted the path stored on the
+thread. A thread stores whatever path its worktree had, and that path can name any
+folder on the disk, including one T3 never created.
+
+One thread on George's machine recorded the maintained fork checkout itself, at
+`~/Development/worktrees/t3code/worktree-remove-hook`. The sweep therefore ran
+`git worktree remove` against the folder that holds this patch layer. That
+checkout is large, the command passed its time limit, and the run was stopped part
+way through. Git had already begun deleting, so each attempt left 140 tracked
+files gone, among them `pnpm-lock.yaml`, `tsconfig.base.json` and this file. The
+removal never finished, so the thread stayed archived and the next sweep tried
+again. It happened on 7 August 2026 and again on 8 August 2026.
+
+**What.** The sweep now decides who owns a folder before it reads or runs
+anything inside it. A worktree counts as T3's only when it sits inside
+`worktreesDir`, the folder the server derives from its base directory and creates
+its worktrees in. Anything else is refused, with a warning naming the thread, the
+path and the managed folder.
+
+A refusal returns the same "not removed" answer a failed teardown returns, so the
+thread keeps its record of the path and the sweep can try again later. Nothing in
+the folder is touched, so a refusal cannot damage files.
+
+**Design notes.**
+
+- The managed folder comes from `ServerConfig.worktreesDir`, the value the server
+  already derives and already creates. It is not spelled out a second time here.
+- Both the candidate and the managed folder are resolved through the filesystem
+  first, so a symbolic link inside the managed folder cannot stand in for a folder
+  outside it.
+- Containment is decided with `path.relative`, not by comparing the start of one
+  string with another. A sibling folder named `worktrees-elsewhere` begins with
+  the managed folder's spelling without being inside it, and a plain text
+  comparison would accept it.
+- The managed folder itself is refused. It is not a worktree, and removing it
+  would take every worktree with it.
+- A worktree removed by hand no longer exists, and a path that is not there cannot
+  be resolved. Its parent is resolved instead and the last segment put back. This
+  step is what keeps macOS working, where `/var` and the home folder are links: an
+  unresolved `/var/…` never matches a resolved `/private/var/…`, and without it
+  every removed worktree would read as somebody else's.
+- When neither the path nor its parent resolves, the guard refuses. Ownership that
+  cannot be proven is treated as ownership the fork does not have.
+- The checks are synchronous, like the `worktreeExists` check beside them. The
+  sweep's tests run on a test clock that never advances on its own, so a real
+  asynchronous wait inside the sweep would hang them.
+
+**Files.** Edited: `apps/server/src/orchestration/Layers/ArchivedThreadReaper.ts`
+and its test.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. The sweep itself
+is this fork's, so upstream does not carry this fault.
+
+**Marker.** `refused-foreign-worktree`, the warning code emitted when the guard
+rejects a path outside T3's managed worktree root. The guard's tests prove the
+path-containment behavior, while this bundle marker proves the installed server
+contains that tested guard.
