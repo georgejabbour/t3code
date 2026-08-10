@@ -963,7 +963,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-attach"),
-        cwd: "/tmp/project",
+        cwd: sessionCwd("project"),
         runtimeMode: "full-access",
       });
 
