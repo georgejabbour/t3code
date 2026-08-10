@@ -35,6 +35,24 @@ t3code-fork-update --install    # the above, then build and install globally
 The script is at `~/.local/bin/t3code-fork-update`, outside this repository, so it
 never makes the difference against upstream larger.
 
+A clean rebase does not prove the patch still works. This fork's tests copy
+upstream types and upstream test data. Upstream keeps adding to both, on lines
+this fork never edits. Git therefore reports no conflict, and the typecheck or the
+tests fail straight after. Two cases appeared while verifying
+`0.0.34-nightly.20260810.1061`:
+
+1. Upstream added two required fields to `ProcessRunOutput`, so Patch 1's test
+   helper had to name them too.
+2. Upstream added a test that starts a session in `/tmp/project`, one day after
+   this fork made `startSession` refuse a folder that is not on disk. Tests in
+   `apps/server/src/provider/Layers/ProviderService.test.ts` must name a real
+   folder through the `sessionCwd` helper there. Any new upstream test in that
+   file needs the same helper.
+
+The second case was broken from 8 August 2026 and nobody saw it, because the
+updater runs three test files only. Run the tests of every file this fork edits
+before an install, not the three the updater names.
+
 After an install, the script reads the built output and looks for one text marker
 from each patch. A missing marker means the build lost that patch, and the script
 stops with an error.
@@ -89,6 +107,12 @@ cleanup failure never traps a workspace, and it never lets one leak in silence.
   The new layer and its test mock therefore go into an existing entry. They are
   not appended. A 21st argument fails the typecheck, and the error message does
   not say why.
+- The test builds a complete `ProcessRunOutput` value, so it copies that upstream
+  interface field for field. Upstream adds fields to the interface from time to
+  time. It added `stdoutInvalidUtf8` and `stderrInvalidUtf8` in
+  `0.0.34-nightly.20260810.1061`. Each addition needs the same field in the
+  `processOutput` helper at the top of the test. The rebase stays clean, so this
+  arrives as a typecheck error and never as a conflict.
 
 **Files.** New: `apps/server/src/project/WorktreeArchiveScriptRunner.ts` and its
 test. Edited: `packages/contracts/src/{t3ProjectFile,git,rpc}.ts`,
