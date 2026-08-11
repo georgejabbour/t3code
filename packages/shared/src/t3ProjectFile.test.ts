@@ -51,6 +51,8 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "name",
       "previewUrl",
       "runOnWorktreeCreate",
+      // Added by this fork's Patch 1. See PATCHES.md.
+      "runOnWorktreeRemove",
     ]);
   });
 
