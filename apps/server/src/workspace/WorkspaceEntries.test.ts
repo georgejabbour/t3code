@@ -96,7 +96,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
-    it.effect("lists immediate children including ignored and empty directories", () =>
+    it.effect("lists requested ignored children and empty directories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
         const fileSystem = yield* FileSystem.FileSystem;
@@ -110,11 +110,16 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        const hidden = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(hidden.entries.some((entry) => entry.path === ".env")).toBe(false);
+        const root = yield* workspaceEntries.list({
+          cwd,
+          directoryPath: "",
+          includeIgnored: true,
+        });
         expect(root.entries).toEqual(
           expect.arrayContaining([
             { path: ".env", kind: "file", ignored: true },
-            { path: "node_modules", kind: "directory", ignored: true },
             { path: "src", kind: "directory" },
             { path: "empty", kind: "directory" },
             { path: "tracked.txt", kind: "file" },
@@ -123,8 +128,15 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
         expect(root.entries.some((entry) => entry.path === ".git")).toBe(false);
         expect(root.truncated).toBe(false);
-        expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
-          entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
+        expect(root.entries.some((entry) => entry.path === "node_modules")).toBe(false);
+        expect(
+          yield* workspaceEntries.list({
+            cwd,
+            directoryPath: "node_modules/pkg",
+            includeIgnored: true,
+          }),
+        ).toEqual({
+          entries: [],
           truncated: false,
         });
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({

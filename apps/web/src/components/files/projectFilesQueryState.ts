@@ -40,7 +40,10 @@ function getProjectEntriesQueryAtom(
 ) {
   return projectEnvironment.listEntries({
     environmentId,
-    input: { cwd, ...(directoryPath !== undefined ? { directoryPath } : {}) },
+    input: {
+      cwd,
+      ...(directoryPath !== undefined ? { directoryPath } : {}),
+    },
   });
 }
 

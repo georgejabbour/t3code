@@ -25,8 +25,12 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePathWith } from "../pathExpansion.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as IgnoredWorkspaceEntries from "./IgnoredWorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+/** Matches the cap the native path index applies to one workspace. */
+const WORKSPACE_ENTRY_LIMIT = 25_000;
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
   "WorkspaceEntriesWindowsPathUnsupportedError",
@@ -137,6 +141,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const ignoredEntries = yield* IgnoredWorkspaceEntries.IgnoredWorkspaceEntries;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -149,6 +154,7 @@ export const make = Effect.gen(function* () {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
       );
+      yield* ignoredEntries.invalidate(normalizedCwd);
       for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
         const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
         if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
@@ -238,7 +244,7 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
+      const indexed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
       }).pipe(
@@ -248,6 +254,27 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (input.includeIgnored !== true || indexed.entries.length >= input.limit) {
+        return indexed;
+      }
+      // Ignored matches come after the indexed matches. The native index
+      // returns no score, so the two lists cannot interleave by rank.
+      const ignored = yield* ignoredEntries.list(normalizedCwd);
+      const extra = IgnoredWorkspaceEntries.rankIgnoredEntries(
+        ignored.entries,
+        normalizedQuery,
+        input.limit - indexed.entries.length,
+        {
+          kind: input.kind,
+          imageOnly: input.imageOnly,
+          excludePaths: new Set(indexed.entries.map((entry) => entry.path)),
+        },
+      );
+      if (extra.length === 0) return indexed;
+      return {
+        entries: [...indexed.entries, ...extra],
+        truncated: indexed.truncated || ignored.truncated,
+      };
     },
   );
 
@@ -272,6 +299,9 @@ export const make = Effect.gen(function* () {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       if (input.directoryPath !== undefined) {
         const directoryPath = input.directoryPath;
+        if (directoryPath.split("/").includes("node_modules")) {
+          return { entries: [], truncated: false };
+        }
         const toError = (cause: unknown) =>
           new WorkspaceEntriesReadDirectoryError({
             cwd: normalizedCwd,
@@ -304,7 +334,13 @@ export const make = Effect.gen(function* () {
             }
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
             return children.flatMap((child): ProjectEntry[] => {
-              if (child.name === ".git" || (!child.isDirectory() && !child.isFile())) return [];
+              if (
+                child.name === ".git" ||
+                child.name === "node_modules" ||
+                (!child.isDirectory() && !child.isFile())
+              ) {
+                return [];
+              }
               return [
                 {
                   path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
@@ -336,13 +372,14 @@ export const make = Effect.gen(function* () {
           for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
         }
         return {
-          entries: entries.map((entry) =>
-            ignored.has(entry.path) ? { ...entry, ignored: true } : entry,
-          ),
+          entries: entries.flatMap((entry) => {
+            if (!ignored.has(entry.path)) return [entry];
+            return input.includeIgnored === true ? [{ ...entry, ignored: true }] : [];
+          }),
           truncated: false,
         };
       }
-      return yield* Effect.gen(function* () {
+      const indexed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(
@@ -352,6 +389,9 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (input.includeIgnored !== true) return indexed;
+      const ignored = yield* ignoredEntries.list(normalizedCwd);
+      return IgnoredWorkspaceEntries.mergeIgnoredEntries(indexed, ignored, WORKSPACE_ENTRY_LIMIT);
     },
   );
 
@@ -361,4 +401,5 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(
   Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
   Layer.provide(VcsProcess.layer),
+  Layer.provide(IgnoredWorkspaceEntries.layer),
 );
