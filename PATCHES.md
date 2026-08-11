@@ -57,15 +57,27 @@ After an install, the script reads the built output and looks for one text marke
 from each patch. A missing marker means the build lost that patch, and the script
 stops with an error.
 
-| Patch | Marker                     | File that holds the marker                  |
-| ----- | -------------------------- | ------------------------------------------- |
-| 1     | `runOnWorktreeRemove`      | `dist/bin.mjs`, the server bundle           |
-| 2     | `execCommand("copy")`      | `dist/client/assets`, the web client bundle |
-| 3     | `refused-foreign-worktree` | `dist/bin.mjs`, the server bundle           |
+| Patch | Marker                                     | File that holds the marker                  |
+| ----- | ------------------------------------------ | ------------------------------------------- |
+| 1     | `runOnWorktreeRemove`                      | `dist/bin.mjs`, the server bundle           |
+| 2     | `execCommand("copy")`                      | `dist/client/assets`, the web client bundle |
+| 3     | `refused-foreign-worktree`                 | `dist/bin.mjs`, the server bundle           |
+| 4     | `Steer the agent`                          | `dist/client/assets`, the web client bundle |
+| 5     | `IgnoredWorkspaceEntries.listIgnoredPaths` | `dist/bin.mjs`, the server bundle           |
+| 5     | `t3code:file-explorer-show-ignored`        | `dist/client/assets`, the web client bundle |
+| 6     | `data-file-tree-initial-expansion`         | `dist/client/assets`, the web client bundle |
 
-The second marker is the whole call, not the method name on its own. Upstream
-already ships a syntax-highlighting grammar chunk that contains the word
-`execCommand`, so the shorter marker would pass on a build with no patch.
+Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
+its own. Upstream already ships a syntax-highlighting grammar chunk that contains
+the word `execCommand`, so the shorter marker would pass on a build with no patch.
+
+Patch 5 needs two markers, because it changes both bundles. Either one missing
+means the build lost half the patch, and half of a patch does nothing.
+
+Choose a marker upstream is unlikely to write for its own reasons. `includeIgnored`
+was rejected for Patch 5 for that reason, and the operation string and the storage
+key were chosen instead. A bundler renames variables, so a marker must be a string
+literal, a storage key, or an attribute name.
 
 ## Patch 1 — `runOnWorktreeRemove`
 
@@ -247,3 +259,175 @@ is this fork's, so upstream does not carry this fault.
 rejects a path outside T3's managed worktree root. The guard's tests prove the
 path-containment behavior, while this bundle marker proves the installed server
 contains that tested guard.
+
+## Patch 4 — steer a running turn from a phone
+
+**Commit:** `feat(web): let a phone steer a running turn from the composer`
+
+**Why.** A steer is a message you send while the agent is still working. The
+server adds that message to the turn already in flight, and the agent changes
+course. On a desktop the Enter key sends it. On a phone the Enter key writes a
+new line instead, and the composer replaced the Send button with a red Stop
+button for the whole time the agent worked. A phone therefore had no way to
+steer at all. The only choice was to stop the agent and start again, which
+throws away the work in progress.
+
+**What.** The composer keeps a Send button beside the Stop button while a turn
+runs, labelled "Steer the agent". The collapsed phone row keeps its Send button
+active during a run. A send during a run also dismisses the phone keyboard, the
+same as any other send. The button stays disabled until the composer holds
+content.
+
+**Design notes.**
+
+- No server change was needed. Sending during a running turn already steered;
+  the web client simply offered no way to do it. The proof is the desktop Enter
+  key, which reaches `onSend` through the same path with no running-state guard.
+- The button shows at every width, not only on a phone. George asked for that:
+  on a desktop it makes an action discoverable that was hidden behind a key.
+- Two guards were removed, not one. `collapsedComposerPrimaryActionDisabled`
+  disabled the collapsed row's Send button during a run, and
+  `shouldBlurMobileComposerOnSubmit` refused to dismiss the keyboard. Both
+  existed for the same belief, that a send during a run is impossible. Leaving
+  the second one would have left the keyboard covering the screen after a steer.
+- The send button markup moved into a `renderSendButton` helper so the running
+  branch and the idle branch cannot drift apart.
+
+**Files.** Edited: `apps/web/src/components/chat/ComposerPrimaryActions.tsx`,
+`apps/web/src/components/chat/ComposerPrimaryActions.test.ts`,
+`apps/web/src/components/chat/ChatComposer.tsx`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Marker.** `Steer the agent`, the button's accessible label.
+
+## Patch 5 — show the files Git ignores in the file explorer
+
+**Commit:** `feat(web): show the files Git ignores in the file explorer`
+
+**Why.** A `.env` file never appeared in the file explorer, and neither did any
+other file named in `.gitignore`. George edits those files often, so their
+absence blocked ordinary work.
+
+The cause is not in this repository. The server builds its file list with
+`FileFinder.create` from the compiled package `@ff-labs/fff-node`, and that
+package drops every ignored path inside its own binary. Its `InitOptions` and
+`SearchOptions` carry no flag to keep them. So the server never sent those
+paths, and no change in the browser could have shown them.
+
+**What.** The server asks Git for the ignored paths as a second source, and
+merges them into the answer when the caller sets `includeIgnored`. A control in
+the file explorer header sets that preference. It is off by default and the
+browser remembers it. Three lists follow the one control: the file explorer
+tree, the `@` mention menu, and the file picker.
+
+**Design notes.**
+
+- `.git` and `node_modules` stay hidden at all times. This is what makes the
+  patch affordable rather than a nice idea. Measured on this repository:
+  `git ls-files --others --ignored --exclude-standard` returns 230,620 paths in
+  2.0 seconds, which is nine times the 25,000 entry cap and would push every
+  real file out of the tree. Adding pathspecs that exclude those two names
+  leaves 1,610 paths in 0.84 seconds.
+- The pathspec is not the only guard. `toIgnoredEntries` also drops any path
+  holding one of those segments, so a pathspec that a future Git version reads
+  differently cannot flood the tree.
+- `apps/server/src/ws.ts` needed no edit, which beats fork rule 4 outright. Both
+  handlers pass the whole request object through. The list handler spreads that
+  object into `ProjectListEntriesError`, but that class is a
+  `Schema.TaggedErrorClass` with a fixed field list, so it drops the new field
+  and the wire format is unchanged.
+- The contract field is optional. That is why no mobile file changed and why
+  every existing test still proves the old behavior: an absent field means
+  "hide the ignored files", which is what every caller sent before.
+- The preference read sits inside the two query hooks, `useProjectEntriesQuery`
+  and `useProjectPathSearch`, not at the call sites. That is what keeps
+  `ChatComposer.tsx`, `ProjectFilePicker.tsx` and `packages/client-runtime` out
+  of the diff. It also means the client cache key changes on its own, because
+  the key is built from the request object.
+- The preference uses `useLocalStorage`, not `ClientSettings`. The settings
+  route would add two more edits to `packages/contracts/src/settings.ts` for no
+  user gain, and `useLocalStorage` already tells every component in the tab
+  about a change, so all three lists update together.
+- Ignored results rank after the indexed results in a search, never mixed in.
+  The native index returns no score, so the two lists cannot interleave by rank.
+- The ignored list is cached for 60 seconds per workspace. `refresh` also clears
+  it. The expiry is the part that matters: a `.env` file created in a terminal
+  fires no refresh event, so without an expiry it would stay invisible until the
+  server restarted.
+- **The control does nothing in a folder that is not a Git repository.** Git
+  cannot list ignored files there. The service treats that case, a missing Git,
+  a timeout and a broken repository identically: an empty list. Its error type
+  is `never`, so the control can never break the file explorer. Showing ignored
+  files in a plain folder needs a filesystem walk, which rule 6 forbids.
+
+**Files.** New: `apps/server/src/workspace/IgnoredWorkspaceEntries.ts` and its
+test, `apps/web/src/components/files/showIgnoredFiles.tsx`. Edited:
+`packages/contracts/src/project.ts`,
+`apps/server/src/workspace/WorkspaceEntries.ts`, `apps/web/src/state/queries.ts`,
+`apps/web/src/components/files/{projectFilesQueryState,FileBrowserPanel}.tsx`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. Upstream
+carries the same gap.
+
+**Risk to watch.** A project with a very large ignored folder, for example a
+Python `.venv`, returns far more than the 1,610 paths this repository gives. The
+5,000 entry cap and the 10 second timeout keep that bounded, but the tree would
+then show a partial `.venv`. The fix, if it ever bites, is a second pass with
+`--directory --no-empty-directory`, which took 0.057 seconds here and returns
+one row per wholly-ignored folder.
+
+## Patch 6 — every folder starts shut in the file explorer
+
+**Commit:** `feat(web): start every folder shut in the file explorer`
+
+**Why.** The file explorer opened the top two levels of folders by itself.
+George wants a quiet tree that opens only where he taps.
+
+**What.** `initialExpansion` changes from `1` to `"closed"`, and the panel now
+carries the reader's open folders across an entry refresh.
+
+**Design notes.**
+
+- The one-word change alone would have made the product worse, not better. The
+  panel calls `model.resetPaths(treePaths)` on every entry refresh, roughly
+  twice a minute, and that call builds a new store which forgets which folders
+  are open. Until now the loss was invisible, because depth 1 came back each
+  time. With folders shut by default, a folder George opened would shut again on
+  its own within a minute.
+- `readExpandedDirectoryPaths` reads the open folders before the panel swaps in
+  the new entry kinds, because the current kinds describe the rows the tree
+  still holds. The list goes back through `resetPaths`'s
+  `options.initialExpandedPaths`.
+- The reveal effect is untouched. Opening a file from the chat or the file
+  picker still opens the folders that hold it. George asked to keep that.
+- `flattenEmptyDirectories` stays `true`. A chain of single-child folders is one
+  row, which is a display choice and not an expansion.
+- The tree library is at `1.0.0-beta.4`. Both `initialExpandedPaths` and
+  `isExpanded` are in its published types, so the risk is low, but a version
+  bump should re-check this patch by hand.
+- Upstream created its own `fileTreeExpansion.ts`, with the same name this patch
+  chose, in `0.0.38-nightly.20260901.1246`. Upstream's file holds
+  `areAllDirectoriesExpanded` and `setAllDirectoriesExpanded`, which serve its
+  expand-all and collapse-all button. This patch no longer creates that file. It
+  adds `readExpandedDirectoryPaths` to upstream's file, and it adds its own tests
+  to upstream's test file. The two functions do different work and neither reads
+  the other. The fork's test helper carries the name `makeOpenFolderModel`,
+  because upstream's half of that test file already has a `makeModel` that
+  behaves differently: upstream's helper answers with a row for every path, and
+  the fork's helper answers `undefined` for a path the tree no longer holds.
+  Expect a conflict in both files on the day upstream edits either one.
+- The two features work together. The expand-all button opens every folder, and
+  this patch then carries that whole open tree across the next entry refresh,
+  because it reads the live `isExpanded()` state rather than a stored setting. A
+  test in `fileTreeExpansion.test.ts` holds that pair together.
+
+**Files.** Edited: `apps/web/src/components/files/FileBrowserPanel.tsx`,
+`apps/web/src/components/files/fileTreeExpansion.ts`, and
+`apps/web/src/components/files/fileTreeExpansion.test.ts`. The last two are
+upstream files, and this patch adds one function to each.
+
+**Upstream status.** Not filed. This is a preference, not a fault.
+
+**Marker.** `data-file-tree-initial-expansion`, an attribute on the panel
+element.
