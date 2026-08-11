@@ -27,6 +27,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { ShowIgnoredFilesToggle } from "./showIgnoredFiles";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -492,6 +493,7 @@ export default function FileBrowserPanel({
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
+        <ShowIgnoredFilesToggle />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
