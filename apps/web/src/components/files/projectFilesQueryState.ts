@@ -17,8 +17,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
-
-import { useShowIgnoredFiles } from "./showIgnoredFiles";
+import { useShowIgnoredFiles } from "~/showIgnoredFilesPreference";
 
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(

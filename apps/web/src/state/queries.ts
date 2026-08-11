@@ -23,8 +23,8 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useShowIgnoredFiles } from "../components/files/showIgnoredFiles";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useShowIgnoredFiles } from "../showIgnoredFilesPreference";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
