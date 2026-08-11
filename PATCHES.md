@@ -73,6 +73,7 @@ stops with an error.
 | 5     | `IgnoredWorkspaceEntries.listIgnoredPaths` | `dist/bin.mjs`, the server bundle           |
 | 5     | `t3code:file-explorer-show-ignored`        | `dist/client/assets`, the web client bundle |
 | 6     | `data-file-tree-initial-expansion`         | `dist/client/assets`, the web client bundle |
+| 7     | `A pre-push hook may have rejected it.`    | `dist/bin.mjs`, the server bundle           |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -445,3 +446,55 @@ upstream files, and this patch adds one function to each.
 
 **Marker.** `data-file-tree-initial-expansion`, an attribute on the panel
 element.
+
+## Patch 7 — give `git push` time to run the pre-push hook
+
+**Commit:** `fix(server): give git push time to run the pre-push hook`
+
+**Why.** A commit and push from T3 Code failed with:
+
+```
+Git command failed in GitVcsDriver.pushCurrentBranch.pushWithUpstream (…):
+Git command timed out.
+```
+
+That message reads as a network fault. It was not one. `git push` runs the
+repository's pre-push hook, and people put whole test suites in that hook. Every
+push in `pushCurrentBranch` used `runGit`, which passes no timeout, so all four
+fell back to `DEFAULT_TIMEOUT_MS`, 30 seconds. A hook that runs a type check
+passes 30 seconds easily.
+
+Upstream already understood the problem for the other half of the pair.
+`COMMIT_TIMEOUT_MS` in `apps/server/src/git/GitManager.ts` allows the pre-commit
+hook 10 minutes, and `GitManager` passes it on every commit. Push received no
+such allowance. The asymmetry looks like an oversight, not a decision.
+
+**What.** A new `runGitPush` helper carries `PUSH_TIMEOUT_MS`, 10 minutes, which
+is the value commit already uses. All four push commands in `pushCurrentBranch`
+call it. Both callers of `pushCurrentBranch` gain the longer allowance with no
+change of their own, and no interface changed.
+
+The helper also names a better cause when a push exits non-zero. The default
+detail says only that Git exited non-zero; a rejected pre-push hook is the
+common reason and is worth naming.
+
+**Design notes.**
+
+- The timeout sits inside `pushCurrentBranch`, not in its options. Adding an
+  option would have meant editing both call sites and the `GitVcsDriver`
+  interface for a value neither caller would ever vary.
+- Only `push` changed. A longer default for every Git command would make a
+  genuinely hung `fetch` take 10 minutes to report, and no hook runs there.
+- Commit needed no change. It already had its 10 minutes.
+- The regression test drives a real repository and a real push, and wraps the
+  process spawner so a push sleeps five virtual minutes. Effect's test clock
+  makes that cost about one real second. Without the patch the test fails with
+  the exact message quoted above.
+
+**Files.** Edited: `apps/server/src/vcs/GitVcsDriverCore.ts` and its test.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. Upstream
+carries the same 30 second limit on push.
+
+**Marker.** `A pre-push hook may have rejected it.`, the failure detail the push
+helper supplies.
