@@ -29,7 +29,7 @@ import {
 } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
-import { ShowIgnoredFilesToggle } from "./showIgnoredFiles";
+import { ShowIgnoredFilesToggle } from "./ShowIgnoredFilesToggle";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
