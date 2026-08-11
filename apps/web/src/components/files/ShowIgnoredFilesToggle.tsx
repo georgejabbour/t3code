@@ -1,30 +1,11 @@
 import { Eye, EyeOff } from "lucide-react";
-import * as Schema from "effect/Schema";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useShowIgnoredFiles } from "~/showIgnoredFilesPreference";
 
 /**
- * This key is the fork's build marker for the "show ignored files" patch. It
- * reaches the browser storage interface as a literal, so a bundler cannot
- * rename it. A build that lost the patch loses the marker too.
- */
-const SHOW_IGNORED_FILES_KEY = "t3code:file-explorer-show-ignored";
-
-/**
- * Whether the file lists hold the files that git ignores.
- *
- * One preference serves three lists: the file explorer tree, the `@` mention
- * menu in the composer, and the file picker. `useLocalStorage` tells every
- * component in the tab about a change, so all three lists update together.
- */
-export function useShowIgnoredFiles() {
-  return useLocalStorage(SHOW_IGNORED_FILES_KEY, false, Schema.Boolean);
-}
-
-/**
- * The control that flips the preference.
+ * The control that shows or hides the files Git ignores.
  *
  * The label names what a tap does next, not the state the tree is in now.
  */
