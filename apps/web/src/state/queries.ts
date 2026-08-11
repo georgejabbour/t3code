@@ -24,7 +24,6 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useShowIgnoredFiles } from "../components/files/showIgnoredFiles";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
@@ -207,11 +206,6 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 type ProjectPathSearchTarget = ComposerPathSearchTarget & {
   readonly kind?: ProjectEntryKind | undefined;
   readonly imageOnly?: boolean | undefined;
-  /**
-   * Set from the file explorer preference, not by the caller. It rides on the
-   * target so the debounce treats a flip of the control as a new search.
-   */
-  readonly includeIgnored?: boolean | undefined;
 };
 
 export function areProjectPathSearchTargetsEqual(
@@ -223,8 +217,7 @@ export function areProjectPathSearchTargetsEqual(
     left.cwd === right.cwd &&
     left.query === right.query &&
     left.kind === right.kind &&
-    left.imageOnly === right.imageOnly &&
-    left.includeIgnored === right.includeIgnored
+    left.imageOnly === right.imageOnly
   );
 }
 
@@ -234,9 +227,6 @@ export function useProjectPathSearch(
   options?: { readonly allowEmptyQuery?: boolean },
 ) {
   const allowEmptyQuery = options?.allowEmptyQuery === true;
-  // The file explorer control owns this preference, and every path search
-  // follows it, so the `@` mention menu and the file picker agree with the tree.
-  const [showIgnored] = useShowIgnoredFiles();
   const normalizedTarget = useMemo(
     () => ({
       environmentId: target.environmentId,
@@ -244,9 +234,8 @@ export function useProjectPathSearch(
       query: target.query == null ? null : target.query.trim(),
       kind: target.kind,
       imageOnly: target.imageOnly,
-      includeIgnored: showIgnored,
     }),
-    [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query, showIgnored],
+    [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
   const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
@@ -264,7 +253,6 @@ export function useProjectPathSearch(
             limit,
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
-            ...(debouncedTarget.includeIgnored ? { includeIgnored: true } : {}),
           },
         }
       : null;

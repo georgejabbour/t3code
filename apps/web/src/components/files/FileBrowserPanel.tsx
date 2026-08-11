@@ -32,7 +32,7 @@ import {
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
-import { ShowIgnoredFilesToggle } from "./showIgnoredFiles";
+import { ShowIgnoredFilesToggle } from "./ShowIgnoredFilesToggle";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
