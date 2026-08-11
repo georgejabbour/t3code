@@ -22,6 +22,9 @@ export const ProjectSearchEntriesInput = Schema.Struct({
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
   kind: Schema.optional(ProjectEntryKind),
   imageOnly: Schema.optional(Schema.Boolean),
+  // Absent means "hide the files git ignores", which is what every caller
+  // wanted before the file explorer grew a control for it.
+  includeIgnored: Schema.optional(Schema.Boolean),
 });
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
@@ -73,9 +76,11 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  // Present for immediate filesystem children, including ignored entries; empty means root.
-  // Omitted preserves the indexed recursive listing used by older clients.
+  // A present value requests immediate children. An empty value requests the root.
+  // An omitted value requests the indexed recursive list used by older clients.
   directoryPath: Schema.optional(TrimmedString),
+  // Absent means "hide the files git ignores". See ProjectSearchEntriesInput.
+  includeIgnored: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 
