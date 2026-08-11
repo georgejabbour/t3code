@@ -356,6 +356,11 @@ tree, the `@` mention menu, and the file picker.
   route would add two more edits to `packages/contracts/src/settings.ts` for no
   user gain, and `useLocalStorage` already tells every component in the tab
   about a change, so all three lists update together.
+- The preference hook lives in `apps/web/src/showIgnoredFilesPreference.ts`, not
+  beside the button, and the button is its own file. `state/queries.ts` reads
+  that hook, and a state module must not pull button and tooltip components into
+  its module graph. `apps/web/src/editorPreferences.ts` sits at the same level
+  for the same reason.
 - Ignored results rank after the indexed results in a search, never mixed in.
   The native index returns no score, so the two lists cannot interleave by rank.
 - The ignored list is cached for 60 seconds per workspace. `refresh` also clears
@@ -369,10 +374,12 @@ tree, the `@` mention menu, and the file picker.
   files in a plain folder needs a filesystem walk, which rule 6 forbids.
 
 **Files.** New: `apps/server/src/workspace/IgnoredWorkspaceEntries.ts` and its
-test, `apps/web/src/components/files/showIgnoredFiles.tsx`. Edited:
+test, `apps/web/src/showIgnoredFilesPreference.ts`,
+`apps/web/src/components/files/ShowIgnoredFilesToggle.tsx`. Edited:
 `packages/contracts/src/project.ts`,
 `apps/server/src/workspace/WorkspaceEntries.ts`, `apps/web/src/state/queries.ts`,
-`apps/web/src/components/files/{projectFilesQueryState,FileBrowserPanel}.tsx`.
+`apps/web/src/components/files/projectFilesQueryState.ts`,
+`apps/web/src/components/files/FileBrowserPanel.tsx`.
 
 **Upstream status.** Not filed, for the reason given in Patch 1. Upstream
 carries the same gap.
