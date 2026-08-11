@@ -27,7 +27,7 @@ import {
   setAllDirectoriesExpanded,
 } from "./fileTreeExpansion";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
-import { ShowIgnoredFilesToggle } from "./showIgnoredFiles";
+import { ShowIgnoredFilesToggle } from "./ShowIgnoredFilesToggle";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
