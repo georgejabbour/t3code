@@ -14,6 +14,8 @@ import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
+import { useShowIgnoredFiles } from "./showIgnoredFiles";
+
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
   AsyncResult.initial<ProjectReadFileResult, never>(false),
@@ -29,8 +31,15 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
+export function getProjectEntriesQueryAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  includeIgnored = false,
+) {
+  return projectEnvironment.listEntries({
+    environmentId,
+    input: { cwd, ...(includeIgnored ? { includeIgnored: true } : {}) },
+  });
 }
 
 export function getProjectFileQueryAtom(
@@ -125,7 +134,8 @@ export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const [showIgnored] = useShowIgnoredFiles();
+  const atom = getProjectEntriesQueryAtom(environmentId, cwd, showIgnored);
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
