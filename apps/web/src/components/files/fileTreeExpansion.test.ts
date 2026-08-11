@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import type { ProjectEntry } from "@t3tools/contracts";
+
+import {
+  areAllDirectoriesExpanded,
+  readExpandedDirectoryPaths,
+  setAllDirectoriesExpanded,
+} from "./fileTreeExpansion";
 
 type FakeDirectoryItem = {
   isDirectory: () => true;
@@ -56,5 +62,77 @@ describe("file tree expansion", () => {
     const collapse = vi.spyOn(item, "collapse");
     setAllDirectoriesExpanded(model, ["src/"], true);
     expect(collapse).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A tree that holds only the identifiers it was given. `getItem` answers
+ * `undefined` for anything else, the way the real tree answers for a row it no
+ * longer holds.
+ */
+function makeOpenFolderModel(expandedIds: ReadonlyArray<string>, knownIds?: ReadonlyArray<string>) {
+  const known = new Set(knownIds ?? expandedIds);
+  return {
+    getItem: (path: string) =>
+      known.has(path) ? { isExpanded: () => expandedIds.includes(path) } : undefined,
+  };
+}
+
+const kinds = (entries: Record<string, ProjectEntry["kind"]>) =>
+  new Map(Object.entries(entries)) as ReadonlyMap<string, ProjectEntry["kind"]>;
+
+describe("readExpandedDirectoryPaths", () => {
+  it("reports an open folder with the trailing separator the tree uses", () => {
+    const model = makeOpenFolderModel(["src/"]);
+
+    expect(readExpandedDirectoryPaths(model, kinds({ src: "directory" }))).toEqual(["src/"]);
+  });
+
+  it("leaves out a folder the reader has shut", () => {
+    const model = makeOpenFolderModel([], ["src/"]);
+
+    expect(readExpandedDirectoryPaths(model, kinds({ src: "directory" }))).toEqual([]);
+  });
+
+  it("ignores files", () => {
+    const model = makeOpenFolderModel(["README.md"]);
+
+    expect(readExpandedDirectoryPaths(model, kinds({ "README.md": "file" }))).toEqual([]);
+  });
+
+  it("ignores a folder the tree no longer holds", () => {
+    const model = makeOpenFolderModel([]);
+
+    expect(readExpandedDirectoryPaths(model, kinds({ removed: "directory" }))).toEqual([]);
+  });
+
+  it("falls back to the identifier without a separator", () => {
+    const model = makeOpenFolderModel(["src"], ["src"]);
+
+    expect(readExpandedDirectoryPaths(model, kinds({ src: "directory" }))).toEqual(["src/"]);
+  });
+
+  it("reports every open folder and keeps the shut ones out", () => {
+    const model = makeOpenFolderModel(
+      ["src/", "src/components/"],
+      ["src/", "src/components/", "docs/"],
+    );
+
+    expect(
+      readExpandedDirectoryPaths(
+        model,
+        kinds({ src: "directory", "src/components": "directory", docs: "directory" }),
+      ),
+    ).toEqual(["src/", "src/components/"]);
+  });
+
+  it("keeps a whole tree the reader opened with the expand-all control", () => {
+    const expanded = { "src/": false, "docs/": false };
+    const model = makeModel(expanded);
+    setAllDirectoriesExpanded(model, ["src/", "docs/"], true);
+
+    expect(
+      readExpandedDirectoryPaths(model, kinds({ src: "directory", docs: "directory" })),
+    ).toEqual(["src/", "docs/"]);
   });
 });
