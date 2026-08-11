@@ -49,9 +49,16 @@ tests fail straight after. Two cases appeared while verifying
    folder through the `sessionCwd` helper there. Any new upstream test in that
    file needs the same helper.
 
+3. Upstream's `packages/shared/src/t3ProjectFile.test.ts` lists every script
+   field by name. Patch 1 adds `runOnWorktreeRemove` to that schema, so the
+   list in that test needs the new name too. Any upstream test that enumerates
+   a schema this fork extends breaks the same way.
+
 The second case was broken from 8 August 2026 and nobody saw it, because the
-updater runs three test files only. Run the tests of every file this fork edits
-before an install, not the three the updater names.
+updater runs three test files only. The third case was broken for as long, and
+found on 11 August 2026 by running the whole suite. Run the tests of every file
+this fork edits before an install, not the three the updater names. Better, run
+`pnpm test` and read the result.
 
 After an install, the script reads the built output and looks for one text marker
 from each patch. A missing marker means the build lost that patch, and the script
