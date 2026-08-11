@@ -21,6 +21,7 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
+import { ShowIgnoredFilesToggle } from "./showIgnoredFiles";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -361,6 +362,7 @@ export default function FileBrowserPanel({
         data-surface-subheader
       >
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={handleRefresh} />
+        <ShowIgnoredFilesToggle />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
