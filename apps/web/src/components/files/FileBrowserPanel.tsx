@@ -22,7 +22,11 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  readExpandedDirectoryPaths,
+  setAllDirectoriesExpanded,
+} from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -247,6 +251,9 @@ export default function FileBrowserPanel({
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
+    // Every folder starts shut. A folder opens when the reader taps it, or
+    // when the reveal effect below opens the parents of a file that was
+    // opened from somewhere else.
     initialExpansion: "closed",
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
@@ -357,11 +364,14 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!ready) return;
     if (previousTreePathsRef.current === treePaths) return;
+    // Read the open folders before swapping the kinds: resetPaths forgets them,
+    // and the current kinds describe the rows the tree still holds.
+    const initialExpandedPaths = readExpandedDirectoryPaths(model, entryKindsRef.current);
     entryKindsRef.current = entryKinds;
     const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
     if (previousTreePaths === null) {
-      model.resetPaths(treePaths);
+      model.resetPaths(treePaths, { initialExpandedPaths });
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
@@ -463,6 +473,7 @@ export default function FileBrowserPanel({
       ref={panelRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
+      data-file-tree-initial-expansion="closed"
     >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
