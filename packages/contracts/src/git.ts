@@ -168,6 +168,18 @@ export const VcsRunWorktreeArchiveScriptInput = Schema.Struct({
 });
 export type VcsRunWorktreeArchiveScriptInput = typeof VcsRunWorktreeArchiveScriptInput.Type;
 
+/**
+ * Whether the archive script ran.
+ *
+ * `ran` is false when the project has no such script, and when the worktree
+ * folder is already gone. Nothing stopped in either case, so the client says
+ * nothing rather than reporting that the workspace's services went down.
+ */
+export const VcsRunWorktreeArchiveScriptResult = Schema.Struct({
+  ran: Schema.Boolean,
+});
+export type VcsRunWorktreeArchiveScriptResult = typeof VcsRunWorktreeArchiveScriptResult.Type;
+
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
