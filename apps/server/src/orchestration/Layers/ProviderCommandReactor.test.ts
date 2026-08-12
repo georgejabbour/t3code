@@ -64,6 +64,7 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
@@ -465,6 +466,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(T3ProjectFileLoader.layer),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -1935,6 +1937,95 @@ describe("ProviderCommandReactor", () => {
     expect(harness.createWorktree.mock.invocationCallOrder[0]).toBeLessThan(
       harness.startSession.mock.invocationCallOrder[0]!,
     );
+  });
+
+
+  it("names the branch with the prefix the project sets in t3.json", async () => {
+    const projectDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-branch-prefix-"));
+    NodeFS.writeFileSync(
+      NodePath.join(projectDir, "t3.json"),
+      JSON.stringify({ branchPrefix: "george" }),
+    );
+    const harness = await createHarness({ baseDir: projectDir });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-branch-prefix"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "george/1234abcd",
+        worktreePath: projectDir,
+      }),
+    );
+
+    harness.generateBranchName.mockImplementation(() => Effect.succeed({ branch: "fix login" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-branch-prefix"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-branch-prefix"),
+          role: "user",
+          text: "Fix the login screen.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      oldBranch: "george/1234abcd",
+      newBranch: "george/fix-login",
+    });
+  });
+
+  it("leaves a branch alone when it does not carry the project's prefix", async () => {
+    // No t3.json, so the prefix is the default. `george/1234abcd` is then a
+    // branch the user named, and the first-turn rename must not touch it.
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-foreign-branch"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "george/1234abcd",
+        worktreePath: "/tmp/provider-project-worktree",
+      }),
+    );
+
+    harness.generateBranchName.mockImplementation(() => Effect.succeed({ branch: "fix login" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-foreign-branch"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-foreign-branch"),
+          role: "user",
+          text: "Fix the login screen.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    // The turn reaching the provider means the reactor finished this event, so
+    // a rename would already have been asked for by now.
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.renameBranch).not.toHaveBeenCalled();
   });
 
   it("forwards codex model options through session start and turn send", async () => {
