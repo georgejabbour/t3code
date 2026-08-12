@@ -28,6 +28,7 @@ import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
 import { TextGeneration } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
+import * as T3ProjectFileLoader from "../src/project/T3ProjectFileLoader.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
@@ -430,6 +431,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+      Layer.provideMerge(T3ProjectFileLoader.layer),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(
         options?.tracer ? Layer.succeed(Tracer.Tracer, options.tracer) : Layer.empty,

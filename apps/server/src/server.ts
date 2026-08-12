@@ -248,8 +248,8 @@ const PlatformServicesLive = NodeServices.layer;
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(ProviderCommandReactorLive.pipe(Layer.provide(T3ProjectFileLoader.layer))),
+  Layer.provideMerge(CheckpointReactorLive.pipe(Layer.provide(T3ProjectFileLoader.layer))),
   Layer.provideMerge(StorageCleanup.layer),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
