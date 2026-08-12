@@ -373,6 +373,7 @@ export const makeOrchestrationIntegrationHarness = (
           refreshPullRequestStatus: () =>
             Effect.die("refreshPullRequestStatus should not be called in this test"),
           streamStatus: () => Stream.empty,
+          streamAllStatusChanges: () => Stream.empty,
         }),
       ),
       Layer.provideMerge(
