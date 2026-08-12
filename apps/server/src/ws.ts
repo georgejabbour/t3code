@@ -1320,6 +1320,9 @@ const makeWsRpcLayer = (
                   newRefName: prepareWorktree.branch,
                   baseRefName: prepareWorktree.baseBranch,
                   path: null,
+                  // The first turn renames the placeholder branch.
+                  // Keep the stable thread name for the worktree folder.
+                  directoryName: `thread-${command.threadId}`,
                 },
                 {
                   progress: {
