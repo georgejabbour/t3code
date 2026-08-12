@@ -2383,7 +2383,9 @@ const makeWsRpcLayer = (
             WS_METHODS.vcsRunWorktreeArchiveScript,
             worktreeArchiveScriptRunner
               .run({ workspaceRoot: input.cwd, worktreePath: input.path })
-              .pipe(Effect.asVoid),
+              // The client shows a toast only for a script that really ran, so
+              // it has to hear which of the three outcomes this was.
+              .pipe(Effect.map((result) => ({ ran: result.status === "ok" }))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
