@@ -57,6 +57,26 @@ function worktreeArchiveScriptError(result: {
   return isWorktreeArchiveScriptError(error) ? error : null;
 }
 
+/**
+ * What the teardown toast should report once the archive-script call settles.
+ *
+ * `nothing-to-do` covers a project that has no archive script, and a worktree
+ * folder that is already gone. Neither one stopped a service, so the toast
+ * leaves rather than claiming work that never happened. A server too old to
+ * report `ran` leaves it undefined, and that result still reads as a real run.
+ */
+export function archiveScriptOutcome(result: {
+  readonly _tag: string;
+  readonly value?: { readonly ran?: boolean | undefined } | undefined;
+}):
+  | { readonly kind: "failed"; readonly error: WorktreeArchiveScriptError }
+  | { readonly kind: "ran" }
+  | { readonly kind: "nothing-to-do" } {
+  const error = worktreeArchiveScriptError(result);
+  if (error) return { kind: "failed", error };
+  return result.value?.ran === false ? { kind: "nothing-to-do" } : { kind: "ran" };
+}
+
 function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
   const output = [error.stderr, error.stdout]
     .map((part) => part.trim())
@@ -256,9 +276,13 @@ export function useThreadActions() {
           environmentId: input.environmentId,
           input: { cwd: input.workspaceRoot, path: input.worktreePath },
         });
-        const error = worktreeArchiveScriptError(result);
-        if (error) {
-          toastManager.update(toastId, teardownFailedToast(error, "Archive script failed"));
+        const outcome = archiveScriptOutcome(result);
+        if (outcome.kind === "failed") {
+          toastManager.update(toastId, teardownFailedToast(outcome.error, "Archive script failed"));
+          return;
+        }
+        if (outcome.kind === "nothing-to-do") {
+          toastManager.close(toastId);
           return;
         }
         toastManager.update(toastId, teardownSucceededToast(input.label));
