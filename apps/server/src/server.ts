@@ -110,6 +110,7 @@ import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as WorktreeBranchDrift from "./orchestration-v2/WorktreeBranchDrift.ts";
 import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
@@ -516,6 +517,7 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 
 const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  WorktreeBranchDrift.layer,
   Layer.effectDiscard(
     Effect.flatMap(ArchivedThreadReaper.ArchivedThreadReaper, (service) => service.start()),
   ).pipe(
