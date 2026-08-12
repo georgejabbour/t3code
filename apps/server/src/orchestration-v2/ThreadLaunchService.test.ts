@@ -1095,6 +1095,10 @@ it.effect("names the worktree itself when the client provides no branch", () =>
         harness.createWorktree.mock.calls[0]?.[0]?.newRefName ?? "",
         /^t3code\/[0-9a-f]{8}$/u,
       );
+      assert.equal(
+        harness.createWorktree.mock.calls[0]?.[0]?.directoryName,
+        `thread-${launched.threadId}`,
+      );
       yield* waitUntil(() =>
         threads
           .getThreadProjection(launched.threadId)
