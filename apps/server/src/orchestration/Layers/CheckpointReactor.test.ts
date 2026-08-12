@@ -35,7 +35,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
+import { type VcsStatusChange, VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
@@ -324,6 +324,27 @@ describe("CheckpointReactor", () => {
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-checkpoint-reactor-test-",
     });
+    const statusChangePubSub = Effect.runSync(PubSub.unbounded<VcsStatusChange>());
+    // Report a branch for the thread's worktree the way the status poll does,
+    // so a test can drift the checkout without completing a turn.
+    const emitStatusChange = (refName: string | null): void => {
+      Effect.runSync(
+        PubSub.publish(statusChangePubSub, {
+          cwd: options?.threadWorktreePath ?? cwd,
+          event: {
+            _tag: "localUpdated",
+            local: {
+              isRepo: true,
+              hasPrimaryRemote: false,
+              isDefaultRef: false,
+              refName,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            },
+          },
+        }),
+      );
+    };
     const vcsStatusBroadcasterLayer = Layer.succeed(VcsStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
       refreshLocalStatus: (cwd: string) =>
@@ -342,6 +363,7 @@ describe("CheckpointReactor", () => {
         ),
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
+      streamAllStatusChanges: () => Stream.fromPubSub(statusChangePubSub),
     });
 
     const layer = CheckpointReactorLive.pipe(
@@ -461,6 +483,7 @@ describe("CheckpointReactor", () => {
       provider,
       cwd,
       drain,
+      emitStatusChange,
     };
   }
 
@@ -591,6 +614,30 @@ describe("CheckpointReactor", () => {
     const snapshot = await harness.readModel();
     const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.branch).toBe("t3code/renamed-by-agent");
+  });
+
+  it("adopts a drifted checkout from a status change, without a turn completing", async () => {
+    // The turn never completes here. Before this, the thread's pull request
+    // stayed hidden for the whole turn, because the client only shows it when
+    // the recorded branch equals the checked-out one.
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+    });
+
+    harness.emitStatusChange("t3code/renamed-mid-turn");
+
+    await waitForEvent(
+      harness.engine,
+      (event) =>
+        event.type === "thread.meta-updated" &&
+        (event as unknown as { payload: { branch?: string } }).payload.branch ===
+          "t3code/renamed-mid-turn",
+    );
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("t3code/renamed-mid-turn");
   });
 
   it("does not adopt a drifted checkout when the worktree is shared by another thread", async () => {

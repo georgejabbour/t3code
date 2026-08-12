@@ -9,6 +9,7 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
   type VcsStatusLocalResult,
+  type VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -38,7 +39,7 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
-import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
+import { type VcsStatusChange, VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -638,6 +639,45 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // The branch last seen in each folder. An ordinary working-tree change
+  // publishes a status too, and that must cost a map lookup rather than a read
+  // of the whole thread projection.
+  const lastSeenBranchByCwd = new Map<string, string | null>();
+
+  const localStatusOfChange = (event: VcsStatusStreamEvent): VcsStatusLocalResult | null =>
+    event._tag === "remoteUpdated" ? null : event.local;
+
+  const followWorktreeBranchDriftOnStatusChange = Effect.fn(
+    "followWorktreeBranchDriftOnStatusChange",
+  )(function* (change: VcsStatusChange) {
+    const local = localStatusOfChange(change.event);
+    if (local === null) {
+      return;
+    }
+
+    const seenThisFolderBefore = lastSeenBranchByCwd.has(change.cwd);
+    const previousBranch = lastSeenBranchByCwd.get(change.cwd) ?? null;
+    lastSeenBranchByCwd.set(change.cwd, local.refName);
+    if (seenThisFolderBefore && previousBranch === local.refName) {
+      return;
+    }
+
+    const shell = yield* projectionSnapshotQuery.getShellSnapshot();
+    const owningThreads = shell.threads.filter((thread) => thread.worktreePath === change.cwd);
+    const owningThread = owningThreads.length === 1 ? owningThreads[0] : undefined;
+    // A folder that two threads share keeps the strict branch matching, which
+    // is the same rule followWorktreeBranchDrift applies for itself.
+    if (owningThread === undefined) {
+      return;
+    }
+
+    yield* followWorktreeBranchDrift({
+      threadId: owningThread.id,
+      cwd: change.cwd,
+      local,
+    });
+  });
+
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fn(
     "ensurePreTurnBaselineFromDomainTurnStart",
   )(function* (
@@ -948,6 +988,17 @@ const make = Effect.gen(function* () {
         }
         return worker.enqueue({ source: "runtime", event });
       }),
+    );
+
+    // Turn completion is too late on its own. A `git checkout` in the middle of
+    // a long turn leaves the thread's recorded branch stale, and the client
+    // hides the thread's pull request for the rest of that turn. The status
+    // poll already reports the checked-out branch about once a second, so
+    // follow the drift as soon as that branch changes.
+    yield* forkParked(
+      Stream.runForEach(vcsStatusBroadcaster.streamAllStatusChanges(), (change) =>
+        followWorktreeBranchDriftOnStatusChange(change),
+      ),
     );
   });
 
