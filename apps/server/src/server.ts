@@ -244,8 +244,8 @@ const PlatformServicesLive = Layer.unwrap(
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(ProviderCommandReactorLive.pipe(Layer.provide(T3ProjectFileLoader.layer))),
+  Layer.provideMerge(CheckpointReactorLive.pipe(Layer.provide(T3ProjectFileLoader.layer))),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
