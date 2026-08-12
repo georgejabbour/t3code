@@ -74,13 +74,16 @@ stops with an error.
 | 5     | `t3code:file-explorer-show-ignored`        | `dist/client/assets`, the web client bundle |
 | 6     | `data-file-tree-initial-expansion`         | `dist/client/assets`, the web client bundle |
 | 7     | `A pre-push hook may have rejected it.`    | `dist/bin.mjs`, the server bundle           |
+| 8     | `First segment of the branch name`         | `dist/bin.mjs`, the server bundle           |
+| 8     | `Refresh git and pull request status`      | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
 the word `execCommand`, so the shorter marker would pass on a build with no patch.
 
 Patch 5 needs two markers, because it changes both bundles. Either one missing
-means the build lost half the patch, and half of a patch does nothing.
+means the build lost half the patch, and half of a patch does nothing. Patch 8
+needs two for the same reason.
 
 Choose a marker upstream is unlikely to write for its own reasons. `includeIgnored`
 was rejected for Patch 5 for that reason, and the operation string and the storage
@@ -498,3 +501,79 @@ carries the same 30 second limit on push.
 
 **Marker.** `A pre-push hook may have rejected it.`, the failure detail the push
 helper supplies.
+
+## Patch 8 — branch naming a repository can live with
+
+**Commits:**
+
+- `feat: let a project set its own branch prefix in t3.json`
+- `fix(server): name a thread's worktree folder after the thread`
+- `fix(server): follow a branch change as the status poll reports it`
+- `feat(web): add a refresh button for git and pull request status`
+
+**Why.** A worktree showed no pull request after its branch was renamed from
+`t3code/cloudflare-r2-object-storage` to `george/nrg-33`. Reading the code
+showed the association was healthy and recovered on its own. Under it sat a
+real design gap, and three smaller faults that made the gap hard to see.
+
+The gap: T3 Code named every branch `t3code/<slug>`, and a repository with its
+own branch convention could not keep it. `nerdragegaming/CLAUDE.md` requires
+`<username>/<ticket>`. Any repository with a branch rule, or with continuous
+integration keyed on a branch prefix, meets this on its first task. The two ways
+out both cost something. Keep `t3code/…` and break the convention, or rename by
+hand and lose the pull request badge until the next turn ends.
+
+**What.**
+
+1. **A project sets `branchPrefix` in `t3.json`.** A project that sets nothing
+   keeps `t3code`, so nothing changes for anyone who leaves the file alone.
+   `isTemporaryWorktreeBranch` now takes the prefix, because the placeholder
+   branch carries it. This is the trap in the whole change: miss it and the
+   first-turn rename skips every configured project, while the drift follower
+   adopts a placeholder as a real branch.
+2. **The worktree folder takes the thread's name**, not the branch's. The branch
+   it starts with is a placeholder that the first turn renames, so a folder
+   named after that branch was wrong for the life of the worktree. That stale
+   folder name is what made a healthy system look broken.
+3. **The drift follower runs on a status change**, not only at turn completion.
+   The client hides a thread's pull request while the recorded branch and the
+   checked-out branch disagree, so a `git checkout` early in a long turn hid the
+   pull request for the whole turn.
+4. **The branch toolbar gained a refresh button.** T3 Code re-asks the hosting
+   provider about a pull request at most once every two minutes, and a pull
+   request opened with `gh pr create` does not shorten that wait. Window focus
+   and opening the git menu already refreshed, but neither is discoverable to
+   somebody watching a badge that has not appeared.
+
+**Design notes.**
+
+- `branchPrefix` is a flat key, matching `defaultThreadEnvMode` beside it. An
+  earlier sketch nested it under `branch` to leave room for a `template` key.
+  Nothing is building a template, so the nesting bought nothing.
+- The prefix reaches the server through `T3ProjectFileLoader`, resolved once at
+  layer construction. Resolving it inside the reactor's own effects would have
+  put the loader in the reactor's published service type.
+- The status-change follower holds the branch it last saw per folder. A
+  working-tree edit publishes a status too, and that must cost a map lookup
+  rather than a read of the whole thread projection.
+- Detecting a new pull request without asking the provider is not possible, and
+  asking is the thing the two-minute cache exists to limit. A button the user
+  presses is the honest answer.
+- A quoted `"refs/heads/…"` from a model used to leave `refs/heads/` inside the
+  branch name, because quotes were stripped after that prefix was tested. The
+  order is now the other way round.
+
+**Files.** New: `apps/server/src/project/BranchPrefix.ts`,
+`apps/mobile/src/features/threads/t3-project-file-branch-prefix.ts`,
+`docs/internals/branch-naming.md`. Edited: `packages/contracts/src/t3ProjectFile.ts`,
+`packages/contracts/src/git.ts`, `packages/shared/src/git.ts`,
+`packages/client-runtime/src/state/gitActions.ts`, the two orchestration
+reactors, `apps/server/src/vcs/VcsStatusBroadcaster.ts`,
+`apps/server/src/vcs/GitVcsDriverCore.ts`, one call in `apps/server/src/ws.ts`,
+and the web and mobile thread-start paths.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Markers.** `First segment of the branch name`, the schema description that
+reaches both bundles, and `Refresh git and pull request status`, the tooltip on
+the new button.
