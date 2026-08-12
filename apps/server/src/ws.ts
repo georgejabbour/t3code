@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -169,6 +170,7 @@ import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as SubscriptionUsageHistory from "./provider/SubscriptionUsageHistoryStore.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -189,6 +191,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -204,6 +207,7 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
+import { WorktreeRemoval } from "./project/WorktreeRemoval.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -1261,6 +1265,7 @@ const layerWsRpc = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const threadPullRequests = yield* ThreadPullRequestService.ThreadPullRequestServiceV2;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1283,7 +1288,7 @@ const layerWsRpc = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const worktreeArchiveScriptRunner =
         yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
-
+      const worktreeRemoval = yield* WorktreeRemoval;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1303,6 +1308,8 @@ const layerWsRpc = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const subscriptionUsageHistory =
+        yield* SubscriptionUsageHistory.SubscriptionUsageHistoryStore;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2384,6 +2391,7 @@ const layerWsRpc = (
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
             return ServerSettings.redactServerSettingsForClient(settings);
           }),
+        [WS_METHODS.serverGetSubscriptionUsageHistory]: (_input) => subscriptionUsageHistory.read,
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({
@@ -2773,7 +2781,9 @@ const layerWsRpc = (
           worktreeSetupTracker
             .cancel(input.threadId)
             .pipe(Effect.map((cancelled) => ({ cancelled }))),
-        [WS_METHODS.vcsRefreshStatus]: (input) => vcsStatusBroadcaster.refreshStatus(input.cwd),
+        [WS_METHODS.vcsRefreshStatus]: (input) => vcsStatusBroadcaster
+            .refreshStatus(input.cwd)
+            .pipe(Effect.tap(() => threadPullRequests.refreshWorkspace(input.cwd))),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
             Effect.matchCauseEffect({
@@ -2833,19 +2843,15 @@ const layerWsRpc = (
         [WS_METHODS.vcsRunWorktreeArchiveScript]: (input) =>
           worktreeArchiveScriptRunner
             .run({ workspaceRoot: input.cwd, worktreePath: input.path })
-            .pipe(Effect.asVoid),
+            .pipe(Effect.map((result) => ({ ran: result.status === "ok" }))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          Effect.flatMap(
-            input.skipArchiveScript === true
-              ? Effect.void
-              : worktreeArchiveScriptRunner.run({
-                  workspaceRoot: input.cwd,
-                  worktreePath: input.path,
-                }),
-            () =>
+          worktreeRemoval.remove(
+            input,
+            Effect.succeed(
               gitWorkflow
                 .removeWorktree(input)
                 .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
