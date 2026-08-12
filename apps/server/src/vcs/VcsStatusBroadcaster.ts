@@ -116,7 +116,7 @@ export function remoteRefreshFailureDiagnostics(cause: Cause.Cause<unknown>) {
   };
 }
 
-interface VcsStatusChange {
+export interface VcsStatusChange {
   readonly cwd: string;
   readonly event: VcsStatusStreamEvent;
 }
@@ -197,6 +197,15 @@ export class VcsStatusBroadcaster extends Context.Service<
       input: VcsStatusInput,
       options?: StreamStatusOptions,
     ) => Stream.Stream<VcsStatusStreamEvent, GitManagerServiceError>;
+    /**
+     * Every status change the broadcaster publishes, for every folder it
+     * watches, tagged with the folder it belongs to.
+     *
+     * A change is published only when the status differs from the one held for
+     * that folder, so this carries no repeat values. It starts no poller of its
+     * own: it reports what the pollers a client already asked for produce.
+     */
+    readonly streamAllStatusChanges: () => Stream.Stream<VcsStatusChange>;
   }
 >()("t3/vcs/VcsStatusBroadcaster") {}
 
@@ -686,6 +695,13 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const streamAllStatusChanges: VcsStatusBroadcaster["Service"]["streamAllStatusChanges"] = () =>
+    Stream.unwrap(
+      PubSub.subscribe(changesPubSub).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
+    );
+
   const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input, options) =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -724,6 +740,7 @@ export const make = Effect.gen(function* () {
     refreshStatus,
     refreshPullRequestStatus,
     streamStatus,
+    streamAllStatusChanges,
   });
 });
 
