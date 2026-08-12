@@ -6301,15 +6301,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
+      const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.vcsRunWorktreeArchiveScript]({ cwd: "/tmp/repo", path: "/tmp/wt" }),
         ),
       );
 
       assert.equal(archiveCalls, 1);
+      assert.deepEqual(result, { ran: true });
       // Archiving retires the thread; the checkout itself must survive.
       assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("vcs.runWorktreeArchiveScript reports no run when the worktree folder is gone", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          worktreeArchiveScriptRunner: {
+            run: () => Effect.succeed({ status: "no-worktree" as const }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRunWorktreeArchiveScript]({ cwd: "/tmp/repo", path: "/tmp/wt" }),
+        ),
+      );
+
+      // Nothing stopped, so the client must not report stopped services.
+      assert.deepEqual(result, { ran: false });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
