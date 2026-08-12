@@ -386,6 +386,8 @@ export function resolveThreadBranchMetadataPatch(
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
+  /** The project's `branchPrefix` from `t3.json`, or null when it sets none. */
+  branchPrefix?: string | null;
 }): { branch: string | null } | null {
   if (!input.gitStatus) {
     return null;
@@ -402,8 +404,8 @@ export function resolveLiveThreadBranchUpdate(input: {
   if (
     input.threadBranch !== null &&
     input.gitStatus.refName !== null &&
-    !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.refName)
+    !isTemporaryWorktreeBranch(input.threadBranch, input.branchPrefix) &&
+    isTemporaryWorktreeBranch(input.gitStatus.refName, input.branchPrefix)
   ) {
     return null;
   }
