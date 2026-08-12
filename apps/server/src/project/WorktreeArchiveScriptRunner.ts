@@ -5,12 +5,14 @@
  * Scripts come from the checked-in `t3.json` rather than the imported project
  * scripts, so editing that file takes effect on the next removal with no
  * re-import. A repository without `t3.json`, or without a flagged script,
- * resolves to `no-script` and the removal proceeds untouched.
+ * resolves to `no-script` and the removal proceeds untouched. A worktree folder
+ * that is already gone resolves to `no-worktree` for the same reason.
  *
  * @module WorktreeArchiveScriptRunner
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -38,7 +40,19 @@ export interface WorktreeArchiveScriptRunnerInput {
 
 export type WorktreeArchiveScriptRunnerResult =
   | { readonly status: "no-script" }
+  | { readonly status: "no-worktree" }
   | { readonly status: "ok"; readonly scriptName: string };
+
+/**
+ * The failure text the caller shows, with the reason the operating system gave.
+ *
+ * A ProcessRunner failure names the command and the folder and stops there. The
+ * detail that explains it — `spawn /bin/sh ENOENT`, a permission refusal — sits
+ * one level down in `cause`, so both go in. Two of the five failures carry no
+ * cause, and those report their own text alone.
+ */
+const describeProcessFailure = (error: ProcessRunner.ProcessRunError): string =>
+  "cause" in error ? `${error}\n${String(error.cause)}` : `${error}`;
 
 export class WorktreeArchiveScriptRunner extends Context.Service<
   WorktreeArchiveScriptRunner,
@@ -53,10 +67,28 @@ export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const run: WorktreeArchiveScriptRunner["Service"]["run"] = Effect.fn(
     "WorktreeArchiveScriptRunner.run",
   )(function* (input) {
+    // A thread keeps its worktree path after the folder goes away — removed by
+    // hand, or removed on an earlier pass — so most archived threads on an old
+    // install point at nothing. There is no folder to read a t3.json from and
+    // no services left to stop, and starting a shell in a folder that is not
+    // there fails with `spawn /bin/sh ENOENT`, which names the shell and hides
+    // the real reason.
+    const worktreePresent = yield* fileSystem.stat(input.worktreePath).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!worktreePresent) {
+      yield* Effect.logDebug("project.worktree-archive-script.worktree-missing", {
+        worktreePath: input.worktreePath,
+      });
+      return { status: "no-worktree" } as const;
+    }
+
     // Resolution order, most specific first:
     //   1. the WORKTREE's t3.json — it is the checkout being torn down, and the
     //      script that runs is its file too (relative command, cwd = worktree),
@@ -112,8 +144,8 @@ export const make = Effect.gen(function* () {
       .run({
         command,
         args,
-        // The worktree is still on disk here — the whole point of running before
-        // removal — so the script can reach its own compose file and env.
+        // The check above proved the folder is there, so the script can reach
+        // its own compose file and env.
         cwd: input.worktreePath,
         env: projectScriptRuntimeEnv({
           project: { cwd: input.workspaceRoot },
@@ -127,7 +159,9 @@ export const make = Effect.gen(function* () {
       .pipe(
         // A spawn or read failure is reported the same way a non-zero exit is:
         // the worktree stays, and the user decides whether to remove it anyway.
-        Effect.mapError((cause) => failure({ timedOut: false, stdout: "", stderr: `${cause}` })),
+        Effect.mapError((cause) =>
+          failure({ timedOut: false, stdout: "", stderr: describeProcessFailure(cause) }),
+        ),
       );
 
     if (result.timedOut) {
