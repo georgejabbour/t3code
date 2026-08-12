@@ -1547,6 +1547,56 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("names the folder after the branch when no folder name is given", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/derived-name",
+        });
+
+        assert.equal(pathService.basename(created.worktree.path), "feature-derived-name");
+
+        yield* driver.removeWorktree({ cwd, path: created.worktree.path });
+      }),
+    );
+
+
+    it.effect("uses the given folder name instead of the branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        // A thread's branch starts as a placeholder that the first turn
+        // renames, so the folder takes the thread's name and stays correct.
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "t3code/deadbeef",
+          directoryName: "thread-11111111-2222-4333-8444-555555555555",
+        });
+
+        assert.equal(
+          pathService.basename(created.worktree.path),
+          "thread-11111111-2222-4333-8444-555555555555",
+        );
+        assert.equal(created.worktree.refName, "t3code/deadbeef");
+
+        yield* driver.removeWorktree({ cwd, path: created.worktree.path });
+      }),
+    );
+
+
+
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

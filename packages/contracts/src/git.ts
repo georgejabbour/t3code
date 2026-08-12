@@ -141,6 +141,15 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  /**
+   * Folder name to create inside the worktrees directory, when `path` is null.
+   * Defaults to the branch name with each `/` turned into `-`.
+   *
+   * A thread's worktree passes its own name here. Its branch starts as a
+   * placeholder that the first turn renames, so a folder named after that
+   * branch would disagree with the branch for the life of the worktree.
+   */
+  directoryName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 
