@@ -43,6 +43,7 @@ import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/compon
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { toggleVariants } from "~/components/ui/toggle";
+import { useT3ProjectFileBranchPrefix } from "~/hooks/useT3ProjectFileScripts";
 import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
@@ -1025,6 +1026,10 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
+  // A project can name its own branch prefix in t3.json, and the placeholder
+  // branch T3 Code creates carries that prefix. Read it so the branch sync
+  // below recognises this project's placeholder.
+  const projectBranchPrefix = useT3ProjectFileBranchPrefix(activeEnvironmentId, gitCwd);
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   const updateActiveProgressToast = useCallback(() => {
@@ -1142,6 +1147,7 @@ export default function GitActionsControl({
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
+      branchPrefix: projectBranchPrefix,
     });
     if (!branchUpdate) {
       return;
@@ -1155,6 +1161,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
+    projectBranchPrefix,
   ]);
 
   const isDefaultRef = useMemo(() => {
