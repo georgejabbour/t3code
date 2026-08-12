@@ -468,6 +468,7 @@ describe("ProviderCommandReactor", () => {
           refreshPullRequestStatus: () =>
             Effect.die("refreshPullRequestStatus should not be called in this test"),
           streamStatus: () => Stream.die("streamStatus should not be called in this test"),
+          streamAllStatusChanges: () => Stream.empty,
         }),
       ),
       Layer.provideMerge(
