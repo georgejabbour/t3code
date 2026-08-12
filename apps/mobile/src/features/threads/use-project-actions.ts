@@ -25,6 +25,7 @@ import { setPendingConnectionError } from "../../state/use-remote-environment-re
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { readT3ProjectFileBranchPrefix } from "./t3-project-file-branch-prefix";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -110,6 +111,13 @@ export function useCreateProjectThread() {
         return AsyncResult.failure(Cause.fail(new Error(preparedAttachmentError)));
       }
 
+      // The project can name its own branch prefix in t3.json, so the
+      // placeholder branch carries the repository's convention from the start.
+      const branchPrefix = await readT3ProjectFileBranchPrefix(
+        input.project.environmentId,
+        input.project.workspaceRoot,
+      );
+
       const result = await startTurn({
         environmentId: input.project.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -129,7 +137,7 @@ export function useCreateProjectThread() {
           branch: input.branch,
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex, branchPrefix),
         }),
       });
       if (AsyncResult.isFailure(result)) {
