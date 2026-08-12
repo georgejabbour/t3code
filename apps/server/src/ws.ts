@@ -1035,6 +1035,10 @@ const makeWsRpcLayer = (
                 newRefName: bootstrap.prepareWorktree.branch,
                 baseRefName: bootstrap.prepareWorktree.baseBranch,
                 path: null,
+                // Name the folder after the thread. This branch is a
+                // placeholder that the first turn renames, so a folder named
+                // after it would read as a branch that no longer exists.
+                directoryName: `thread-${command.threadId}`,
               });
               targetWorktreePath = worktree.worktree.path;
               yield* dispatchFromClient({
