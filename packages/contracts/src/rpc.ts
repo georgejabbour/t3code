@@ -118,6 +118,7 @@ import {
   VcsPullResult,
   VcsRemoveWorktreeInput,
   VcsRunWorktreeArchiveScriptInput,
+  VcsRunWorktreeArchiveScriptResult,
   WorktreeArchiveScriptError,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -1296,6 +1297,7 @@ const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
 
 const WsVcsRunWorktreeArchiveScriptRpc = Rpc.make(WS_METHODS.vcsRunWorktreeArchiveScript, {
   payload: VcsRunWorktreeArchiveScriptInput,
+  success: VcsRunWorktreeArchiveScriptResult,
   error: Schema.Union([EnvironmentAuthorizationError, WorktreeArchiveScriptError]),
 });
 
