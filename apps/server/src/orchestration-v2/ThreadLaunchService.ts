@@ -393,6 +393,9 @@ const make = Effect.gen(function* () {
               newRefName: branch!,
               baseRefName: input.workspaceStrategy.baseRef,
               path: null,
+              ...(isTemporaryWorktreeBranch(branch!, branchPrefix)
+                ? { directoryName: `thread-${threadId}` }
+                : {}),
             },
             {
               progress: {
