@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import { type OrchestrationProject, type ProjectScript, ProjectId } from "@t3tools/contracts";
 import type { T3ProjectFile } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -61,6 +62,32 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
   });
 };
 
+/** Every field of a folder's stat record, so the runner reads a real directory rather than a partial stand-in. */
+const DIRECTORY_INFO: FileSystem.File.Info = {
+  type: "Directory",
+  mtime: Option.none(),
+  atime: Option.none(),
+  birthtime: Option.none(),
+  dev: 0,
+  ino: Option.none(),
+  mode: 0o755,
+  nlink: Option.none(),
+  uid: Option.none(),
+  gid: Option.none(),
+  rdev: Option.none(),
+  size: FileSystem.Size(0),
+  blksize: Option.none(),
+  blocks: Option.none(),
+};
+
+/** The worktree is still on disk — the state every case but one assumes. */
+const PresentWorktreeFileSystem = FileSystem.layerNoop({
+  stat: () => Effect.succeed(DIRECTORY_INFO),
+});
+
+/** The worktree folder is gone. `layerNoop` fails `stat` with NotFound, which is what the disk reports. */
+const MissingWorktreeFileSystem = FileSystem.layerNoop({});
+
 const testLayer = (
   files: {
     readonly root?: T3ProjectFile | null;
@@ -68,11 +95,13 @@ const testLayer = (
   },
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   importedScripts: readonly ProjectScript[] = [],
+  fileSystem: Layer.Layer<FileSystem.FileSystem> = PresentWorktreeFileSystem,
 ) =>
   WorktreeArchiveScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectFileLoaderLayer(files)),
     Layer.provideMerge(makeProcessRunnerLayer(run)),
     Layer.provideMerge(makeProjectionSnapshotQueryLayer(importedScripts)),
+    Layer.provideMerge(fileSystem),
   );
 
 const processOutput = (
@@ -303,6 +332,54 @@ describe("WorktreeArchiveScriptRunner", () => {
       expect(result).toEqual({ status: "ok", scriptName: "Archive workspace" });
       expect(captured?.args.at(-1)).toBe(archiveScript.command);
     }).pipe(Effect.provide(testLayer({ worktree: { scripts: [archiveScript] } }, run as never)));
+  });
+
+  it.effect("returns no-worktree and never spawns when the worktree folder is gone", () => {
+    const run = vi.fn(() => Effect.die("unexpected run"));
+    const projectFile: T3ProjectFile = { scripts: [archiveScript] };
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+      });
+
+      // A shell started in a folder that is not there fails with
+      // `spawn /bin/sh ENOENT`, which names the shell and hides the real reason.
+      expect(result).toEqual({ status: "no-worktree" });
+      expect(run).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provide(
+        testLayer({ worktree: projectFile }, run as never, [], MissingWorktreeFileSystem),
+      ),
+    );
+  });
+
+  it.effect("keeps the reason the operating system gave when the spawn fails", () => {
+    const run = vi.fn(() =>
+      Effect.fail(
+        new ProcessRunner.ProcessSpawnError({
+          command: "/bin/sh",
+          argumentCount: 2,
+          cwd: WORKTREE_PATH,
+          cause: new Error("spawn /bin/sh ENOENT"),
+        }),
+      ),
+    );
+    const projectFile: T3ProjectFile = { scripts: [archiveScript] };
+
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const error = yield* Effect.flip(
+        runner.run({ workspaceRoot: WORKSPACE_ROOT, worktreePath: WORKTREE_PATH }),
+      );
+
+      expect(error._tag).toBe("WorktreeArchiveScriptError");
+      expect(error.stderr).toContain("Failed to spawn process");
+      // Without the cause the report names /bin/sh and never says what went wrong.
+      expect(error.stderr).toContain("spawn /bin/sh ENOENT");
+    }).pipe(Effect.provide(testLayer({ worktree: projectFile }, run as never)));
   });
 
   it.effect("fails and reports timedOut when the script exceeds its timeout", () => {
