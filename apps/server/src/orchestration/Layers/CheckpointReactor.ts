@@ -27,6 +27,8 @@ import {
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import { resolveBranchPrefixForWorkspace } from "../../project/BranchPrefix.ts";
+import { T3ProjectFileLoader } from "../../project/T3ProjectFileLoader.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -91,6 +93,7 @@ const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
+  const projectFileLoader = yield* T3ProjectFileLoader;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -550,7 +553,16 @@ const make = Effect.gen(function* () {
     // Detached HEAD has no branch to adopt; a temporary placeholder checkout
     // means the first-turn auto-rename is still in flight — don't race it.
     const checkedOutBranch = input.local.refName;
-    if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
+    if (checkedOutBranch === null) {
+      return;
+    }
+
+    // A project can set its own branch prefix in `t3.json`, and the placeholder
+    // branch carries that prefix. Read it before testing either branch, or a
+    // configured project's placeholder reads as a real branch and this adopts it
+    // while the first-turn rename is still in flight.
+    const branchPrefix = yield* resolveBranchPrefixForWorkspace(projectFileLoader, input.cwd);
+    if (isTemporaryWorktreeBranch(checkedOutBranch, branchPrefix)) {
       return;
     }
 
@@ -564,7 +576,7 @@ const make = Effect.gen(function* () {
         thread.branch === checkedOutBranch ||
         thread.worktreePath === null ||
         thread.worktreePath !== input.cwd ||
-        isTemporaryWorktreeBranch(thread.branch)
+        isTemporaryWorktreeBranch(thread.branch, branchPrefix)
       ) {
         return;
       }
