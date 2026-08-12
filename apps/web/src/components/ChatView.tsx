@@ -242,6 +242,7 @@ import {
 import { cn, randomHex, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { readT3ProjectFileBranchPrefix } from "~/lib/t3ProjectFileDefaults";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -8329,6 +8330,13 @@ export default function ChatView(props: ChatViewProps) {
       failure = turnAttachmentsResult;
     }
 
+    // The project can name its own branch prefix in t3.json. Read it before
+    // minting the placeholder branch, so the branch carries the repository's
+    // convention from the moment it exists.
+    const worktreeBranchPrefix = baseBranchForWorktree
+      ? await readT3ProjectFileBranchPrefix(environmentId, activeProject.workspaceRoot)
+      : null;
+
     let turnStartSucceeded = false;
     let backgroundDraftOpened = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
@@ -8354,7 +8362,7 @@ export default function ChatView(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch: buildTemporaryWorktreeBranchName(randomHex, worktreeBranchPrefix),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
