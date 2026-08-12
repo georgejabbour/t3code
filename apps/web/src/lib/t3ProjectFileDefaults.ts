@@ -36,3 +36,16 @@ export async function readT3ProjectFile(
   if (data === null || data.truncated) return null;
   return parseT3ProjectFile(data.contents);
 }
+
+/**
+ * Read `branchPrefix` from the project's checked-in `t3.json`.
+ *
+ * A null result means the project sets none, and the caller then uses T3
+ * Code's default prefix.
+ */
+export async function readT3ProjectFileBranchPrefix(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+): Promise<string | null> {
+  return (await readT3ProjectFile(environmentId, workspaceRoot))?.branchPrefix ?? null;
+}

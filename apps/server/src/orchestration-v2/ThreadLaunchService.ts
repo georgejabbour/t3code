@@ -33,6 +33,7 @@ import { buildTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -149,6 +150,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -216,6 +218,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    const projectFile = yield* projectFileLoader.load(project.workspaceRoot);
+    const branchPrefix = Option.isSome(projectFile) ? projectFile.value.branchPrefix : undefined;
     const tracked = input.workspaceStrategy.type === "worktree";
     let createdWorktreePath: string | null = null;
     let setupTerminalId: string | null = null;
@@ -247,7 +251,7 @@ const make = Effect.gen(function* () {
             .generateBranchName({
               naming: {
                 mode: settings.branchNamingMode,
-                prefix: settings.branchNamePrefix,
+                prefix: branchPrefix ?? settings.branchNamePrefix,
                 instructions: settings.branchNameInstructions,
               },
               cwd,
@@ -271,7 +275,7 @@ const make = Effect.gen(function* () {
       let branch: string | null;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
         const uuid = yield* randomUuidV4;
-        branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+        branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""), branchPrefix);
       } else {
         branch = requestedBranch ?? null;
       }
@@ -376,7 +380,7 @@ const make = Effect.gen(function* () {
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
-        isTemporaryWorktreeBranch(branch)
+        isTemporaryWorktreeBranch(branch, branchPrefix)
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
@@ -839,4 +843,6 @@ const make = Effect.gen(function* () {
   return ThreadLaunchService.of({ launch });
 });
 
-export const layer = Layer.effect(ThreadLaunchService, make);
+export const layer = Layer.effect(ThreadLaunchService, make).pipe(
+  Layer.provide(T3ProjectFileLoader.layer),
+);
