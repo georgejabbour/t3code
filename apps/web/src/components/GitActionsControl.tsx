@@ -36,6 +36,7 @@ import {
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
+  RefreshCwIcon,
   LockIcon,
   GlobeIcon,
 } from "lucide-react";
@@ -1880,6 +1881,26 @@ export default function GitActionsControl({
               </span>
             </ThreadDetailsControl>
           )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  aria-label="Refresh git status"
+                  size="icon-xs"
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="secondary"
+                  panel={isPanel}
+                  disabled={isGitActionRunning || gitCwd === null}
+                  onClick={() => {
+                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                  }}
+                />
+              }
+            >
+              <RefreshCwIcon aria-hidden="true" className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Refresh git and pull request status</TooltipPopup>
+          </Tooltip>
           {isPanel && gitActionProgress ? (
             // The menu is disabled while an action runs, so its chevron slot
             // hosts the elapsed counter instead, leaving the full row width to
