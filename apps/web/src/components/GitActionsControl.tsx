@@ -28,6 +28,7 @@ import {
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
+  RefreshCwIcon,
   LockIcon,
   GlobeIcon,
 } from "lucide-react";
@@ -1748,6 +1749,32 @@ export default function GitActionsControl({
               </span>
             </Button>
           )}
+          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          {/*
+            T3 Code re-asks the hosting provider about a pull request at most
+            once every two minutes. A pull request opened outside T3 Code, with
+            `gh pr create` in a terminal, therefore takes up to that long to
+            appear. This button asks again at once, so nobody has to guess
+            whether the badge is broken or merely slow.
+          */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Refresh git status"
+                  size="icon-xs"
+                  variant="outline"
+                  disabled={isGitActionRunning || gitCwd === null}
+                  onClick={() => {
+                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                  }}
+                />
+              }
+            >
+              <RefreshCwIcon aria-hidden="true" className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Refresh git and pull request status</TooltipPopup>
+          </Tooltip>
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
