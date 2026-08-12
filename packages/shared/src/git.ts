@@ -25,6 +25,43 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
   `^(?:${WORKTREE_BRANCH_PREFIX}[-/]${TEMP_WORKTREE_HEX_TOKEN}|t3code(?:[-/]${TEMP_WORKTREE_HEX_TOKEN}|\\/${TEMP_WORKTREE_UUID_V4_TOKEN}))$`,
 );
 
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// One compiled pattern per prefix. A project supplies its prefix from `t3.json`,
+// so the number of distinct keys stays as small as the number of open projects.
+const temporaryBranchPatterns = new Map<string, RegExp>();
+
+function temporaryBranchPattern(prefix: string): RegExp {
+  const cached = temporaryBranchPatterns.get(prefix);
+  if (cached) {
+    return cached;
+  }
+  const pattern = new RegExp(
+    `^${escapeRegExpLiteral(prefix)}\\/(?:${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})$`,
+  );
+  temporaryBranchPatterns.set(prefix, pattern);
+  return pattern;
+}
+
+/**
+ * Resolve the branch prefix for a project.
+ *
+ * Takes the `branchPrefix` value from the project's `t3.json`, which the
+ * contract has already checked for shape, and lowercases it so it matches the
+ * rest of a branch name T3 Code builds. An absent or blank value falls back to
+ * {@link WORKTREE_BRANCH_PREFIX}, which keeps every project that sets nothing on
+ * today's behaviour.
+ */
+export function resolveWorktreeBranchPrefix(configuredPrefix?: string | null): string {
+  const normalized = (configuredPrefix ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\/+|\/+$/g, "");
+  return normalized.length > 0 ? normalized : WORKTREE_BRANCH_PREFIX;
+}
+
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
@@ -118,6 +155,7 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
+  configuredPrefix?: string | null,
 ): string {
   // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
   // still produces the canonical temporary branch form.
@@ -125,7 +163,7 @@ export function buildTemporaryWorktreeBranchName(
     .toLowerCase()
     .replace(/[^0-9a-f]/g, "")
     .slice(0, 8);
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${resolveWorktreeBranchPrefix(configuredPrefix)}/${token}`;
 }
 
 /**
@@ -140,8 +178,49 @@ export function flattenTemporaryWorktreeBranchName(refName: string): string {
   return `${WORKTREE_BRANCH_PREFIX}-${token}`;
 }
 
-export function isTemporaryWorktreeBranch(refName: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
+/**
+ * Report whether a branch name is the placeholder T3 Code creates for a new
+ * thread, before the first turn renames it to a slug of the task.
+ *
+ * Pass the project's configured prefix. Callers that omit it test against
+ * {@link WORKTREE_BRANCH_PREFIX}, which is what a project without a
+ * `branchPrefix` in its `t3.json` uses.
+ */
+export function isTemporaryWorktreeBranch(
+  refName: string,
+  configuredPrefix?: string | null,
+): boolean {
+  const prefix = resolveWorktreeBranchPrefix(configuredPrefix);
+  const pattern =
+    prefix === WORKTREE_BRANCH_PREFIX ? TEMP_WORKTREE_BRANCH_PATTERN : temporaryBranchPattern(prefix);
+  return pattern.test(refName.trim().toLowerCase());
+}
+
+/**
+ * Build the branch name for a thread from the slug a model wrote for the task.
+ *
+ * Strips a prefix the model repeated back, so the result carries the project's
+ * prefix exactly once.
+ */
+export function buildGeneratedWorktreeBranchName(
+  raw: string,
+  configuredPrefix?: string | null,
+): string {
+  const prefix = resolveWorktreeBranchPrefix(configuredPrefix);
+  // Strip quotes before the `refs/heads/` test. A model that answers with a
+  // quoted ref puts the quote first, and testing before the strip leaves
+  // `refs/heads/` inside the branch name.
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/['"`]/g, "")
+    .replace(/^refs\/heads\//, "");
+
+  const withoutPrefix = normalized.startsWith(`${prefix}/`)
+    ? normalized.slice(prefix.length + 1)
+    : normalized;
+
+  return `${prefix}/${sanitizeBranchFragment(withoutPrefix)}`;
 }
 
 /**

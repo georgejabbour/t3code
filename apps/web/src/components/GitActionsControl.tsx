@@ -54,6 +54,7 @@ import {
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { useT3ProjectFileBranchPrefix } from "~/hooks/useT3ProjectFileScripts";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
@@ -1125,6 +1126,10 @@ export default function GitActionsControl({
   );
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const visibleInlineSuccess = inlineSuccess?.scopeKey === successScopeKey ? inlineSuccess : null;
+  // A project can name its own branch prefix in t3.json, and the placeholder
+  // branch T3 Code creates carries that prefix. Read it so the branch sync
+  // below recognises this project's placeholder.
+  const projectBranchPrefix = useT3ProjectFileBranchPrefix(activeEnvironmentId, gitCwd);
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   useEffect(() => {
@@ -1245,6 +1250,7 @@ export default function GitActionsControl({
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
+      branchPrefix: projectBranchPrefix,
     });
     if (!branchUpdate) {
       return;
@@ -1258,6 +1264,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
+    projectBranchPrefix,
   ]);
 
   const isDefaultRef = useMemo(() => {
