@@ -33,6 +33,7 @@ describe("buildT3ProjectFileJsonSchema", () => {
 
     expect(Object.keys(schema.properties).sort()).toEqual([
       "$schema",
+      "branchPrefix",
       "defaultThreadEnvMode",
       "iconPath",
       "scripts",
@@ -40,6 +41,7 @@ describe("buildT3ProjectFileJsonSchema", () => {
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
+    expect(schema.properties.branchPrefix?.description).toContain("First segment of the branch");
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);
@@ -90,5 +92,22 @@ describe("parseT3ProjectFile", () => {
   it("returns null for malformed or invalid contents", () => {
     expect(parseT3ProjectFile("{ not json")).toBeNull();
     expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "spaceship" }')).toBeNull();
+  });
+
+  it("reads a branch prefix, including one with a namespace segment", () => {
+    expect(parseT3ProjectFile('{ "branchPrefix": "george" }')).toEqual({
+      branchPrefix: "george",
+    });
+    expect(parseT3ProjectFile('{ "branchPrefix": "team/george" }')).toEqual({
+      branchPrefix: "team/george",
+    });
+  });
+
+  it("rejects a branch prefix that git refuses in a ref name", () => {
+    expect(parseT3ProjectFile('{ "branchPrefix": "/george" }')).toBeNull();
+    expect(parseT3ProjectFile('{ "branchPrefix": "george/" }')).toBeNull();
+    expect(parseT3ProjectFile('{ "branchPrefix": "team//george" }')).toBeNull();
+    expect(parseT3ProjectFile('{ "branchPrefix": "geo rge" }')).toBeNull();
+    expect(parseT3ProjectFile('{ "branchPrefix": "" }')).toBeNull();
   });
 });
