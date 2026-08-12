@@ -11252,6 +11252,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           newRefName: "t3code/bootstrap-refName",
           baseRefName: "main",
           path: null,
+          directoryName: "thread-thread-bootstrap",
         });
         assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
@@ -11444,6 +11445,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         newRefName: "t3code/bootstrap-refName",
         baseRefName: "main",
         path: null,
+        directoryName: "thread-thread-bootstrap-no-origin",
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
