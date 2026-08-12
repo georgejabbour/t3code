@@ -3,10 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedWorktreeBranchName,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  resolveWorktreeBranchPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -107,6 +109,67 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+
+  it("matches the placeholder of a project that configures its own prefix", () => {
+    expect(isTemporaryWorktreeBranch("george/deadbeef", "george")).toBe(true);
+    expect(isTemporaryWorktreeBranch("team/george/deadbeef", "team/george")).toBe(true);
+  });
+
+  it("holds a configured project's placeholder apart from the default one", () => {
+    // Without the project's prefix this reads as a real branch, and the
+    // first-turn rename would then skip it.
+    expect(isTemporaryWorktreeBranch("george/deadbeef")).toBe(false);
+    // The default prefix is not a second, always-accepted prefix.
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "george")).toBe(false);
+  });
+});
+
+describe("resolveWorktreeBranchPrefix", () => {
+  it("falls back to the default prefix when a project sets none", () => {
+    expect(resolveWorktreeBranchPrefix()).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(resolveWorktreeBranchPrefix(null)).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(resolveWorktreeBranchPrefix("   ")).toBe(WORKTREE_BRANCH_PREFIX);
+  });
+
+  it("lowercases the configured prefix and drops surrounding slashes", () => {
+    expect(resolveWorktreeBranchPrefix("George")).toBe("george");
+    expect(resolveWorktreeBranchPrefix(" /team/George/ ")).toBe("team/george");
+  });
+});
+
+describe("buildTemporaryWorktreeBranchName", () => {
+  it("uses the project's prefix", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF", "george")).toBe("george/deadbeef");
+  });
+
+  it("uses the default prefix when a project sets none", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}/deadbeef`,
+    );
+  });
+});
+
+describe("buildGeneratedWorktreeBranchName", () => {
+  it("applies the project's prefix to the slug a model wrote", () => {
+    expect(buildGeneratedWorktreeBranchName("Fix Login", "george")).toBe("george/fix-login");
+  });
+
+  it("applies the default prefix when a project sets none", () => {
+    expect(buildGeneratedWorktreeBranchName("Fix Login")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}/fix-login`,
+    );
+  });
+
+  it("carries the prefix once when the model repeats it back", () => {
+    expect(buildGeneratedWorktreeBranchName("george/fix-login", "george")).toBe("george/fix-login");
+    expect(buildGeneratedWorktreeBranchName('"refs/heads/fix-login"', "george")).toBe(
+      "george/fix-login",
+    );
+  });
+
+  it("falls back to a usable name when the slug sanitizes away", () => {
+    expect(buildGeneratedWorktreeBranchName("   ---   ", "george")).toBe("george/update");
   });
 });
 

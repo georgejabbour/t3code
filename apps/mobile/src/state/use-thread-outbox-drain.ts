@@ -17,6 +17,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
+import { readT3ProjectFileBranchPrefix } from "../features/threads/t3-project-file-branch-prefix";
 import { scopedProjectKey, scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
@@ -870,6 +871,12 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      // The project can name its own branch prefix in t3.json, so the
+      // placeholder branch carries the repository's convention from the start.
+      const branchPrefix = await readT3ProjectFileBranchPrefix(
+        queuedMessage.environmentId,
+        projectCwd,
+      );
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -888,7 +895,7 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex, branchPrefix),
         }),
       });
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
