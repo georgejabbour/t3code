@@ -25,7 +25,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import type * as Cause from "effect/Cause";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -316,26 +318,39 @@ describe("CheckpointReactor", () => {
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-checkpoint-reactor-test-",
     });
-    const statusChangePubSub = Effect.runSync(PubSub.unbounded<VcsStatusChange>());
     // Report a branch for the thread's worktree the way the status poll does,
-    // so a test can drift the checkout without completing a turn.
+    // so a test can drift the checkout without completing a turn. Changes made
+    // before the reactor subscribes wait here rather than being lost.
+    let statusChangeQueue: Queue.Queue<VcsStatusChange, Cause.Done<void>> | null = null;
+    const pendingStatusChanges: Array<VcsStatusChange> = [];
+    const statusChangeStream = Stream.callback<VcsStatusChange>((queue) =>
+      Effect.sync(() => {
+        statusChangeQueue = queue;
+        for (const change of pendingStatusChanges.splice(0)) {
+          Queue.offerUnsafe(queue, change);
+        }
+      }),
+    );
     const emitStatusChange = (refName: string | null): void => {
-      Effect.runSync(
-        PubSub.publish(statusChangePubSub, {
-          cwd: options?.threadWorktreePath ?? cwd,
-          event: {
-            _tag: "localUpdated",
-            local: {
-              isRepo: true,
-              hasPrimaryRemote: false,
-              isDefaultRef: false,
-              refName,
-              hasWorkingTreeChanges: false,
-              workingTree: { files: [], insertions: 0, deletions: 0 },
-            },
+      const change: VcsStatusChange = {
+        cwd: options?.threadWorktreePath ?? cwd,
+        event: {
+          _tag: "localUpdated",
+          local: {
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: false,
+            refName,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
           },
-        }),
-      );
+        },
+      };
+      if (statusChangeQueue === null) {
+        pendingStatusChanges.push(change);
+        return;
+      }
+      Queue.offerUnsafe(statusChangeQueue, change);
     };
     const vcsStatusBroadcasterLayer = Layer.succeed(VcsStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
@@ -355,7 +370,7 @@ describe("CheckpointReactor", () => {
         ),
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
       streamStatus: () => Stream.empty,
-      streamAllStatusChanges: () => Stream.fromPubSub(statusChangePubSub),
+      streamAllStatusChanges: () => statusChangeStream,
     });
 
     const layer = CheckpointReactorLive.pipe(
