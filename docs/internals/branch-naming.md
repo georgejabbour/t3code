@@ -75,6 +75,32 @@ A worktree a user creates for an existing branch still takes its name from that
 branch, because that name stays true. See `createWorktree` in
 `apps/server/src/vcs/GitVcsDriverCore.ts`.
 
+## A missing worktree folder is built again
+
+Removing a thread's worktree folder by hand used to end that thread for good.
+Every later turn failed the provider's cwd check, and nothing offered a way
+back, even though the branch normally survives.
+
+Before a turn starts a provider session, `restoreMissingWorktreeForThread` in
+`apps/server/src/orchestration/Layers/ProviderCommandReactor.ts` checks out the
+thread's branch at its recorded path again. It acts only when all three hold:
+
+- The thread records both a worktree path and a branch.
+- That path sits inside the folder T3 Code keeps its worktrees in, tested with
+  `isManagedWorktree` from `apps/server/src/project/ManagedWorktree.ts`. A path
+  anywhere else names a checkout T3 Code did not make.
+- The folder is absent. An existing folder is never touched.
+
+The thread then carries an activity saying the folder was rebuilt, because a
+folder that reappears without its uncommitted work, and with no word about why,
+reads as data loss. Work that was never committed is not recovered.
+
+When the branch is gone too there is nothing to rebuild from, and the turn
+keeps today's error naming the missing folder.
+
+The same `isManagedWorktree` test guards the archived-thread sweep, which is
+why both read one copy of it.
+
 ## The client only shows a PR when the two branches agree
 
 The client attributes a pull request to a thread only while the thread's
