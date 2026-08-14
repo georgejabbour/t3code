@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -31,6 +32,9 @@ import * as Stream from "effect/Stream";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerConfig from "../config.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import { canonicalPath, isManagedWorktree } from "../project/ManagedWorktree.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -319,6 +323,8 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const gitWorkflow = yield* Effect.serviceOption(GitWorkflow.GitWorkflowService);
+      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -1692,6 +1698,56 @@ export const layerWithOptions = (
       });
       yield* Effect.addFinalizer(() => shutdown);
 
+      const restoreMissingWorktree = Effect.fn("ProviderSessionManagerV2.restoreMissingWorktree")(
+        function* (threadId: ThreadId, cwd: string) {
+          if (Option.isNone(projectService) || Option.isNone(gitWorkflow) || Option.isNone(serverConfig)) return;
+          if (!isManagedWorktree(canonicalPath(serverConfig.value.worktreesDir), cwd)) return;
+          if (yield* fileSystem.exists(cwd)) return;
+          const thread = yield* projectionStore.getThread(threadId);
+          if (thread.deletedAt !== null || thread.worktreePath !== cwd || thread.branch === null) return;
+          const project = yield* projectService.value.getById(thread.projectId);
+          if (Option.isNone(project)) return;
+          yield* gitWorkflow.value.createWorktree({
+            cwd: project.value.workspaceRoot,
+            refName: thread.branch,
+            path: cwd,
+          });
+          const now = yield* DateTime.now;
+          const eventId = yield* idAllocator.allocate.event({ threadId });
+          yield* eventSink.write({
+            events: [{
+              id: eventId,
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`system:worktree-restored:${eventId}`),
+                threadId,
+                runId: null,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: yield* projectionStore.getNextTurnItemOrdinal(threadId),
+                type: "system_notice",
+                status: "completed",
+                title: "Rebuilt this thread's worktree",
+                message: `The folder ${cwd} was missing. T3 Code checks out ${thread.branch} there again. This folder excludes uncommitted work.`,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            }],
+          });
+        },
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("Could not rebuild the missing thread worktree.", { cause }),
+        ),
+      );
+
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
@@ -1700,6 +1756,7 @@ export const layerWithOptions = (
             Effect.gen(function* () {
               const cwd = input.runtimePolicy.cwd;
               if (cwd !== null) {
+                yield* restoreMissingWorktree(input.threadId, cwd);
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
                   Effect.catch((cause) =>
