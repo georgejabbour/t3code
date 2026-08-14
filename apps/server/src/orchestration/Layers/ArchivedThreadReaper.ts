@@ -14,13 +14,10 @@
  *
  * A thread records the path its worktree had, not proof that T3 made it, so the
  * sweep removes a folder only when it sits inside the server's `worktreesDir`.
- * See `isManagedWorktree`.
+ * See `isManagedWorktree` in `project/ManagedWorktree.ts`.
  *
  * @module ArchivedThreadReaper
  */
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
-
 import { CommandId, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Clock from "effect/Clock";
@@ -31,6 +28,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 
 import * as ServerConfig from "../../config.ts";
+import { canonicalPath, isManagedWorktree, worktreeExists } from "../../project/ManagedWorktree.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -56,66 +54,6 @@ export interface ArchivedThreadReaperLiveOptions {
   readonly tickInterval?: Duration.Duration;
   readonly sweepPeriod?: Duration.Duration;
 }
-
-const worktreeExists = (path: string): boolean => {
-  try {
-    return NodeFS.statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-/**
- * The real location of `value`, with every symbolic link followed.
- *
- * A worktree removed by hand no longer exists, and a path that is not there
- * cannot be resolved. Its parent almost always still is, so the parent is
- * resolved instead and the last segment put back. That step matters on macOS,
- * where the temporary and home folders are themselves links: comparing an
- * unresolved `/var/…` against a resolved `/private/var/…` never matches, and
- * every removed worktree would then read as somebody else's.
- *
- * When neither the path nor its parent resolves, the plain resolved form comes
- * back. It will not sit inside the managed folder, so the caller refuses to
- * touch it, which is the safe direction.
- */
-const canonicalPath = (value: string): string => {
-  const resolved = NodePath.resolve(value);
-  try {
-    return NodeFS.realpathSync(resolved);
-  } catch {
-    try {
-      const parent = NodeFS.realpathSync(NodePath.dirname(resolved));
-      return NodePath.join(parent, NodePath.basename(resolved));
-    } catch {
-      return resolved;
-    }
-  }
-};
-
-/**
- * Whether `worktreePath` sits inside `managedRoot`, and may therefore be taken
- * apart.
- *
- * A thread stores whatever path its worktree had, and that path can name any
- * folder on the disk. Only the ones inside the server's `worktreesDir` were
- * made by T3. Removing anything else destroys a folder somebody else depends
- * on, which is what happened to George's maintained fork checkout in August
- * 2026: two nightly sweeps ran `git worktree remove` against it, and each one
- * left that checkout with 140 tracked files deleted.
- *
- * Both sides are resolved through the filesystem first, so a link inside the
- * managed folder cannot stand in for a folder outside it. Containment is then
- * decided with `path.relative` rather than by comparing text, because a
- * sibling named `worktrees-elsewhere` shares the managed folder's spelling
- * without being inside it. The managed folder itself is not a worktree, so an
- * empty result is refused along with everything above it.
- */
-const isManagedWorktree = (managedRoot: string, worktreePath: string): boolean => {
-  const relative = NodePath.relative(managedRoot, canonicalPath(worktreePath));
-  const climbsOut = relative === ".." || relative.startsWith(`..${NodePath.sep}`);
-  return relative !== "" && !climbsOut && !NodePath.isAbsolute(relative);
-};
 
 const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
   Effect.gen(function* () {
