@@ -126,9 +126,14 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
+  // Every Duration must be held out of the deep merge below. A Duration is an
+  // opaque object, so the merge walks into it and hands back a plain object
+  // that is no longer a Duration. The settings file then fails to encode, and
+  // that failure blocks every settings save, not only this field's.
   const {
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
+    providerSessionIdleTimeout,
     backgroundActivityProfile,
     backgroundActivity,
     ...patchForMerge
@@ -192,6 +197,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
+    // Put the Duration back whole. Unlike the two intervals above, this one
+    // belongs to no activity profile, so nothing recomputes it further down.
+    ...(providerSessionIdleTimeout !== undefined ? { providerSessionIdleTimeout } : {}),
   };
   const normalizedBackgroundActivity = normalizeBackgroundActivitySettings(
     nextWithReplacementsBase.backgroundActivity,
