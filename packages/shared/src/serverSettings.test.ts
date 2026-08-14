@@ -404,6 +404,35 @@ describe("serverSettings helpers", () => {
     expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(240_000);
   });
 
+  it("keeps the idle timeout a Duration when a patch carries it", () => {
+    // A Duration is an opaque object. A deep merge walks into it and returns a
+    // plain object, which then fails to encode and blocks every settings save.
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerSessionIdleTimeout: Duration.hours(6),
+    });
+
+    expect(Duration.isDuration(next.providerSessionIdleTimeout)).toBe(true);
+    expect(Duration.toMillis(next.providerSessionIdleTimeout)).toBe(21_600_000);
+  });
+
+  it("keeps the idle timeout a Duration when the patch repeats the current value", () => {
+    // The settings screen sends the whole settings object back, so the value
+    // arrives in the patch even when the user changed something else.
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerSessionIdleTimeout: Duration.hours(12),
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      providerSessionIdleTimeout: Duration.hours(12),
+      deleteArchivedThreadsNightly: true,
+    });
+
+    expect(Duration.isDuration(next.providerSessionIdleTimeout)).toBe(true);
+    expect(Duration.toMillis(next.providerSessionIdleTimeout)).toBe(43_200_000);
+    expect(next.deleteArchivedThreadsNightly).toBe(true);
+  });
+
   it("does not reactivate dormant overrides from a concrete profile", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
