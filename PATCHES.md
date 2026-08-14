@@ -76,6 +76,7 @@ stops with an error.
 | 7     | `A pre-push hook may have rejected it.`    | `dist/bin.mjs`, the server bundle           |
 | 8     | `First segment of the branch name`         | `dist/bin.mjs`, the server bundle           |
 | 8     | `Refresh git and pull request status`      | `dist/client/assets`, the web client bundle |
+| 9     | `Rebuilt this thread's worktree`           | `dist/bin.mjs`, the server bundle           |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -560,3 +561,68 @@ and the web and mobile thread-start paths.
 **Markers.** `First segment of the branch name`, the schema description that
 reaches both bundles, and `Refresh git and pull request status`, the tooltip on
 the new button.
+
+## Patch 9 — a thread survives losing its worktree folder
+
+**Commit:** `feat(server): rebuild a thread's worktree when the folder is gone`
+
+**Why.** A thread in the `nrgevents` project stopped working on 14 August 2026.
+Every turn failed:
+
+```
+The folder this thread runs in no longer exists:
+'/Users/georgejabbour/.t3/worktrees/nrgevents/t3code-5cc9d0b7'.
+Something removed it outside T3 Code.
+```
+
+The message was accurate. The thread had never been archived, so the nightly
+sweep had not touched it: its `archived_at` was null and its whole event history
+held no archive event. The sweep's three git removals that morning were against
+other repositories. What removed the folder is not recoverable from the logs,
+which had rotated.
+
+The fault worth fixing is what happened next. **The thread was finished.** Its
+branch was still there, holding everything that had been committed, and one
+`git worktree add` would have restored it. T3 Code offered no way to run that,
+and its own error message told the user to "create the folder again" without
+giving them any means to.
+
+**What.** Before a turn starts a provider session, the thread's worktree is
+checked out again at its recorded path from its recorded branch. Three
+conditions gate it, and each is a refusal to guess:
+
+- The thread records both a worktree path and a branch.
+- The path sits inside the server's `worktreesDir`. A path anywhere else names
+  a checkout T3 Code did not make.
+- The folder is absent. An existing folder is never touched.
+
+The thread then shows an activity saying the folder was rebuilt and that
+uncommitted work is not in it. A folder that reappears silently, missing work,
+reads as data loss.
+
+`isManagedWorktree`, `canonicalPath` and `worktreeExists` moved out of
+`ArchivedThreadReaper.ts` into `project/ManagedWorktree.ts`. The sweep asks
+"may I remove this?" and the turn asks "may I rebuild this?", and both must
+answer the same way. Their comments moved intact, including the August 2026
+incident that made the containment test necessary.
+
+**Design notes.**
+
+- The check sits in `ensureSessionForThread`, the one place every provider
+  session start passes through, and directly before the cwd check that fails.
+- The rebuild is automatic rather than a button. T3 Code created the folder, so
+  recreating it restores the state T3 Code already believes it is in. A button
+  would leave the thread broken until somebody found it.
+- A failure is swallowed to a warning. The branch being gone is the real case,
+  and the turn's own error already names the missing folder.
+- The `runOnWorktreeCreate` setup script does **not** run. It can be slow and
+  it can start containers, neither of which belongs in an unattended turn
+  start. Run it from the scripts menu when the folder needs it.
+
+**Files.** New: `apps/server/src/project/ManagedWorktree.ts`. Edited:
+`apps/server/src/orchestration/Layers/ProviderCommandReactor.ts` and its test,
+`apps/server/src/orchestration/Layers/ArchivedThreadReaper.ts`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Marker.** `Rebuilt this thread's worktree`, the activity summary.
