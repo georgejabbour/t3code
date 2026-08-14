@@ -303,10 +303,25 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
-    const createWorktree = vi.fn(
-      (input: { readonly refName: string; readonly path: string | null }) =>
-        Effect.succeed({ worktree: { path: input.path ?? "", refName: input.refName } }),
-    );
+    const createWorktree = vi.fn((input: unknown) => {
+      const path =
+        typeof input === "object" &&
+        input !== null &&
+        "path" in input &&
+        typeof input.path === "string"
+          ? input.path
+          : "/tmp/recreated-worktree";
+      const refName =
+        typeof input === "object" &&
+        input !== null &&
+        "refName" in input &&
+        typeof input.refName === "string"
+          ? input.refName
+          : "recreated-branch";
+      // The real driver makes the folder, and the turn then starts inside it.
+      NodeFS.mkdirSync(path, { recursive: true });
+      return Effect.succeed({ worktree: { path, refName } });
+    });
     const refreshStatus = vi.fn((_: string) =>
       Effect.succeed({
         isRepo: true,
@@ -2380,6 +2395,85 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
     expect(harness.generateBranchName).not.toHaveBeenCalled();
     expect(harness.renameBranch).not.toHaveBeenCalled();
+  });
+
+  it("recreates a thread's worktree when the folder is gone", async () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-lost-worktree-"));
+    const harness = await createHarness({ baseDir });
+    const now = "2026-01-01T00:00:00.000Z";
+    // The folder T3 Code made is gone, but the branch it holds still exists.
+    const lostWorktree = NodePath.join(baseDir, "worktrees", "thread-lost");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-lost-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/keep-this-branch",
+        worktreePath: lostWorktree,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-lost-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-lost-worktree"),
+          role: "user",
+          text: "Carry on where we left off.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.createWorktree.mock.calls.length === 1);
+    expect(harness.createWorktree.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      refName: "t3code/keep-this-branch",
+      path: lostWorktree,
+    });
+  });
+
+  it("leaves a worktree folder outside T3 Code's own directory alone", async () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-foreign-worktree-"));
+    const harness = await createHarness({ baseDir });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-foreign-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/keep-this-branch",
+        worktreePath: "/tmp/somebody-elses-checkout",
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-foreign-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-foreign-worktree"),
+          role: "user",
+          text: "Carry on where we left off.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.createWorktree).not.toHaveBeenCalled();
   });
 
   it("forwards codex model options through session start and turn send", async () => {
