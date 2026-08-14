@@ -1082,6 +1082,20 @@ export const layerWithOptions = (
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
+          // Provider checks can wait while the user changes the timeout.
+          const latestIdleTimeoutMs = yield* readIdleTimeoutMs;
+          const checkedAt = yield* Clock.currentTimeMillis;
+          const latestRemainingMs = latestIdleTimeoutMs - (checkedAt - entry.lastActivityAtMs);
+          if (latestIdleTimeoutMs <= 0 || latestRemainingMs > 0) {
+            yield* Effect.sleep(
+              Duration.millis(
+                latestIdleTimeoutMs <= 0
+                  ? idleSettingsCheckIntervalMs
+                  : Math.min(latestRemainingMs, idleSettingsCheckIntervalMs),
+              ),
+            );
+            return yield* releaseIfStillIdle(input);
+          }
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
@@ -1112,7 +1126,9 @@ export const layerWithOptions = (
               // Re-check on this fiber after another idle window. Do not call
               // scheduleIdleReleaseInternal: that cancels entry.idleFiber, which
               // is this fiber, and can self-deadlock on Fiber.interrupt.
-              yield* Effect.sleep(Duration.millis(Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs)));
+              yield* Effect.sleep(
+                Duration.millis(Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs)),
+              );
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
