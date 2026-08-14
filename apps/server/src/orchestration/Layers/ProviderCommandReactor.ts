@@ -29,7 +29,9 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import * as ServerConfig from "../../config.ts";
 import { resolveBranchPrefixForWorkspace } from "../../project/BranchPrefix.ts";
+import { canonicalPath, isManagedWorktree, worktreeExists } from "../../project/ManagedWorktree.ts";
 import { T3ProjectFileLoader } from "../../project/T3ProjectFileLoader.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
@@ -297,6 +299,8 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const projectFileLoader = yield* T3ProjectFileLoader;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const managedWorktreesRoot = canonicalPath(serverConfig.worktreesDir);
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -469,6 +473,102 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  /**
+   * Build a thread's worktree again when its folder has gone.
+   *
+   * Removing the folder by hand used to end the thread for good: every later
+   * turn failed at the cwd check, and nothing offered a way back. The branch
+   * almost always survives, so the folder can be built again from it.
+   *
+   * Three conditions must all hold, and each one is a refusal to guess:
+   *
+   * - The thread records a worktree path and a branch.
+   * - That path sits inside the folder T3 Code keeps its worktrees in. A path
+   *   anywhere else names a checkout T3 Code did not make.
+   * - The folder is absent. An existing folder is never touched.
+   *
+   * A failure here is left to the turn's own error path, which already names
+   * the missing folder. That happens when the branch is gone too, and then
+   * there is genuinely nothing to rebuild from.
+   */
+  const restoreMissingWorktreeForThread = Effect.fn("restoreMissingWorktreeForThread")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly branch: string | null;
+      readonly worktreePath: string | null;
+      readonly createdAt: string;
+    }) {
+      const { branch, worktreePath } = input;
+      if (!branch || !worktreePath) {
+        return;
+      }
+      if (!isManagedWorktree(managedWorktreesRoot, worktreePath)) {
+        return;
+      }
+      if (worktreeExists(worktreePath)) {
+        return;
+      }
+
+      const project = yield* resolveProject(input.projectId);
+      if (!project) {
+        return;
+      }
+
+      yield* Effect.gen(function* () {
+        yield* gitWorkflow.createWorktree({
+          cwd: project.workspaceRoot,
+          refName: branch,
+          path: worktreePath,
+        });
+        yield* Effect.logInfo("thread worktree rebuilt from its branch", {
+          threadId: input.threadId,
+          branch,
+          worktreePath,
+        });
+        // Say so in the thread. A folder reappearing with none of its
+        // uncommitted work, and no word about why, reads as data loss.
+        yield* Effect.all({
+          commandId: serverCommandId("worktree-restored-activity"),
+          eventId: serverEventId(),
+        }).pipe(
+          Effect.flatMap(({ commandId, eventId }) =>
+            orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId,
+              threadId: input.threadId,
+              activity: {
+                id: eventId,
+                tone: "info",
+                kind: "worktree.restored",
+                summary: "Rebuilt this thread's worktree",
+                payload: {
+                  detail:
+                    `The folder ${worktreePath} was gone, so T3 Code checked out ` +
+                    `${branch} there again. Work that was never committed is not in it.`,
+                  branch,
+                  worktreePath,
+                },
+                turnId: null,
+                createdAt: input.createdAt,
+              },
+              createdAt: input.createdAt,
+            }),
+          ),
+        );
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to rebuild a thread worktree", {
+            threadId: input.threadId,
+            branch,
+            worktreePath,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    },
+  );
+
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
@@ -513,6 +613,16 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
+
+    // Every path that starts a provider session passes through here, and the
+    // provider refuses to start in a folder that is not there.
+    yield* restoreMissingWorktreeForThread({
+      threadId,
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      createdAt,
+    });
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
