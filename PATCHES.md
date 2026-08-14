@@ -77,6 +77,7 @@ stops with an error.
 | 8     | `First segment of the branch name`         | `dist/bin.mjs`, the server bundle           |
 | 8     | `Refresh git and pull request status`      | `dist/client/assets`, the web client bundle |
 | 9     | `Rebuilt this thread's worktree`           | `dist/bin.mjs`, the server bundle           |
+| 10    | `providerSessionIdleTimeout`               | `dist/bin.mjs`, the server bundle           |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -626,3 +627,50 @@ incident that made the containment test necessary.
 **Upstream status.** Not filed, for the reason given in Patch 1.
 
 **Marker.** `Rebuilt this thread's worktree`, the activity summary.
+
+## Patch 10 — the idle-agent timeout is a setting
+
+**Commits:**
+
+- `feat(server): make the idle-agent timeout a setting`
+- `fix(shared): keep the idle timeout a Duration through a settings patch`
+
+**Why.** An agent that nobody has spoken to for hours keeps its process and the
+memory that process holds. `providerSessionIdleTimeout` in the server settings
+lets a machine reclaim it. `ProviderSessionReaper` reads the value.
+
+**The trap, and the bug it caused.** On 14 August 2026 no setting could be saved
+at all. Every write failed:
+
+```
+ServerSettingsError: Server settings write-file failed at …/settings.json.
+  cause: SchemaError: Expected Duration at ["providerSessionIdleTimeout"]
+```
+
+`applyServerSettingsPatch` merges a patch into the current settings with
+`deepMerge`. A `Duration` is an opaque object, so the merge walks into it and
+returns a plain object that is no longer a `Duration`. The settings file then
+fails to encode, and because the whole file is written at once, that one field
+blocked **every** setting, including the provider screen this fork's user was
+trying to edit.
+
+The two `Duration` fields upstream already ships, `automaticGitFetchInterval`
+and `providerHealthRefreshInterval`, are destructured out of the merge and put
+back whole for exactly this reason. This fork added a third `Duration` and did
+not add it to that list. The fork's own test layer carried a comment naming the
+hazard; the production path never got the same treatment.
+
+**The rule this leaves behind.** Any new `Duration` in `ServerSettings` must be
+destructured out of `patchForMerge` in `packages/shared/src/serverSettings.ts`
+and restored whole afterwards. A `Duration` that reaches `deepMerge` breaks the
+settings file for every field.
+
+**Files.** Edited: `packages/shared/src/serverSettings.ts` and its test,
+`packages/contracts/src/settings.ts`, `apps/server/src/serverSettings.ts`,
+`apps/server/src/provider/Layers/ProviderSessionReaper.ts`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. The merge
+hazard itself is upstream's, and it bites any repository that adds a `Duration`
+setting.
+
+**Marker.** `providerSessionIdleTimeout`, in `dist/bin.mjs`, the server bundle.
