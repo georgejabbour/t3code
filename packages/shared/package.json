@@ -47,6 +47,10 @@
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"
     },
+    "./subscriptionUsage": {
+      "types": "./src/subscriptionUsage.ts",
+      "import": "./src/subscriptionUsage.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
