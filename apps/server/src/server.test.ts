@@ -138,6 +138,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
+import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -885,6 +886,12 @@ const buildAppUnderTest = (options?: {
           Layer.mock(WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner)({
             run: () => Effect.succeed({ status: "no-script" as const }),
             ...options?.layers?.worktreeArchiveScriptRunner,
+          }),
+          // Added by this fork. No test here spawns a Claude process, so the
+          // selector reads an empty list.
+          Layer.succeed(SubscriptionUsageService.SubscriptionUsageService, {
+            getSubscriptionUsage: Effect.succeed({ subscriptions: [] }),
+            refresh: Effect.void,
           }),
         ),
       ),
