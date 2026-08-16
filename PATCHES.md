@@ -81,6 +81,8 @@ stops with an error.
 | 11    | `Add another subscription`                 | `dist/client/assets`, the web client bundle |
 | 12    | `subscription-usage-history.json`          | `dist/bin.mjs`, the server bundle           |
 | 12    | `ran out in`                               | `dist/client/assets`, the web client bundle |
+| 13    | `discoverClaudeProjectCommands`            | `dist/bin.mjs`, the server bundle           |
+| 13    | `provider.getProjectPrompts`               | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -791,3 +793,67 @@ or two each: `subscriptionUsage.ts` in contracts, `rpc.ts`,
 
 **Markers.** `subscription-usage-history.json`, the file the record lives in,
 and `ran out in`, the count the history strip prints.
+
+## Patch 13 — a repository's own skills and commands reach the menus
+
+**Commit:** `fix: show a repository's own skills and commands in its thread`
+
+**Why.** A skill or slash command stored inside a repository never appeared in
+the `/` menu or the `$` picker. The user could run it by typing the name,
+because the Claude command-line tool inside the thread reads project scope
+correctly. Only T3 Code's menus missed it.
+
+**The cause is one variable.** `ClaudeDriver.ts` reads the working directory
+from `ServerConfig`, which is the directory the **server process** started in.
+That is the user's home folder, confirmed live: the running server's working
+directory is `/Users/georgejabbour`. It then feeds both discovery paths, so
+`<cwd>/.claude/skills` resolves to `~/.claude/skills`, the user-scope
+directory. The project scan re-scanned user scope. Project support existed all
+along; the input was wrong.
+
+**What.** A new service answers the same question per directory. A thread asks
+about its own working directory, and the composer merges the answer into the
+provider's lists. A repository entry wins a name it shares with a user entry,
+because the repository's is the more specific one.
+
+**Why a second list rather than moving discovery to the thread.** Moving it
+would change the provider snapshot shape, the disk cache that outlives a
+restart, and the client that reads them, on files upstream edits often. A
+second list is additive. It also steps around two traps at once: the probe
+cache holds a single entry keyed on the working directory, and the status cache
+writes the provider's list to disk, where a saved list could outlive the
+directory it came from. Neither applies to a list computed on demand and never
+stored.
+
+**No subprocess per thread.** Skill discovery already reads the file system.
+Slash commands were learned from a Claude subprocess, which reports only what
+it sees from where it started, so this reads `.claude/commands` and
+`.agents/commands` instead. Both scans are directory listings, so a thread
+costs a listing rather than a process.
+
+**Design notes.**
+
+- Command names follow the tool: a file gives a flat name, and a file one level
+  down gives a namespaced one, `linear/scope.md` reading as `linear:scope`.
+- Both scans open a path rather than read a link, so a symbolic link resolves
+  to what it points at. George's command folders are entirely links, and a scan
+  that skipped links would report nothing.
+- `.claude` wins a name collision with `.agents`, matching the order skill
+  discovery already uses.
+- The answer is held for fifteen seconds. A person who writes a skill expects
+  the menu to show it without restarting anything.
+
+**Files.** New: `apps/server/src/provider/Drivers/ClaudeProjectCommands.ts`,
+`apps/server/src/provider/ProjectPromptsService.ts` and
+`apps/web/src/hooks/useProjectPrompts.ts`, each with tests. Edited, a line or
+two each: `server.ts` in contracts, `rpc.ts`, `RpcAuthorization.ts`,
+`server.ts`, one call in `ws.ts`, `client-runtime/state/server.ts`, and two
+merge points in `ChatComposer.tsx`.
+
+**Not done.** `CodexDriver.ts` carries the same shape and was not changed.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. This one is a
+plain defect and belongs upstream.
+
+**Markers.** `discoverClaudeProjectCommands`, the scan, and
+`provider.getProjectPrompts`, the request the client sends.
