@@ -35,6 +35,7 @@ import {
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { probeClaudeSubscriptionUsage } from "./ClaudeSubscriptionUsage.ts";
+import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 
 /** How long one instance's answer is reused before it is asked again. */
 export const SUBSCRIPTION_USAGE_CACHE_TTL = Duration.minutes(5);
@@ -58,13 +59,19 @@ function claudeSettingsForInstance(config: ProviderInstanceConfig): ClaudeSettin
   }
 }
 
-/** Turn an instance's declared environment into one a subprocess accepts. */
+/**
+ * Turn an instance's declared environment into one a subprocess accepts.
+ *
+ * The shared helper merges onto `process.env`, and that merge is the whole
+ * point. Handing the probe only the declared variables strips `HOME`, and
+ * without `HOME` the Claude CLI cannot reach the macOS login keychain that
+ * holds its OAuth credentials. It then starts signed out, reports no account
+ * and no plan, and the selector shows "No plan limit on this sign-in" for a
+ * subscription that is perfectly healthy. An instance that declares no
+ * variables of its own must inherit the whole environment, not an empty one.
+ */
 function environmentForInstance(config: ProviderInstanceConfig): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {};
-  for (const variable of config.environment ?? []) {
-    environment[variable.name] = variable.value;
-  }
-  return environment;
+  return mergeProviderInstanceEnvironment(config.environment);
 }
 
 /**
