@@ -30,6 +30,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SubscriptionSidebarButton } from "../subscriptions/SubscriptionSidebarButton";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -220,6 +221,8 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
                 <TooltipPopup side="top">Usage</TooltipPopup>
               </Tooltip>
             </SidebarMenuItem>
+            {/* Added by this fork. See the subscription selector in PATCHES.md. */}
+            <SubscriptionSidebarButton />
           </>
         )}
         <SidebarUpdatePill />
