@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { mergePromptsByName, useProjectPrompts } from "~/hooks/useProjectPrompts";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   Fragment,
@@ -1848,6 +1849,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const projectPrompts = useProjectPrompts(environmentId, gitCwd);
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -1893,8 +1895,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProviderSkills,
         settings.showSkillsInSlashMenu,
       );
+      // Added by this fork: a repository's own slash commands merge in by name,
+      // then the merged list goes through upstream's skill-aware filter.
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        selectedProviderSlashCommands,
+        mergePromptsByName(selectedProviderSlashCommands, projectPrompts.slashCommands),
         slashMenuSkills,
       ).map((command) => ({
         id: `provider-slash-command:${selectedProvider}:${command.name}`,
@@ -1923,7 +1927,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+      return searchProviderSkills(
+        mergePromptsByName(selectedProviderSkills, projectPrompts.skills),
+        composerTrigger.query,
+      ).map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
         type: "skill" as const,
         provider: selectedProvider,
@@ -1939,6 +1946,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     composerTrigger,
     planModeUiEnabled,
+    projectPrompts.skills,
+    projectPrompts.slashCommands,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
