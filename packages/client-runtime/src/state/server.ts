@@ -753,6 +753,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
+    // Added by this fork. See the subscription selector in PATCHES.md.
+    subscriptionUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:subscription-usage",
+      tag: WS_METHODS.serverGetSubscriptionUsage,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
@@ -819,6 +824,16 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    // Added by this fork. Asking every instance again spawns a process each,
+    // so one request at a time per environment.
+    refreshSubscriptionUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-subscription-usage",
+      tag: WS_METHODS.serverRefreshSubscriptionUsage,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
     }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
