@@ -2883,6 +2883,11 @@ export default function ChatView(props: ChatViewProps) {
           activeThread?.session?.providerInstanceId,
           activeThread?.modelSelection.instanceId,
           activeProjectDefaultModelSelection?.instanceId,
+          // Added by this fork. The subscription selector records which Claude
+          // subscription to use, and a thread with no choice of its own takes
+          // it. The resolver skips it while the instance it names is disabled
+          // or unavailable.
+          primaryServerSettings.activeSubscriptionInstanceId,
         ],
         lockedProvider,
         lockedInstanceId:
@@ -2893,6 +2898,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread?.modelSelection.instanceId,
       activeThread?.session?.providerInstanceId,
       lockedProvider,
+      primaryServerSettings.activeSubscriptionInstanceId,
       providerInstanceEntries,
       selectedProviderByThreadId,
     ],
