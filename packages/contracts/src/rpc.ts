@@ -203,7 +203,7 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import { SubscriptionUsageList } from "./subscriptionUsage.ts";
+import { SubscriptionUsageHistory, SubscriptionUsageList } from "./subscriptionUsage.ts";
 import {
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
@@ -311,6 +311,7 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverGetSubscriptionUsage: "server.getSubscriptionUsage",
   serverRefreshSubscriptionUsage: "server.refreshSubscriptionUsage",
+  serverGetSubscriptionUsageHistory: "server.getSubscriptionUsageHistory",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -513,6 +514,15 @@ export const WsServerRefreshSubscriptionUsageRpc = Rpc.make(
   {
     payload: Schema.Struct({}),
     success: SubscriptionUsageList,
+    error: Schema.Union([EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerGetSubscriptionUsageHistoryRpc = Rpc.make(
+  WS_METHODS.serverGetSubscriptionUsageHistory,
+  {
+    payload: Schema.Struct({}),
+    success: SubscriptionUsageHistory,
     error: Schema.Union([EnvironmentAuthorizationError]),
   },
 );
@@ -1202,6 +1212,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsServerGetSubscriptionUsageRpc,
   WsServerRefreshSubscriptionUsageRpc,
+  WsServerGetSubscriptionUsageHistoryRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
