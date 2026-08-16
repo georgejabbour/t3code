@@ -290,6 +290,7 @@ import {
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
+  ProjectPrompts,
 } from "./server.ts";
 import { SubscriptionUsageHistory, SubscriptionUsageList } from "./subscriptionUsage.ts";
 import {
@@ -455,6 +456,7 @@ export const WS_METHODS = {
   serverGetSubscriptionUsage: "server.getSubscriptionUsage",
   serverRefreshSubscriptionUsage: "server.refreshSubscriptionUsage",
   serverGetSubscriptionUsageHistory: "server.getSubscriptionUsageHistory",
+  providerGetProjectPrompts: "provider.getProjectPrompts",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -745,6 +747,12 @@ const WsServerGetSubscriptionUsageHistoryRpc = Rpc.make(
     error: Schema.Union([EnvironmentAuthorizationError]),
   },
 );
+
+const WsProviderGetProjectPromptsRpc = Rpc.make(WS_METHODS.providerGetProjectPrompts, {
+  payload: Schema.Struct({ cwd: Schema.String }),
+  success: ProjectPrompts,
+  error: Schema.Union([EnvironmentAuthorizationError]),
+});
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
@@ -1810,6 +1818,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSubscriptionUsageRpc,
   WsServerRefreshSubscriptionUsageRpc,
   WsServerGetSubscriptionUsageHistoryRpc,
+  WsProviderGetProjectPromptsRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
