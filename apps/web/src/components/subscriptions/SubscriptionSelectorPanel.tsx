@@ -10,6 +10,7 @@
 import {
   EnvironmentId,
   type ProviderInstanceId,
+  type SubscriptionUsageHistory,
   type SubscriptionUsageList,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -21,6 +22,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { SubscriptionHistory } from "./SubscriptionHistory";
 import { SubscriptionSelector } from "./SubscriptionSelector";
 
 // Stands in while no environment is chosen. The request is never sent, so the
@@ -53,7 +55,18 @@ export function SubscriptionSelectorPanel({
     reportFailure: false,
   });
 
+  const historyResult = useAtomValue(
+    serverEnvironment.subscriptionUsageHistory(
+      environmentId === null
+        ? { environmentId: NO_ENVIRONMENT_ID, input: {} }
+        : { environmentId, input: {} },
+    ),
+  );
+
   const usage = Option.getOrNull(AsyncResult.value(result)) as SubscriptionUsageList | null;
+  const history = Option.getOrNull(
+    AsyncResult.value(historyResult),
+  ) as SubscriptionUsageHistory | null;
   const isLoading = AsyncResult.isWaiting(result);
 
   const handleRefresh = useCallback(() => {
@@ -77,6 +90,14 @@ export function SubscriptionSelectorPanel({
       onRefresh={handleRefresh}
       onAddSubscription={handleAddSubscription}
       environmentId={environmentId}
-    />
+    >
+      {activeInstanceId === null ? null : (
+        <SubscriptionHistory
+          history={history}
+          instanceId={activeInstanceId}
+          nowIso={new Date().toISOString()}
+        />
+      )}
+    </SubscriptionSelector>
   );
 }

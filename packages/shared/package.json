@@ -386,6 +386,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {
