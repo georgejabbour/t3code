@@ -1023,6 +1023,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:subscription-usage-history",
       tag: WS_METHODS.serverGetSubscriptionUsageHistory,
     }),
+    projectPrompts: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:provider:project-prompts",
+      tag: WS_METHODS.providerGetProjectPrompts,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
