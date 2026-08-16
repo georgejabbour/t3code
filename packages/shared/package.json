@@ -342,6 +342,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {

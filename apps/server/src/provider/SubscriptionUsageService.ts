@@ -22,6 +22,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
@@ -33,9 +34,12 @@ import {
   type SubscriptionUsageList,
 } from "@t3tools/contracts";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { forkParked } from "../serverActivation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { probeClaudeSubscriptionUsage } from "./ClaudeSubscriptionUsage.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import { SubscriptionUsageHistoryStore } from "./SubscriptionUsageHistoryStore.ts";
 
 /** How long one instance's answer is reused before it is asked again. */
 export const SUBSCRIPTION_USAGE_CACHE_TTL = Duration.minutes(5);
@@ -104,14 +108,24 @@ export class SubscriptionUsageService extends Context.Service<
     readonly getSubscriptionUsage: Effect.Effect<SubscriptionUsageList>;
     /** Drop every held answer, so the next read asks each instance again. */
     readonly refresh: Effect.Effect<void>;
+    /**
+     * Take one reading of every subscription and fold it into the record of
+     * window peaks. Runs on a timer, and never fails.
+     */
+    readonly sampleForHistory: Effect.Effect<void>;
   }
 >()("t3/provider/SubscriptionUsageService") {}
+
+/** How often a reading is taken for the record of window peaks. */
+export const SUBSCRIPTION_SAMPLE_INTERVAL = Duration.minutes(30);
 
 /** Stands in for a collection time when an instance never answered. */
 const NEVER_COLLECTED_AT = "1970-01-01T00:00:00.000Z";
 
 export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
+  const historyStore = yield* SubscriptionUsageHistoryStore;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   // Resolved once here so the cache's lookup carries no service requirement.
   const path = yield* Path.Path;
 
@@ -217,9 +231,49 @@ export const make = Effect.gen(function* () {
       return { subscriptions } satisfies SubscriptionUsageList;
     });
 
+  /**
+   * Take a reading and fold it into the record of window peaks.
+   *
+   * Skipped while the machine has no reason to be doing background work, so a
+   * laptop asleep on battery does not spawn a Claude process every half hour.
+   * A skipped sample leaves a gap in the record rather than a wrong number:
+   * peaks only ever climb, so the next reading still catches how high the
+   * window went.
+   */
+  const sampleForHistory: SubscriptionUsageService["Service"]["sampleForHistory"] = Effect.gen(
+    function* () {
+      const shouldRun = yield* backgroundPolicy.shouldRunScopeWork({ type: "provider-status" });
+      if (!shouldRun) {
+        return;
+      }
+
+      const { subscriptions } = yield* getSubscriptionUsage;
+      if (subscriptions.length === 0) {
+        return;
+      }
+
+      const sampledAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+      yield* historyStore.record({ subscriptions, sampledAt });
+    },
+  ).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("could not sample subscription usage for the record", {
+        cause: String(cause),
+      }),
+    ),
+  );
+
+  // Sample on a timer for as long as the server runs. Parked until the server
+  // finishes starting, so a probe never competes with start-up, and scoped to
+  // this layer so it stops with it.
+  yield* forkParked(
+    sampleForHistory.pipe(Effect.repeat(Schedule.spaced(SUBSCRIPTION_SAMPLE_INTERVAL))),
+  );
+
   return SubscriptionUsageService.of({
     getSubscriptionUsage,
     refresh: Cache.invalidateAll(cache),
+    sampleForHistory,
   });
 });
 
