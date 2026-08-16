@@ -112,6 +112,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as SubscriptionUsage from "./provider/SubscriptionUsageService.ts";
 import * as SubscriptionUsageHistory from "./provider/SubscriptionUsageHistoryStore.ts";
+import * as ProjectPrompts from "./provider/ProjectPromptsService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -633,6 +634,7 @@ const makeWsRpcLayer = (
       const subscriptionUsage = yield* SubscriptionUsage.SubscriptionUsageService;
       const subscriptionUsageHistory =
         yield* SubscriptionUsageHistory.SubscriptionUsageHistoryStore;
+      const projectPrompts = yield* ProjectPrompts.ProjectPromptsService;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2354,6 +2356,12 @@ const makeWsRpcLayer = (
             WS_METHODS.serverGetSubscriptionUsageHistory,
             subscriptionUsageHistory.read,
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.providerGetProjectPrompts]: ({ cwd }) =>
+          observeRpcEffect(
+            WS_METHODS.providerGetProjectPrompts,
+            projectPrompts.getProjectPrompts(cwd),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
