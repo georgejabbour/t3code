@@ -90,6 +90,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { SubscriptionSelectorPanel } from "../subscriptions/SubscriptionSelectorPanel";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
@@ -668,6 +669,23 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      {/* Added by this fork. See the subscription selector in PATCHES.md. */}
+      <SettingsSection title="Claude subscriptions">
+        <SubscriptionSelectorPanel
+          environmentId={environmentId}
+          activeInstanceId={
+            settings.activeSubscriptionInstanceId.trim().length > 0
+              ? settings.activeSubscriptionInstanceId
+              : null
+          }
+          onSelect={(instanceId) => {
+            if (readOnly) {
+              return;
+            }
+            updateSettings({ activeSubscriptionInstanceId: instanceId });
+          }}
+        />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("providers")}
         headerAction={
