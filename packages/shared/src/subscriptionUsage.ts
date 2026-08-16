@@ -13,16 +13,84 @@
  */
 import type { SubscriptionUsage } from "@t3tools/contracts";
 
+/** One rate-limit window as the selector draws it. */
+export interface SubscriptionWindowView {
+  /** Short name of the window, such as "5h" or "Week". */
+  readonly label: string;
+  /** Percentage still available, 0 to 100, or null when nothing is known. */
+  readonly remainingPercent: number | null;
+  /** How long until the window resets, such as "2h 14m", or null when unknown. */
+  readonly resetsIn: string | null;
+}
+
 /** A subscription as the selector draws it. */
 export interface SubscriptionUsageRow {
   readonly subscription: SubscriptionUsage;
   /**
    * Percentage of the five-hour window still available, 0 to 100, or null when
-   * the subscription reports no window at all.
+   * the subscription reports no window at all. This is the figure the header
+   * adds up, because it is the one a person feels within a session.
    */
   readonly remainingPercent: number | null;
+  /** Every window the subscription reported, in the order they are shown. */
+  readonly windows: ReadonlyArray<SubscriptionWindowView>;
   /** True while this subscription is the one new threads will use. */
   readonly isActive: boolean;
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * How long until a window resets, written the way a person would say it.
+ *
+ * Coarse on purpose. A weekly window reads as "2d 4h" rather than a count of
+ * minutes nobody acts on, and anything under a minute says so instead of
+ * flickering through the last seconds.
+ */
+export function formatResetCountdown(resetsAt: string | null, nowMs: number): string | null {
+  if (resetsAt === null) {
+    return null;
+  }
+  const resetMs = Date.parse(resetsAt);
+  if (Number.isNaN(resetMs)) {
+    return null;
+  }
+
+  const remaining = resetMs - nowMs;
+  if (remaining <= 0) {
+    return "now";
+  }
+  if (remaining < MINUTE_MS) {
+    return "under a minute";
+  }
+  if (remaining < HOUR_MS) {
+    return `${Math.floor(remaining / MINUTE_MS)}m`;
+  }
+  if (remaining < DAY_MS) {
+    const hours = Math.floor(remaining / HOUR_MS);
+    const minutes = Math.floor((remaining % HOUR_MS) / MINUTE_MS);
+    return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+  }
+  const days = Math.floor(remaining / DAY_MS);
+  const hours = Math.floor((remaining % DAY_MS) / HOUR_MS);
+  return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
+}
+
+function windowView(
+  label: string,
+  window: SubscriptionUsage["fiveHour"],
+  nowMs: number,
+): SubscriptionWindowView | null {
+  if (window === null) {
+    return null;
+  }
+  return {
+    label,
+    remainingPercent: Math.max(0, Math.min(100, Math.round(100 - window.utilization))),
+    resetsIn: formatResetCountdown(window.resetsAt, nowMs),
+  };
 }
 
 /** What the selector shows above the list of subscriptions. */
@@ -67,10 +135,16 @@ export function remainingPercentForSubscription(subscription: SubscriptionUsage)
 export function summarizeSubscriptionUsage(
   subscriptions: ReadonlyArray<SubscriptionUsage>,
   activeInstanceId: string | null,
+  /** Current time, supplied by the caller so this stays free of the clock. */
+  nowMs: number,
 ): SubscriptionUsageSummary {
   const rows = subscriptions.map((subscription) => ({
     subscription,
     remainingPercent: remainingPercentForSubscription(subscription),
+    windows: [
+      windowView("5h", subscription.fiveHour, nowMs),
+      windowView("Week", subscription.sevenDay, nowMs),
+    ].filter((window): window is SubscriptionWindowView => window !== null),
     isActive: subscription.instanceId === activeInstanceId,
   }));
 
