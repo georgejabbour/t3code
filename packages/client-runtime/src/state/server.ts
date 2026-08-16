@@ -681,6 +681,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:subscription-usage",
       tag: WS_METHODS.serverGetSubscriptionUsage,
     }),
+    subscriptionUsageHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:subscription-usage-history",
+      tag: WS_METHODS.serverGetSubscriptionUsageHistory,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
