@@ -1025,6 +1025,11 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    // Added by this fork. See the subscription selector in PATCHES.md.
+    subscriptionUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:subscription-usage",
+      tag: WS_METHODS.serverGetSubscriptionUsage,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
@@ -1104,6 +1109,16 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    // Added by this fork. Asking every instance again spawns a process each,
+    // so one request at a time per environment.
+    refreshSubscriptionUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-subscription-usage",
+      tag: WS_METHODS.serverRefreshSubscriptionUsage,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,
