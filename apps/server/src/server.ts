@@ -77,6 +77,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -431,6 +432,9 @@ const ProviderRuntimeLayerLive = Layer.mergeAll(
   // project's imported scripts, so it needs the orchestration projection that
   // this layer provides.
   Layer.provideMerge(WorktreeArchiveScriptRunnerLayerLive),
+  // Added by this fork. Reads plan usage per Claude instance for the
+  // subscription selector; see PATCHES.md.
+  Layer.provideMerge(SubscriptionUsageService.layer),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
