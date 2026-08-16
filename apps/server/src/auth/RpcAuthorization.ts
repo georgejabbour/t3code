@@ -54,6 +54,7 @@ export const RPC_REQUIRED_SCOPES = {
   // spawns processes, so it is an operation.
   [WS_METHODS.serverGetSubscriptionUsage]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshSubscriptionUsage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverGetSubscriptionUsageHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,

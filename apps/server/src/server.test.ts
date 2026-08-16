@@ -147,6 +147,7 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
 import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
+import * as SubscriptionUsageHistoryStore from "./provider/SubscriptionUsageHistoryStore.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -918,6 +919,11 @@ const buildAppUnderTest = (options?: {
           Layer.succeed(SubscriptionUsageService.SubscriptionUsageService, {
             getSubscriptionUsage: Effect.succeed({ subscriptions: [] }),
             refresh: Effect.void,
+            sampleForHistory: Effect.void,
+          }),
+          Layer.succeed(SubscriptionUsageHistoryStore.SubscriptionUsageHistoryStore, {
+            read: Effect.succeed({ peaks: [] }),
+            record: () => Effect.void,
           }),
         ),
       ),
