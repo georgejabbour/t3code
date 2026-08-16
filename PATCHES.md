@@ -78,6 +78,8 @@ stops with an error.
 | 8     | `Refresh git and pull request status`      | `dist/client/assets`, the web client bundle |
 | 9     | `Rebuilt this thread's worktree`           | `dist/bin.mjs`, the server bundle           |
 | 10    | `providerSessionIdleTimeout`               | `dist/bin.mjs`, the server bundle           |
+| 11    | `t3/provider/SubscriptionUsageService`     | `dist/bin.mjs`, the server bundle           |
+| 11    | `Add another subscription`                 | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -691,3 +693,77 @@ hazard itself is upstream's, and it bites any repository that adds a `Duration`
 setting.
 
 **Marker.** `providerSessionIdleTimeout`, in `dist/bin.mjs`, the server bundle.
+
+## Patch 11 — pick which Claude subscription a thread uses
+
+**Commits:**
+
+- `feat: read how much of each Claude subscription is left`
+- `feat: choose a Claude subscription from the sidebar and settings`
+
+**Why.** One Claude provider instance already carries its own `homePath`, which
+becomes `CLAUDE_CONFIG_DIR`, so each instance signs in to its own claude.ai
+account. Several subscriptions could therefore be connected at once, and
+nothing showed how much of any of them was left or made one of them the
+subscription new threads use. Choosing meant opening settings and reading
+instance names that say nothing about remaining capacity.
+
+**What.** A selector, in the sidebar footer and on the provider settings
+screen. It lists every enabled Claude instance with the share of its five-hour
+window still available, adds those shares for the header the way the Claude
+Code selector does, and marks the one new threads use. Picking one writes
+`activeSubscriptionInstanceId`, and a thread with no choice of its own takes
+it.
+
+**Nothing routes on its own.** No thread moves between subscriptions, and none
+is chosen for a person. That is deliberate: a provider session is bound to the
+credentials directory it started in, so moving a live thread would cost it its
+resume cursor and start a new provider session. The number beside each row is
+there so a person decides.
+
+**The experimental method, and why it is quarantined.** The Claude Agent SDK
+reports plan utilization through:
+
+```
+usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+```
+
+Its own documentation says the API may change or be removed in any release and
+that the name will change once it settles. This fork rebases onto nightly
+builds, so that rename arrives unannounced.
+
+Every use of it sits in `apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
+and the call is a lookup by string rather than a typed method. When the name
+changes, the lookup returns undefined, the probe reports that usage is not
+available, and the selector lists the subscription with no percentage beside
+it. Nothing throws, and no other file has to know the method ever existed.
+Restoring the number is then a one-line edit to one constant.
+
+**Design notes.**
+
+- Reading usage spawns a short-lived Claude subprocess per instance, the same
+  way the capabilities probe already does, so answers are held for five
+  minutes. The refresh control asks again.
+- The cache key carries the instance configuration, so an edited instance is
+  asked again instead of answering from the entry its old settings filled.
+- The header shows a total only when at least one subscription reported a
+  window. A zero would read as "nothing left" rather than "nothing known".
+- The sidebar entry resolves its own environment and writes its own setting, so
+  this fork's edit to `SidebarChrome.tsx` is one line.
+- `activeSubscriptionInstanceId` counts only while the instance it names is
+  still configured. A removed instance falls back to the previous order rather
+  than pinning threads to something that is gone.
+
+**Files.** New: `packages/contracts/src/subscriptionUsage.ts`,
+`packages/shared/src/subscriptionUsage.ts`,
+`apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
+`apps/server/src/provider/SubscriptionUsageService.ts`, and three components
+under `apps/web/src/components/subscriptions/`. Edited, a line or two each:
+both package indexes, `rpc.ts`, `RpcAuthorization.ts`, `settings.ts`,
+`server.ts`, one call in `ws.ts`, `client-runtime/state/server.ts`,
+`SidebarChrome.tsx`, `ProviderSettingsPanel.tsx` and `ChatView.tsx`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Markers.** `t3/provider/SubscriptionUsageService`, the service tag, and
+`Add another subscription`, the button label.
