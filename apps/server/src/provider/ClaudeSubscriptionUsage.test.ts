@@ -72,6 +72,49 @@ describe("readSubscriptionUsageResponse", () => {
     expect(probe.fiveHour).toEqual({ utilization: 3, resetsAt: null });
   });
 
+  it("reads a real answer from a Claude Max account", () => {
+    // Captured from the SDK on 16 August 2026. The runtime shape carries keys
+    // the SDK's own types do not document — `limits`, `spend`, `model_scoped`
+    // and several code names — and the windows carry dollar fields. Everything
+    // beyond utilization and the reset time is ignored on purpose, so a shape
+    // that grows again does not stop the number appearing.
+    const probe = readSubscriptionUsageResponse(
+      {
+        subscription_type: "max",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: {
+            utilization: 10,
+            resets_at: "2026-08-16T17:00:00.137018+00:00",
+            limit_dollars: null,
+            used_dollars: null,
+            remaining_dollars: null,
+          },
+          seven_day: {
+            utilization: 20,
+            resets_at: "2026-08-18T15:00:00.137040+00:00",
+            limit_dollars: null,
+          },
+          seven_day_opus: null,
+          extra_usage: null,
+          limits: [],
+          spend: { used: { amount_minor: 0 } },
+          model_scoped: [{ display_name: "Fable", utilization: 0, resets_at: null }],
+        },
+      },
+      { email: "georgejabbour3@gmail.com", subscriptionType: "Claude Max" },
+    );
+
+    expect(probe.absence).toBeNull();
+    expect(probe.fiveHour).toEqual({
+      utilization: 10,
+      resetsAt: "2026-08-16T17:00:00.137018+00:00",
+    });
+    expect(probe.sevenDay?.utilization).toBe(20);
+    expect(probe.email).toBe("georgejabbour3@gmail.com");
+    expect(probe.subscriptionType).toBe("max");
+  });
+
   it("treats an answer that is not an object as a failure", () => {
     expect(readSubscriptionUsageResponse(undefined, account).absence).toBe("failed");
     expect(readSubscriptionUsageResponse("nope", account).absence).toBe("failed");
