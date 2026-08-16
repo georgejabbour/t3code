@@ -346,6 +346,10 @@
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {
