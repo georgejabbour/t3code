@@ -2,10 +2,13 @@ import { ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatResetCountdown,
   describeSubscription,
   remainingPercentForSubscription,
   summarizeSubscriptionUsage,
 } from "./subscriptionUsage.ts";
+
+const NOW = Date.parse("2026-08-16T12:00:00.000Z");
 
 const subscription = (
   id: string,
@@ -59,6 +62,7 @@ describe("summarizeSubscriptionUsage", () => {
         subscription("d", { fiveHour: { utilization: 8, resetsAt: null } }),
       ],
       null,
+      NOW,
     );
 
     expect(summary.connectedCount).toBe(4);
@@ -69,6 +73,7 @@ describe("summarizeSubscriptionUsage", () => {
     const summary = summarizeSubscriptionUsage(
       [subscription("primary"), subscription("second")],
       "second",
+      NOW,
     );
 
     expect(summary.rows.map((row) => row.isActive)).toEqual([false, true]);
@@ -81,6 +86,7 @@ describe("summarizeSubscriptionUsage", () => {
         subscription("b", { fiveHour: { utilization: 1, resetsAt: null } }),
       ],
       null,
+      NOW,
     );
 
     expect(summary.rows.map((row) => row.subscription.instanceId)).toEqual(["a", "b"]);
@@ -93,6 +99,7 @@ describe("summarizeSubscriptionUsage", () => {
         subscription("b", { fiveHour: null, absence: "unsupported" }),
       ],
       null,
+      NOW,
     );
 
     expect(summary.connectedCount).toBe(1);
@@ -106,9 +113,92 @@ describe("summarizeSubscriptionUsage", () => {
     const summary = summarizeSubscriptionUsage(
       [subscription("a", { fiveHour: null, absence: "unsupported" })],
       null,
+      NOW,
     );
 
     expect(summary.totalRemainingPercent).toBeNull();
+  });
+});
+
+describe("formatResetCountdown", () => {
+  const now = Date.parse("2026-08-16T12:00:00.000Z");
+
+  it("counts a weekly window down in days and hours", () => {
+    expect(formatResetCountdown("2026-08-18T16:00:00.000Z", now)).toBe("2d 4h");
+  });
+
+  it("drops the hours when a day lands exactly", () => {
+    expect(formatResetCountdown("2026-08-18T12:00:00.000Z", now)).toBe("2d");
+  });
+
+  it("counts a five-hour window down in hours and minutes", () => {
+    expect(formatResetCountdown("2026-08-16T14:14:00.000Z", now)).toBe("2h 14m");
+  });
+
+  it("counts the last hour down in minutes", () => {
+    expect(formatResetCountdown("2026-08-16T12:43:00.000Z", now)).toBe("43m");
+  });
+
+  it("says so rather than flickering through the last seconds", () => {
+    expect(formatResetCountdown("2026-08-16T12:00:30.000Z", now)).toBe("under a minute");
+  });
+
+  it("reads a window that has already reset as now", () => {
+    expect(formatResetCountdown("2026-08-16T11:00:00.000Z", now)).toBe("now");
+  });
+
+  it("reports nothing for a missing or unreadable time", () => {
+    expect(formatResetCountdown(null, now)).toBeNull();
+    expect(formatResetCountdown("not a time", now)).toBeNull();
+  });
+
+  it("reads the offset format the provider actually sends", () => {
+    // The live answer carries "+00:00" rather than "Z".
+    expect(formatResetCountdown("2026-08-16T17:00:00.137018+00:00", now)).toBe("5h");
+  });
+});
+
+describe("the windows a row shows", () => {
+  const now = Date.parse("2026-08-16T12:00:00.000Z");
+
+  it("shows both windows, each with what is left and when it resets", () => {
+    const summary = summarizeSubscriptionUsage(
+      [
+        subscription("a", {
+          fiveHour: { utilization: 11, resetsAt: "2026-08-16T17:00:00.000Z" },
+          sevenDay: { utilization: 20, resetsAt: "2026-08-18T16:00:00.000Z" },
+        }),
+      ],
+      null,
+      now,
+    );
+
+    expect(summary.rows[0]?.windows).toEqual([
+      { label: "5h", remainingPercent: 89, resetsIn: "5h" },
+      { label: "Week", remainingPercent: 80, resetsIn: "2d 4h" },
+    ]);
+  });
+
+  it("shows only the windows the provider reported", () => {
+    const summary = summarizeSubscriptionUsage(
+      [subscription("a", { fiveHour: { utilization: 5, resetsAt: null }, sevenDay: null })],
+      null,
+      now,
+    );
+
+    expect(summary.rows[0]?.windows).toEqual([
+      { label: "5h", remainingPercent: 95, resetsIn: null },
+    ]);
+  });
+
+  it("shows no windows when nothing is known", () => {
+    const summary = summarizeSubscriptionUsage(
+      [subscription("a", { fiveHour: null, sevenDay: null, absence: "unsupported" })],
+      null,
+      now,
+    );
+
+    expect(summary.rows[0]?.windows).toEqual([]);
   });
 });
 

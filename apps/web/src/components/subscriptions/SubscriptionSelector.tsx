@@ -16,9 +16,10 @@ import {
   describeSubscription,
   summarizeSubscriptionUsage,
   type SubscriptionUsageRow,
+  type SubscriptionWindowView,
 } from "@t3tools/shared/subscriptionUsage";
 import { CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
@@ -35,18 +36,22 @@ export interface SubscriptionSelectorProps {
   readonly environmentId?: EnvironmentId | null;
 }
 
-function RemainingBadge({ remainingPercent }: { remainingPercent: number | null }) {
-  if (remainingPercent === null) {
-    return <span className="text-muted-foreground text-xs">—</span>;
-  }
+function WindowLine({ window }: { window: SubscriptionWindowView }) {
+  const remaining = window.remainingPercent;
   return (
-    <span
-      className={cn(
-        "text-sm tabular-nums",
-        remainingPercent <= 10 ? "text-destructive" : "text-foreground",
+    <span className="flex items-baseline gap-1.5 text-xs">
+      <span className="text-muted-foreground w-8 shrink-0">{window.label}</span>
+      <span
+        className={cn(
+          "w-9 shrink-0 tabular-nums",
+          remaining !== null && remaining <= 10 ? "text-destructive" : "text-foreground",
+        )}
+      >
+        {remaining === null ? "—" : `${remaining}%`}
+      </span>
+      {window.resetsIn === null ? null : (
+        <span className="text-muted-foreground truncate">resets in {window.resetsIn}</span>
       )}
-    >
-      {remainingPercent}%
     </span>
   );
 }
@@ -69,11 +74,11 @@ function SubscriptionRow({
       aria-pressed={row.isActive}
       data-testid={`subscription-row-${subscription.instanceId}`}
       onClick={handleClick}
-      className="hover:bg-accent flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left"
+      className="hover:bg-accent flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left"
     >
       <span
         aria-hidden="true"
-        className="size-5 shrink-0 rounded-full border"
+        className="mt-0.5 size-5 shrink-0 rounded-full border"
         style={subscription.accentColor ? { backgroundColor: subscription.accentColor } : undefined}
       />
       <span className="min-w-0 flex-1">
@@ -81,11 +86,18 @@ function SubscriptionRow({
           <span className="truncate text-sm">{subscription.displayName}</span>
           {row.isActive ? <CheckIcon aria-label="In use" className="size-3.5 shrink-0" /> : null}
         </span>
-        <span className="text-muted-foreground block truncate text-xs">
-          {describeSubscription(subscription)}
-        </span>
+        {row.windows.length === 0 ? (
+          <span className="text-muted-foreground block truncate text-xs">
+            {describeSubscription(subscription)}
+          </span>
+        ) : (
+          <span className="mt-0.5 flex flex-col gap-0.5">
+            {row.windows.map((window) => (
+              <WindowLine key={window.label} window={window} />
+            ))}
+          </span>
+        )}
       </span>
-      <RemainingBadge remainingPercent={row.remainingPercent} />
     </button>
   );
 }
@@ -98,9 +110,17 @@ export function SubscriptionSelector({
   onRefresh,
   onAddSubscription,
 }: SubscriptionSelectorProps) {
+  // The countdowns are written in minutes at their finest, so a minute tick is
+  // all they need. Anything faster would repaint for nothing.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const summary = useMemo(
-    () => summarizeSubscriptionUsage(usage?.subscriptions ?? [], activeInstanceId),
-    [usage?.subscriptions, activeInstanceId],
+    () => summarizeSubscriptionUsage(usage?.subscriptions ?? [], activeInstanceId, nowMs),
+    [usage?.subscriptions, activeInstanceId, nowMs],
   );
 
   return (
