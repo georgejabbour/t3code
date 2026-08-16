@@ -97,6 +97,19 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 /**
+ * Skills and slash commands one repository carries.
+ *
+ * Added by this fork. The provider reports one list for the whole server,
+ * built from the directory the server started in. This carries the same two
+ * kinds for one working directory, so a thread can show its own.
+ */
+export const ProjectPrompts = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+  slashCommands: Schema.Array(ServerProviderSlashCommand),
+});
+export type ProjectPrompts = typeof ProjectPrompts.Type;
+
+/**
  * Availability of a configured provider instance from the runtime's POV.
  *
  *  - `available` — the build ships this driver and an instance is wired
