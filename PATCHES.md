@@ -79,6 +79,8 @@ stops with an error.
 | 10    | `providerSessionIdleTimeout`               | `dist/bin.mjs`, the server bundle           |
 | 11    | `t3/provider/SubscriptionUsageService`     | `dist/bin.mjs`, the server bundle           |
 | 11    | `Add another subscription`                 | `dist/client/assets`, the web client bundle |
+| 12    | `subscription-usage-history.json`          | `dist/bin.mjs`, the server bundle           |
+| 12    | `ran out in`                               | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -733,3 +735,59 @@ both package indexes, `rpc.ts`, `RpcAuthorization.ts`, `settings.ts`,
 
 **Markers.** `t3/provider/SubscriptionUsageService`, the service tag, and
 `Add another subscription`, the button label.
+
+## Patch 12 — how often a plan runs out
+
+**Commit:** `feat: record how high each plan window climbs`
+
+**Why.** The selector shows what is left right now. It could not answer the
+question behind that number, which is whether a plan runs out again and again
+or whether one bad afternoon stood out. The Usage page does not answer it
+either: it reads local transcripts for token cost, and its own documentation
+says subscription billing is separate from what it shows.
+
+**What.** A reading is taken every thirty minutes and folded into a record of
+window peaks. The selector draws those peaks under the subscription in use, as
+a bar per window with a count: "ran out in 3 of the last 18".
+
+**One number per window, not a time series.** Utilization only climbs inside a
+rate-limit window and returns to zero when the window resets, so the highest it
+reached is the whole story. Two subscriptions over ninety days come to roughly
+a thousand rows rather than tens of thousands of readings. A window is
+identified by its reset time, which the provider states exactly, so two samples
+naming the same reset time are the same window.
+
+**Design notes.**
+
+- The record is a JSON file beside the state database, not a table. A migration
+  numbered by this fork collides with the first migration upstream adds at the
+  same number, and this fork rebases onto a nightly most days. The file is
+  written to a temporary name and moved into place, so a reader never sees half
+  of it.
+- Sampling is skipped whenever `BackgroundPolicy` says the machine has no
+  reason to be working, so a sleeping laptop does not spawn a Claude process
+  every half hour. A skipped sample leaves a gap rather than a wrong number,
+  because peaks only climb and the next reading still catches the high mark.
+- The window still open is excluded from the counts. It is part-way through, so
+  counting it would report a quiet afternoon as a window that never ran out.
+- A window the provider reports with no reset time is skipped. Without one
+  there is no way to tell a new window from the one before it, and merging two
+  windows into a row would invent a peak that never happened.
+- 95% counts as having run out, in one shared constant, so the sampler and the
+  view cannot disagree about it.
+
+**A limitation worth knowing.** Sampling only sees windows while the server
+runs. A limit reached overnight with T3 Code closed is missed, and the record
+understates it.
+
+**Files.** New: `apps/server/src/provider/SubscriptionUsageHistoryStore.ts`,
+`packages/shared/src/subscriptionUsageHistory.ts`, and
+`apps/web/src/components/subscriptions/SubscriptionHistory.tsx`. Edited, a line
+or two each: `subscriptionUsage.ts` in contracts, `rpc.ts`,
+`RpcAuthorization.ts`, `server.ts`, one call in `ws.ts`,
+`client-runtime/state/server.ts`, and the two selector components.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Markers.** `subscription-usage-history.json`, the file the record lives in,
+and `ran out in`, the count the history strip prints.
