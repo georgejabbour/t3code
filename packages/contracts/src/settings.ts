@@ -654,6 +654,14 @@ export const ServerSettings = Schema.Struct({
       Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_SESSION_IDLE_TIMEOUT)),
     ),
   ),
+  /**
+   * The Claude subscription new threads use, named by its provider instance.
+   *
+   * Empty means no choice has been made, and a new thread falls back to the
+   * order it used before this setting existed. Nothing routes automatically:
+   * the subscription changes when a person changes it in the selector.
+   */
+  activeSubscriptionInstanceId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -854,6 +862,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   deleteArchivedThreadsNightly: Schema.optionalKey(Schema.Boolean),
+  activeSubscriptionInstanceId: Schema.optionalKey(TrimmedString),
   providerSessionIdleTimeout: Schema.optionalKey(Schema.DurationFromMillis),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
