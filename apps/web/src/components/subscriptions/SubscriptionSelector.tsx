@@ -19,6 +19,7 @@ import {
   type SubscriptionWindowView,
 } from "@t3tools/shared/subscriptionUsage";
 import { CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import type * as React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -34,6 +35,8 @@ export interface SubscriptionSelectorProps {
   readonly onAddSubscription: () => void;
   /** Present so the caller can key a refresh to one environment. */
   readonly environmentId?: EnvironmentId | null;
+  /** Drawn under the list, for the subscription in use. */
+  readonly children?: React.ReactNode;
 }
 
 function WindowLine({ window }: { window: SubscriptionWindowView }) {
@@ -109,6 +112,7 @@ export function SubscriptionSelector({
   onSelect,
   onRefresh,
   onAddSubscription,
+  children,
 }: SubscriptionSelectorProps) {
   // The countdowns are written in minutes at their finest, so a minute tick is
   // all they need. Anything faster would repaint for nothing.
@@ -161,6 +165,13 @@ export function SubscriptionSelector({
             <SubscriptionRow key={row.subscription.instanceId} row={row} onSelect={onSelect} />
           ))}
         </div>
+      )}
+
+      {children === undefined || children === null ? null : (
+        <>
+          <div className="bg-border my-1 h-px" role="presentation" />
+          {children}
+        </>
       )}
 
       <div className="bg-border my-1 h-px" role="presentation" />
