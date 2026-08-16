@@ -262,6 +262,10 @@
     "./nodeSqliteClient": {
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {
