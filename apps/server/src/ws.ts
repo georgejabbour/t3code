@@ -170,6 +170,7 @@ import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as SubscriptionUsage from "./provider/SubscriptionUsageService.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1292,6 +1293,7 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const subscriptionUsage = yield* SubscriptionUsage.SubscriptionUsageService;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2600,6 +2602,19 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        // Added by this fork. See the subscription selector in PATCHES.md.
+        [WS_METHODS.serverGetSubscriptionUsage]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetSubscriptionUsage,
+            subscriptionUsage.getSubscriptionUsage,
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRefreshSubscriptionUsage]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRefreshSubscriptionUsage,
+            subscriptionUsage.refresh.pipe(Effect.andThen(subscriptionUsage.getSubscriptionUsage)),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

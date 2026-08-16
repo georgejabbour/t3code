@@ -92,6 +92,7 @@ import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsag
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -618,6 +619,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
       NativeAppIconResolver.layer,
       ProjectFaviconResolverLayerLive,
       WorktreeArchiveScriptRunnerLayerLive,
+      SubscriptionUsageService.layer,
     ),
   ),
   Layer.provideMerge(RepositoryIdentityResolverLayerLive),

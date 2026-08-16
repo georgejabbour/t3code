@@ -71,6 +71,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSetAcpRegistryProvider]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDisableAcpRegistryProvider]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverLogoutAcpRegistry]: AuthOrchestrationOperateScope,
+  // Added by this fork. Reading usage is a read; asking every instance again
+  // spawns processes, so it is an operation.
+  [WS_METHODS.serverGetSubscriptionUsage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverRefreshSubscriptionUsage]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,
