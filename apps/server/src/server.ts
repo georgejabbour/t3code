@@ -94,6 +94,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
 import * as SubscriptionUsageHistoryStore from "./provider/SubscriptionUsageHistoryStore.ts";
+import * as ProjectPromptsService from "./provider/ProjectPromptsService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -620,6 +621,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
       NativeAppIconResolver.layer,
       ProjectFaviconResolverLayerLive,
       WorktreeArchiveScriptRunnerLayerLive,
+      ProjectPromptsService.layer,
       SubscriptionUsageService.layer.pipe(Layer.provideMerge(SubscriptionUsageHistoryStore.layer)),
     ),
   ),
