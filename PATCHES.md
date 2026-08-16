@@ -69,7 +69,6 @@ stops with an error.
 | 1     | `runOnWorktreeRemove`                      | `dist/bin.mjs`, the server bundle           |
 | 2     | `execCommand("copy")`                      | `dist/client/assets`, the web client bundle |
 | 3     | `refused-foreign-worktree`                 | `dist/bin.mjs`, the server bundle           |
-| 4     | `Steer the agent`                          | `dist/client/assets`, the web client bundle |
 | 5     | `IgnoredWorkspaceEntries.listIgnoredPaths` | `dist/bin.mjs`, the server bundle           |
 | 5     | `t3code:file-explorer-show-ignored`        | `dist/client/assets`, the web client bundle |
 | 6     | `data-file-tree-initial-expansion`         | `dist/client/assets`, the web client bundle |
@@ -275,46 +274,20 @@ rejects a path outside T3's managed worktree root. The guard's tests prove the
 path-containment behavior, while this bundle marker proves the installed server
 contains that tested guard.
 
-## Patch 4 — steer a running turn from a phone
+## Patch 4 — steer a running turn from a phone (removed 2026-08-16)
 
-**Commit:** `feat(web): let a phone steer a running turn from the composer`
+**Upstream shipped it.** `v0.0.34-nightly.20260816.1109` renders a Send button
+beside Stop while a turn runs, gated on `showSendWhileRunning`, and
+`ChatComposer.tsx` passes `isMobileViewport` for that flag. A phone therefore
+gets the button this patch existed to add, so the patch was dropped during the
+rebase onto that nightly rather than resolved against it.
 
-**Why.** A steer is a message you send while the agent is still working. The
-server adds that message to the turn already in flight, and the agent changes
-course. On a desktop the Enter key sends it. On a phone the Enter key writes a
-new line instead, and the composer replaced the Send button with a red Stop
-button for the whole time the agent worked. A phone therefore had no way to
-steer at all. The only choice was to stop the agent and start again, which
-throws away the work in progress.
+The label differs: upstream calls it "Send message" where this fork called it
+"Steer the agent". The behaviour is the same, and one word is not worth a
+patch that has to be rebased every night.
 
-**What.** The composer keeps a Send button beside the Stop button while a turn
-runs, labelled "Steer the agent". The collapsed phone row keeps its Send button
-active during a run. A send during a run also dismisses the phone keyboard, the
-same as any other send. The button stays disabled until the composer holds
-content.
-
-**Design notes.**
-
-- No server change was needed. Sending during a running turn already steered;
-  the web client simply offered no way to do it. The proof is the desktop Enter
-  key, which reaches `onSend` through the same path with no running-state guard.
-- The button shows at every width, not only on a phone. George asked for that:
-  on a desktop it makes an action discoverable that was hidden behind a key.
-- Two guards were removed, not one. `collapsedComposerPrimaryActionDisabled`
-  disabled the collapsed row's Send button during a run, and
-  `shouldBlurMobileComposerOnSubmit` refused to dismiss the keyboard. Both
-  existed for the same belief, that a send during a run is impossible. Leaving
-  the second one would have left the keyboard covering the screen after a steer.
-- The send button markup moved into a `renderSendButton` helper so the running
-  branch and the idle branch cannot drift apart.
-
-**Files.** Edited: `apps/web/src/components/chat/ComposerPrimaryActions.tsx`,
-`apps/web/src/components/chat/ComposerPrimaryActions.test.ts`,
-`apps/web/src/components/chat/ChatComposer.tsx`.
-
-**Upstream status.** Not filed, for the reason given in Patch 1.
-
-**Marker.** `Steer the agent`, the button's accessible label.
+This entry stays as a record. Delete it once nobody wonders where the button
+went.
 
 ## Patch 5 — show the files Git ignores in the file explorer
 
@@ -476,10 +449,19 @@ Upstream already understood the problem for the other half of the pair.
 hook 10 minutes, and `GitManager` passes it on every commit. Push received no
 such allowance. The asymmetry looks like an oversight, not a decision.
 
-**What.** A new `runGitPush` helper carries `PUSH_TIMEOUT_MS`, 10 minutes, which
-is the value commit already uses. All four push commands in `pushCurrentBranch`
-call it. Both callers of `pushCurrentBranch` gain the longer allowance with no
-change of their own, and no interface changed.
+**What.** A new `runGitPush` helper wraps every push command in
+`pushCurrentBranch`. It carried a 10 minute allowance until the rebase onto
+`v0.0.34-nightly.20260816.1109`, where upstream removed the push timeout
+altogether with `timeoutMs: null`. That is the better answer, so the helper now
+carries upstream's decision and this fork keeps only the failure detail. Both
+callers of `pushCurrentBranch` gain the longer allowance with no change of
+their own, and no interface changed.
+
+The rebase onto `v0.0.36-nightly.20260827.1205` added a fifth push,
+`GitVcsDriver.pushCurrentBranch.pushOwnBranch`. Upstream added it so a branch
+that tracks its base publishes under its own name instead of writing its
+commits to the base branch. That push runs through the helper too, so every
+push in `pushCurrentBranch` still names the pre-push hook when it fails.
 
 The helper also names a better cause when a push exits non-zero. The default
 detail says only that Git exited non-zero; a rejected pre-push hook is the
@@ -501,7 +483,8 @@ common reason and is worth naming.
 **Files.** Edited: `apps/server/src/vcs/GitVcsDriverCore.ts` and its test.
 
 **Upstream status.** Not filed, for the reason given in Patch 1. Upstream
-carries the same 30 second limit on push.
+passes `timeoutMs: null` on every push of its own, so the timeout half of this
+patch is gone. Only the failure detail remains this fork's.
 
 **Marker.** `A pre-push hook may have rejected it.`, the failure detail the push
 helper supplies.
