@@ -301,4 +301,41 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(skills, []);
     }),
   );
+
+  it.effect("finds a project skill in a repository away from the config directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repository = path.join(tempDir, "repositories", "nerdragegaming");
+      const linkedSource = path.join(tempDir, "shared-skills", "preflight");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "user-only",
+        ["---", "name: user-only", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(repository, ".claude", "skills"),
+        "weekly-update",
+        ["---", "name: weekly-update", "description: Write the weekly update.", "---"].join("\n"),
+      );
+
+      yield* fs.makeDirectory(linkedSource, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(linkedSource, "SKILL.md"),
+        ["---", "name: preflight", "---"].join("\n"),
+      );
+      yield* fs.symlink(linkedSource, path.join(repository, ".claude", "skills", "preflight"));
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, repository);
+
+      const project = skills
+        .filter((skill) => skill.scope === "project")
+        .map((skill) => skill.name);
+      assert.deepStrictEqual(project.sort(), ["preflight", "weekly-update"]);
+      assert.isTrue(skills.some((skill) => skill.name === "user-only" && skill.scope === "user"));
+    }),
+  );
 });
