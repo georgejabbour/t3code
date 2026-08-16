@@ -2670,11 +2670,20 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProviderInstanceId =
     providerStatuses.find((status) => status.instanceId === selectedProviderByThreadId)
       ?.instanceId ?? null;
+  // Added by this fork. The subscription selector writes this, and it counts
+  // only while the instance it names is still configured and reporting.
+  const activeSubscriptionInstanceId =
+    providerStatuses.find(
+      (status) => status.instanceId === primaryServerSettings.activeSubscriptionInstanceId,
+    )?.instanceId ?? null;
   const activeProviderInstanceId =
     selectedProviderInstanceId ??
     activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
+    // Added by this fork. The subscription selector records which Claude
+    // subscription to use, and a thread with no choice of its own takes it.
+    activeSubscriptionInstanceId ??
     null;
   const activeProviderStatus = useMemo(() => {
     if (activeProviderInstanceId) {
