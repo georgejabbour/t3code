@@ -39,21 +39,55 @@ export interface SubscriptionSelectorProps {
   readonly children?: React.ReactNode;
 }
 
-function WindowLine({ window }: { window: SubscriptionWindowView }) {
+/**
+ * One window's numbers, with a bar drawing the same figure.
+ *
+ * The bar is aria-hidden because the percentage beside it already says the
+ * value, and a widget role inside a button is not announced anyway. It fills
+ * in the subscription's own colour, so a reader ties a bar to the dot above it
+ * without reading the name again.
+ */
+function WindowLine({
+  window,
+  accentColor,
+}: {
+  window: SubscriptionWindowView;
+  accentColor: string | null;
+}) {
   const remaining = window.remainingPercent;
+  const isLow = remaining !== null && remaining <= 10;
   return (
-    <span className="flex items-baseline gap-1.5 text-xs">
-      <span className="text-muted-foreground w-8 shrink-0">{window.label}</span>
-      <span
-        className={cn(
-          "w-9 shrink-0 tabular-nums",
-          remaining !== null && remaining <= 10 ? "text-destructive" : "text-foreground",
+    <span className="flex flex-col gap-1">
+      <span className="flex items-baseline gap-1.5 text-xs">
+        <span className="text-muted-foreground w-8 shrink-0">{window.label}</span>
+        <span
+          className={cn(
+            "w-9 shrink-0 tabular-nums",
+            isLow ? "text-destructive" : "text-foreground",
+          )}
+        >
+          {remaining === null ? "—" : `${remaining}%`}
+        </span>
+        {window.resetsIn === null ? null : (
+          <span className="text-muted-foreground truncate">resets in {window.resetsIn}</span>
         )}
-      >
-        {remaining === null ? "—" : `${remaining}%`}
       </span>
-      {window.resetsIn === null ? null : (
-        <span className="text-muted-foreground truncate">resets in {window.resetsIn}</span>
+      {remaining === null ? null : (
+        <span
+          aria-hidden="true"
+          className="bg-muted-foreground/20 block h-1 overflow-hidden rounded-full"
+        >
+          <span
+            className={cn(
+              "block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
+              isLow ? "bg-destructive" : "bg-muted-foreground/50",
+            )}
+            style={{
+              width: `${remaining}%`,
+              backgroundColor: isLow ? undefined : (accentColor ?? undefined),
+            }}
+          />
+        </span>
       )}
     </span>
   );
@@ -94,9 +128,13 @@ function SubscriptionRow({
             {describeSubscription(subscription)}
           </span>
         ) : (
-          <span className="mt-0.5 flex flex-col gap-0.5">
+          <span className="mt-1 flex flex-col gap-1.5">
             {row.windows.map((window) => (
-              <WindowLine key={window.label} window={window} />
+              <WindowLine
+                key={window.label}
+                window={window}
+                accentColor={subscription.accentColor}
+              />
             ))}
           </span>
         )}
