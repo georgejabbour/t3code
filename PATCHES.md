@@ -216,7 +216,7 @@ this fault too.
 
 ## Patch 3 — the archived-thread sweep only removes folders T3 made
 
-**Commit:** `fix(server): stop the archived-thread sweep removing foreign worktrees`
+**Commit:** `fix(server): stop archived sweeps removing foreign worktrees`
 
 **Why.** This fork adds a sweep that deletes archived threads once a day and
 removes the worktree each one owns. See the commit `feat(server): delete archived
