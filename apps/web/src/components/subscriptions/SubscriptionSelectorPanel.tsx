@@ -29,6 +29,23 @@ import { SubscriptionSelector } from "./SubscriptionSelector";
 // name only has to be one no real environment takes.
 const NO_ENVIRONMENT_ID = EnvironmentId.make("t3code:no-environment");
 
+/**
+ * When the reading a result carries was taken.
+ *
+ * A failed request keeps the reading that came before it, so a request that
+ * fails leaves the last good numbers on screen with their own date rather than
+ * an empty panel.
+ */
+function readingTimestamp(result: AsyncResult.AsyncResult<unknown, unknown>): number | null {
+  if (AsyncResult.isSuccess(result)) {
+    return result.timestamp;
+  }
+  if (AsyncResult.isFailure(result)) {
+    return Option.getOrNull(Option.map(result.previousSuccess, (success) => success.timestamp));
+  }
+  return null;
+}
+
 export function SubscriptionSelectorPanel({
   environmentId,
   activeInstanceId,
@@ -63,11 +80,16 @@ export function SubscriptionSelectorPanel({
     ),
   );
 
+  // AsyncResult keeps the last value while a newer one is in flight, so these
+  // three read apart: what to draw, whether a request is running, and when the
+  // drawn reading was taken. Treating the request as "no data" is what used to
+  // blank the panel on every open.
   const usage = Option.getOrNull(AsyncResult.value(result)) as SubscriptionUsageList | null;
   const history = Option.getOrNull(
     AsyncResult.value(historyResult),
   ) as SubscriptionUsageHistory | null;
-  const isLoading = AsyncResult.isWaiting(result);
+  const isRevalidating = AsyncResult.isWaiting(result);
+  const updatedAtMs = readingTimestamp(result);
 
   const handleRefresh = useCallback(() => {
     if (environmentId === null) {
@@ -84,7 +106,8 @@ export function SubscriptionSelectorPanel({
   return (
     <SubscriptionSelector
       usage={usage}
-      isLoading={isLoading}
+      isRevalidating={isRevalidating}
+      updatedAtMs={updatedAtMs}
       activeInstanceId={activeInstanceId}
       onSelect={onSelect}
       onRefresh={handleRefresh}
