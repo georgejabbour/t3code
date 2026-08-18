@@ -694,13 +694,21 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
     // Added by this fork. See the subscription selector in PATCHES.md.
+    //
+    // Both of these live in a popover, so they go idle every time it closes.
+    // The default idle timeout drops the reading five minutes later, and the
+    // next open then has nothing to show while it asks again. An hour keeps
+    // the last reading, so opening the panel draws numbers at once and asks
+    // for new ones behind them. The header dates whatever it draws.
     subscriptionUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:subscription-usage",
       tag: WS_METHODS.serverGetSubscriptionUsage,
+      idleTtlMs: 60 * 60_000,
     }),
     subscriptionUsageHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:subscription-usage-history",
       tag: WS_METHODS.serverGetSubscriptionUsageHistory,
+      idleTtlMs: 60 * 60_000,
     }),
     projectPrompts: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:provider:project-prompts",
