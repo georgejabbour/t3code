@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatResetCountdown,
+  describeReadingAge,
   describeSubscription,
+  describeSubscriptionFreshness,
   remainingPercentForSubscription,
   summarizeSubscriptionUsage,
 } from "./subscriptionUsage.ts";
@@ -218,5 +220,62 @@ describe("describeSubscription", () => {
         subscription("a", { subscriptionType: null, fiveHour: null, absence: "failed" }),
       ),
     ).toBe("Usage could not be read");
+  });
+});
+
+describe("describeReadingAge", () => {
+  it("writes the age in the largest unit that fits", () => {
+    expect(describeReadingAge(NOW - 30_000, NOW)).toBe("just now");
+    expect(describeReadingAge(NOW - 3 * 60_000, NOW)).toBe("3m ago");
+    expect(describeReadingAge(NOW - 2 * 3_600_000, NOW)).toBe("2h ago");
+    expect(describeReadingAge(NOW - 3 * 86_400_000, NOW)).toBe("3d ago");
+  });
+
+  it("reads a clock that runs behind the server as this moment", () => {
+    expect(describeReadingAge(NOW + 5_000, NOW)).toBe("just now");
+  });
+});
+
+describe("describeSubscriptionFreshness", () => {
+  const read = (overrides: Partial<Parameters<typeof describeSubscriptionFreshness>[0]> = {}) =>
+    describeSubscriptionFreshness({
+      hasReading: true,
+      isRevalidating: false,
+      updatedAtMs: NOW,
+      nowMs: NOW,
+      ...overrides,
+    });
+
+  it("is empty before the first reading arrives", () => {
+    expect(read({ hasReading: false, updatedAtMs: null })).toEqual({
+      state: "empty",
+      label: null,
+    });
+  });
+
+  it("stays empty while the first reading is still on its way", () => {
+    expect(read({ hasReading: false, updatedAtMs: null, isRevalidating: true })).toEqual({
+      state: "empty",
+      label: null,
+    });
+  });
+
+  it("calls a reading from this minute fresh", () => {
+    expect(read({ updatedAtMs: NOW - 20_000 })).toEqual({ state: "fresh", label: "just now" });
+  });
+
+  it("calls an older reading stale and dates it", () => {
+    expect(read({ updatedAtMs: NOW - 4 * 60_000 })).toEqual({ state: "stale", label: "4m ago" });
+  });
+
+  it("reports a request in flight even when the reading is still fresh", () => {
+    expect(read({ updatedAtMs: NOW, isRevalidating: true })).toEqual({
+      state: "revalidating",
+      label: "updating…",
+    });
+  });
+
+  it("calls a reading of unknown age stale rather than claim it is fresh", () => {
+    expect(read({ updatedAtMs: null })).toEqual({ state: "stale", label: null });
   });
 });
