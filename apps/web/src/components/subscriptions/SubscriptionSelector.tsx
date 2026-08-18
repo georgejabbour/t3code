@@ -14,6 +14,7 @@
 import type { EnvironmentId, ProviderInstanceId, SubscriptionUsageList } from "@t3tools/contracts";
 import {
   describeSubscription,
+  describeSubscriptionFreshness,
   summarizeSubscriptionUsage,
   type SubscriptionUsageRow,
   type SubscriptionWindowView,
@@ -27,8 +28,12 @@ import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 
 export interface SubscriptionSelectorProps {
+  /** The last reading, kept on screen while a newer one is in flight. */
   readonly usage: SubscriptionUsageList | null;
-  readonly isLoading: boolean;
+  /** True while a request for a newer reading is running. */
+  readonly isRevalidating: boolean;
+  /** When the reading above was taken, or null before the first one arrives. */
+  readonly updatedAtMs: number | null;
   readonly activeInstanceId: string | null;
   readonly onSelect: (instanceId: ProviderInstanceId) => void;
   readonly onRefresh: () => void;
@@ -145,7 +150,8 @@ function SubscriptionRow({
 
 export function SubscriptionSelector({
   usage,
-  isLoading,
+  isRevalidating,
+  updatedAtMs,
   activeInstanceId,
   onSelect,
   onRefresh,
@@ -165,29 +171,60 @@ export function SubscriptionSelector({
     [usage?.subscriptions, activeInstanceId, nowMs],
   );
 
+  const freshness = describeSubscriptionFreshness({
+    hasReading: usage !== null,
+    isRevalidating,
+    updatedAtMs,
+    nowMs,
+  });
+  // A stale total may already have moved, so it steps back to the muted colour
+  // the rest of the panel uses for anything a reader should not act on.
+  const isStale = freshness.state === "stale";
+
   return (
-    <div className="w-72" data-testid="subscription-selector">
+    <div className="w-72" data-testid="subscription-selector" data-freshness={freshness.state}>
       <div className="flex items-center gap-2.5 px-2 py-2">
         <GaugeIcon aria-hidden="true" className="text-muted-foreground size-5 shrink-0" />
         <span className="min-w-0 flex-1">
           <span className="block text-sm">Usage remaining</span>
-          <span className="text-muted-foreground block text-xs">
-            {summary.connectedCount === 1
-              ? "1 connected subscription"
-              : `${summary.connectedCount} connected subscriptions`}
-          </span>
+          {/* Counting the subscriptions before any reading arrives would say
+              "0 connected subscriptions", which is a count nobody measured. */}
+          {usage === null ? null : (
+            <span className="text-muted-foreground block truncate text-xs">
+              {summary.connectedCount === 1
+                ? "1 connected subscription"
+                : `${summary.connectedCount} connected subscriptions`}
+            </span>
+          )}
         </span>
         {summary.totalRemainingPercent === null ? null : (
-          <span className="text-sm tabular-nums">{summary.totalRemainingPercent}%</span>
+          <span className="flex flex-col items-end leading-tight">
+            <span
+              data-testid="subscription-total-remaining"
+              className={cn(
+                "text-sm tabular-nums transition-colors duration-300 motion-reduce:transition-none",
+                isStale ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {summary.totalRemainingPercent}%
+            </span>
+            {freshness.label === null ? null : (
+              <span className="text-muted-foreground text-[10px]">{freshness.label}</span>
+            )}
+          </span>
         )}
         <Button
-          aria-label="Refresh subscription usage"
+          aria-label={isRevalidating ? "Reading subscription usage" : "Refresh subscription usage"}
           size="icon-xs"
           variant="ghost"
-          disabled={isLoading}
+          disabled={isRevalidating}
           onClick={onRefresh}
         >
-          {isLoading ? <Spinner className="size-3.5" /> : <RefreshCwIcon className="size-3.5" />}
+          {isRevalidating ? (
+            <Spinner className="size-3.5" />
+          ) : (
+            <RefreshCwIcon className="size-3.5" />
+          )}
         </Button>
       </div>
 
@@ -195,7 +232,7 @@ export function SubscriptionSelector({
 
       {summary.rows.length === 0 ? (
         <p className="text-muted-foreground px-2 py-2 text-xs">
-          {isLoading ? "Reading subscriptions…" : "No Claude subscription is connected yet."}
+          {isRevalidating ? "Reading subscriptions…" : "No Claude subscription is connected yet."}
         </p>
       ) : (
         <div className="flex flex-col">
