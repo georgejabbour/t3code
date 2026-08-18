@@ -78,6 +78,95 @@ export function formatResetCountdown(resetsAt: string | null, nowMs: number): st
   return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
 }
 
+/**
+ * How old a reading is, written the way a person would say it.
+ *
+ * Coarser than the countdown above, because the exact age of a reading is not
+ * something anybody acts on. A reader only wants to know whether the numbers
+ * are from this minute or from an hour ago.
+ */
+export function describeReadingAge(updatedAtMs: number, nowMs: number): string {
+  // A clock that runs behind the server would otherwise report a reading from
+  // the future, so treat anything at or before now as this moment.
+  const age = Math.max(0, nowMs - updatedAtMs);
+  if (age < MINUTE_MS) {
+    return "just now";
+  }
+  if (age < HOUR_MS) {
+    return `${Math.floor(age / MINUTE_MS)}m ago`;
+  }
+  if (age < DAY_MS) {
+    return `${Math.floor(age / HOUR_MS)}h ago`;
+  }
+  return `${Math.floor(age / DAY_MS)}d ago`;
+}
+
+/**
+ * Which of three things the panel is showing.
+ *
+ * The panel keeps the last reading on screen while it asks for a new one, so
+ * the numbers alone no longer say how much to trust them. "fresh" means the
+ * reading is from this minute. "stale" means it is older and may have moved.
+ * "revalidating" means a new reading is on its way. "empty" means there is no
+ * reading to show at all, which happens only before the first one arrives.
+ */
+export type SubscriptionFreshnessState = "empty" | "fresh" | "stale" | "revalidating";
+
+/** The freshness of the reading on screen, and the note the header shows. */
+export interface SubscriptionFreshnessView {
+  readonly state: SubscriptionFreshnessState;
+  /** Short note such as "3m ago", or null when there is nothing to date. */
+  readonly label: string | null;
+}
+
+/**
+ * How long a reading counts as fresh.
+ *
+ * The panel redraws on a minute tick, so a shorter window would let a reading
+ * turn stale before the next tick could redraw the word. The panel would then
+ * show "just now" beside the state "stale" and contradict itself.
+ */
+export const FRESH_READING_MS = MINUTE_MS;
+
+/**
+ * Read the freshness of what the panel is showing.
+ *
+ * Kept apart from the components so both the header note and any styling that
+ * follows from it agree, and so the rules have a test of their own.
+ */
+export function describeSubscriptionFreshness({
+  hasReading,
+  isRevalidating,
+  updatedAtMs,
+  nowMs,
+  freshWindowMs = FRESH_READING_MS,
+}: {
+  /** True once a reading exists to show, even an old one. */
+  readonly hasReading: boolean;
+  /** True while a request for a newer reading is in flight. */
+  readonly isRevalidating: boolean;
+  /** When the reading on screen was taken, or null when none has arrived. */
+  readonly updatedAtMs: number | null;
+  readonly nowMs: number;
+  readonly freshWindowMs?: number;
+}): SubscriptionFreshnessView {
+  if (!hasReading) {
+    return { state: "empty", label: null };
+  }
+  // A request in flight outranks the age, because the age is about to change.
+  if (isRevalidating) {
+    return { state: "revalidating", label: "updating…" };
+  }
+  if (updatedAtMs === null) {
+    return { state: "stale", label: null };
+  }
+  const label = describeReadingAge(updatedAtMs, nowMs);
+  return {
+    state: nowMs - updatedAtMs < freshWindowMs ? "fresh" : "stale",
+    label,
+  };
+}
+
 function windowView(
   label: string,
   window: SubscriptionUsage["fiveHour"],
