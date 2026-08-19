@@ -28,9 +28,13 @@ patch and install the published `t3` again.
 ## Staying current
 
 ```sh
-t3code-fork-update              # rebase onto the published nightly, typecheck, test
-t3code-fork-update --install    # the above, then build and install globally
+t3code-fork-update --check           # rebase onto the published nightly, typecheck, verify markers
+t3code-fork-update --install         # the above, then build and install globally
+t3code-fork-update --check --test    # the check, and also run the maintained test set
+t3code-fork-update --install --test  # the install, and also run the maintained test set
 ```
+
+Tests do not run by default. Add `--test` to run the maintained test set.
 
 The script is at `~/.local/bin/t3code-fork-update`, outside this repository, so it
 never makes the difference against upstream larger.
@@ -38,8 +42,8 @@ never makes the difference against upstream larger.
 A clean rebase does not prove the patch still works. This fork's tests copy
 upstream types and upstream test data. Upstream keeps adding to both, on lines
 this fork never edits. Git therefore reports no conflict, and the typecheck or the
-tests fail straight after. Two cases appeared while verifying
-`0.0.34-nightly.20260810.1061`:
+tests fail straight after. Four cases have appeared so far. The first two appeared
+while verifying `0.0.34-nightly.20260810.1061`:
 
 1. Upstream added two required fields to `ProcessRunOutput`, so Patch 1's test
    helper had to name them too.
@@ -54,11 +58,22 @@ tests fail straight after. Two cases appeared while verifying
    list in that test needs the new name too. Any upstream test that enumerates
    a schema this fork extends breaks the same way.
 
-The second case was broken from 8 August 2026 and nobody saw it, because the
-updater runs three test files only. The third case was broken for as long, and
-found on 11 August 2026 by running the whole suite. Run the tests of every file
-this fork edits before an install, not the three the updater names. Better, run
-`pnpm test` and read the result.
+4. `0.0.34-nightly.20260820.1146` added
+   `apps/server/integration/orphanedProviderSessionStartup.integration.test.ts`.
+   That test builds the startup dependencies by hand instead of taking the real
+   server layer. This fork makes `serverRuntimeStartup.ts` ask for one more
+   service, `ArchivedThreadReaper`, so the hand-built set has to name it too. The
+   test now supplies the same do-nothing stub it already supplies for
+   `ProviderSessionReaper`. Any upstream test that assembles startup dependencies
+   by hand breaks the same way. The real layer stays correct: `server.ts` provides
+   `ArchivedThreadReaperLive` through `ProviderRuntimeLayerLive`.
+
+The second case was broken from 8 August 2026 and nobody saw it. By default the
+updater runs no tests, and even with `--test` it runs a few files only. The third
+case was broken for as long, and found on 11 August 2026 by running the whole
+suite. The type check caught the fourth case on 20 August 2026, before any test
+ran. Run the tests of every file this fork edits before an install, not the few
+that `--test` names. Better, run `pnpm test` and read the result.
 
 After an install, the script reads the built output and looks for one text marker
 from each patch. A missing marker means the build lost that patch, and the script
