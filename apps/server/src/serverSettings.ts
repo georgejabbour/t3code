@@ -359,11 +359,11 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   };
 }
 
-// Values under these keys are compared as a whole — never stripped field-by-field.
+// Plain records under these keys are compared as a whole — never stripped
+// field-by-field. A value built from a class needs no entry here: `isPlainRecord`
+// below already holds every one of those together.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
-  "automaticGitFetchInterval",
-  "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
@@ -380,6 +380,22 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
   },
 };
 
+/**
+ * Answer whether a value is an object literal, and so safe to take apart key by
+ * key.
+ *
+ * A `Duration` is not one. It is built from a class, and its one own key holds
+ * private parts. Copying those keys into a new object literal produces a value
+ * the settings schema rejects with "Expected Duration". The whole settings file
+ * is written at once, so that one field then blocks every settings write, and
+ * the user sees a toggle that does nothing. This guard keeps such a value whole
+ * and compares it with `Equal.equals` instead.
+ */
+function isPlainRecord(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
     return Equal.equals(current, defaults) ? undefined : current;
@@ -391,6 +407,10 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
     typeof current === "object" &&
     typeof defaults === "object"
   ) {
+    if (!isPlainRecord(current) || !isPlainRecord(defaults)) {
+      return Equal.equals(current, defaults) ? undefined : current;
+    }
+
     const currentRecord = current as Record<string, unknown>;
     const defaultsRecord = defaults as Record<string, unknown>;
     const next: Record<string, unknown> = {};
@@ -982,6 +1002,16 @@ const make = Effect.gen(function* () {
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
+    ).pipe(
+      Effect.tapError((error: ServerSettingsError) =>
+        Effect.logError("failed to update settings, no setting was saved", {
+          path: error.settingsPath,
+          operation: error.operation,
+          providerInstanceId: error.providerInstanceId,
+          environmentVariable: error.environmentVariable,
+          cause: error.cause,
+        }),
+      ),
     );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
