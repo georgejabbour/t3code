@@ -175,6 +175,7 @@ import {
   ComposerControlSeparator,
   ComposerSelectControl,
 } from "./ComposerControl";
+import { ComposerAttachButton } from "./ComposerAttachButton";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
   searchSlashCommandItems,
@@ -5348,6 +5349,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isComposerResting && "hidden",
                   )}
                 >
+                  {/* A phone browser has no drag-and-drop and no file paste, so this
+                      button is the only way a phone user attaches an image. It feeds
+                      the same path the drop and paste handlers use. */}
+                  {composerControlsInStrip ? null : (
+                    <ComposerAttachButton
+                      onFiles={(files) => {
+                        void addComposerAttachments(files);
+                        focusComposer();
+                      }}
+                    />
+                  )}
                   {composerControlsInStrip ? null : composerControls}
                 </div>
 
