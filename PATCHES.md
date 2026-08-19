@@ -98,6 +98,7 @@ stops with an error.
 | 12    | `ran out in`                               | `dist/client/assets`, the web client bundle |
 | 13    | `discoverClaudeProjectCommands`            | `dist/bin.mjs`, the server bundle           |
 | 13    | `provider.getProjectPrompts`               | `dist/client/assets`, the web client bundle |
+| 14    | `no setting was saved`                     | `dist/bin.mjs`, the server bundle           |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -889,3 +890,76 @@ plain defect and belongs upstream.
 
 **Markers.** `discoverClaudeProjectCommands`, the scan, and
 `provider.getProjectPrompts`, the request the client sends.
+
+## Patch 14 — a Duration no longer blocks every settings write
+
+**Commit:** `fix(server): stop a Duration from blocking every settings write`
+
+**Why.** On 19 August 2026 no setting could be changed in the user interface.
+A toggle looked like it did nothing. An edit typed straight into
+`~/.t3/userdata/settings.json` still worked, because the read path and the
+write path are separate.
+
+**The failure.** Every save ended this way:
+
+```
+ServerSettingsError: Server settings write-file failed at …/settings.json.
+  cause: SchemaError: Expected Duration at ["providerSessionIdleTimeout"]
+```
+
+**The root cause.** This is the same field as Patch 10 and a different code
+path. Patch 10 fixed the merge, in `packages/shared/src/serverSettings.ts`.
+This one is the write.
+
+`stripDefaultServerSettings` in `apps/server/src/serverSettings.ts` keeps the
+settings file small. It walks the settings object and drops every value that
+still equals its default. The walk went into a `Duration`, which is built from
+a class and holds its parts under one private key. Copying those keys produced
+an object literal that is no longer a `Duration`, and the file then failed to
+encode. The whole file is written at once, so that one field blocked **every**
+setting.
+
+A list named `ATOMIC_SETTINGS_KEYS` held the two `Duration` fields upstream
+ships, `automaticGitFetchInterval` and `providerHealthRefreshInterval`, out of
+the walk. This fork added a third `Duration` and did not add it to that list.
+The user's own file carried `"providerSessionIdleTimeout": 43200000`, which is
+not the default, so the walk went in on every save.
+
+**The fix.** The walk now takes a value apart only when it is an object
+literal. `isPlainRecord` reads the prototype to decide. Any other value is
+compared whole with `Equal.equals`. A `Duration` this fork adds next needs no
+list entry, and neither does any other value built from a class. The two
+interval names left `ATOMIC_SETTINGS_KEYS` because the guard covers them, and a
+test now proves it.
+
+**The second half: the failure is now in the log.** `updateSettings` returns
+this error to the client over the websocket, and the client shows nothing. That
+is why a broken save looked like a control that does not work. `updateSettings`
+now writes the failure to the server log with `Effect.logError`, naming the
+path, the operation and the cause. The log line sits in the service, so it
+covers every caller, not only the one remote procedure call.
+
+**Tests.** Four in `apps/server/src/serverSettings.test.ts`. Each one was seen
+to fail before the fix and pass after it.
+
+1. Save an unrelated setting after the idle timeout moves off its default.
+2. Save a setting when the file already on disk holds a non-default idle
+   timeout. This is the user's real file shape.
+3. Keep a non-default `automaticGitFetchInterval` whole on disk. This covers
+   the two names removed from `ATOMIC_SETTINGS_KEYS`.
+4. Write a failed update to the server log.
+
+```sh
+vp test run src/serverSettings.test.ts   # from apps/server
+```
+
+**Files.** Edited: `apps/server/src/serverSettings.ts` and
+`apps/server/src/serverSettings.test.ts`. No other file changed.
+
+**Upstream status.** Not filed. Upstream ships `stripDefaultServerSettings` with
+the same shape, so upstream will meet this the day it adds its own third
+`Duration`. The guard belongs there.
+
+**Marker.** `no setting was saved`, part of the log message. The guard in
+`stripDefaultServerSettings` holds no string literal, so no marker can watch it.
+The four tests above are its check. Run them before an install.
