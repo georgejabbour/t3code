@@ -28,9 +28,13 @@ patch and install the published `t3` again.
 ## Staying current
 
 ```sh
-t3code-fork-update              # rebase onto the published nightly, typecheck, test
-t3code-fork-update --install    # the above, then build and install globally
+t3code-fork-update --check           # rebase onto the published nightly, typecheck, verify markers
+t3code-fork-update --install         # the above, then build and install globally
+t3code-fork-update --check --test    # the check, and also run the maintained test set
+t3code-fork-update --install --test  # the install, and also run the maintained test set
 ```
+
+Tests do not run by default. Add `--test` to run the maintained test set.
 
 The script is at `~/.local/bin/t3code-fork-update`, outside this repository, so it
 never makes the difference against upstream larger.
@@ -54,11 +58,11 @@ tests fail straight after. Two cases appeared while verifying
    list in that test needs the new name too. Any upstream test that enumerates
    a schema this fork extends breaks the same way.
 
-The second case was broken from 8 August 2026 and nobody saw it, because the
-updater runs three test files only. The third case was broken for as long, and
-found on 11 August 2026 by running the whole suite. Run the tests of every file
-this fork edits before an install, not the three the updater names. Better, run
-`pnpm test` and read the result.
+The second case was broken from 8 August 2026 and nobody saw it. By default the
+updater runs no tests, and even with `--test` it runs a few files only. The third
+case was broken for as long, and found on 11 August 2026 by running the whole
+suite. Run the tests of every file this fork edits before an install, not the few
+that `--test` names. Better, run `pnpm test` and read the result.
 
 After an install, the script reads the built output and looks for one text marker
 from each patch. A missing marker means the build lost that patch, and the script
