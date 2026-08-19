@@ -96,6 +96,7 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
+import { ComposerAttachButton } from "./ComposerAttachButton";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -3141,6 +3142,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {/* A phone browser has no drag-and-drop and no file paste, so this
+                    button is the only way a phone user attaches an image. It feeds
+                    the same path the drop and paste handlers use. */}
+                <ComposerAttachButton
+                  onFiles={(files) => {
+                    void addComposerImages(files);
+                    focusComposer();
+                  }}
+                />
                 {noProviderAvailable ? (
                   <Button
                     type="button"
