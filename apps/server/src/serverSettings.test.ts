@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -751,4 +752,141 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("saves an unrelated setting while a non-default idle timeout is on disk", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      yield* serverSettings.updateSettings({
+        providerSessionIdleTimeout: Duration.hours(12),
+      });
+
+      const next = yield* serverSettings.updateSettings({
+        deleteArchivedThreadsNightly: true,
+      });
+
+      assert.equal(next.deleteArchivedThreadsNightly, true);
+      assert.equal(Duration.toMillis(next.providerSessionIdleTimeout), 43_200_000);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const parsed = JSON.parse(raw);
+      assert.equal(parsed.deleteArchivedThreadsNightly, true);
+      assert.equal(parsed.providerSessionIdleTimeout, 43_200_000);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("saves a setting when the file on disk already holds a non-default idle timeout", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      // The shape a user's own settings.json takes once the idle timeout moves
+      // off its default. Every save used to fail while this file was on disk.
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"defaultThreadEnvMode":"worktree","providerSessionIdleTimeout":43200000}',
+      );
+
+      const next = yield* serverSettings.updateSettings({
+        newWorktreesStartFromOrigin: false,
+      });
+
+      assert.equal(next.newWorktreesStartFromOrigin, false);
+      assert.equal(Duration.toMillis(next.providerSessionIdleTimeout), 43_200_000);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const parsed = JSON.parse(raw);
+      assert.equal(parsed.newWorktreesStartFromOrigin, false);
+      assert.equal(parsed.providerSessionIdleTimeout, 43_200_000);
+      assert.equal(parsed.defaultThreadEnvMode, "worktree");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps a non-default background activity interval whole on disk", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        automaticGitFetchInterval: Duration.minutes(7),
+      });
+
+      assert.equal(Duration.toMillis(next.automaticGitFetchInterval), 420_000);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.equal(JSON.parse(raw).automaticGitFetchInterval, 420_000);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("writes a failed settings update to the server log", () => {
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+    const cause = new ServerSecretStore.SecretStorePersistError({
+      resource: "provider environment secret",
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFile",
+        pathOrDescriptor: "provider environment secret",
+        description: "Secret backend unavailable.",
+      }),
+    });
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          ServerSecretStore.ServerSecretStore,
+          ServerSecretStore.ServerSecretStore.of({
+            get: () => Effect.succeed(Option.none()),
+            set: () => Effect.fail(cause),
+            create: () => Effect.void,
+            getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+            remove: () => Effect.void,
+          }),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-log-test-",
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const exit = yield* Effect.exit(
+        serverSettings.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("codex_personal")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true }],
+              config: {},
+            },
+          },
+        }),
+      );
+
+      assert.equal(exit._tag, "Failure");
+      assert.isTrue(
+        messages.some((message) =>
+          message.includes("failed to update settings, no setting was saved"),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(settingsLayer, Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    );
+  });
 });
