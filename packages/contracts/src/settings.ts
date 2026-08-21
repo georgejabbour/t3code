@@ -736,7 +736,8 @@ export const ServerSettings = Schema.Struct({
     ),
   ),
   /**
-   * The Claude subscription new threads use, named by its provider instance.
+   * The subscription new threads use, named by its provider instance. Either
+   * a claude.ai plan or a ChatGPT plan; the instance decides which.
    *
    * Empty means no choice has been made, and a new thread falls back to the
    * order it used before this setting existed. Nothing routes automatically:
