@@ -18,8 +18,16 @@ describe("readSubscriptionUsageResponse", () => {
       account,
     );
 
-    expect(probe.fiveHour).toEqual({ utilization: 12, resetsAt: "2026-01-01T05:00:00.000Z" });
-    expect(probe.sevenDay).toEqual({ utilization: 40, resetsAt: "2026-01-07T00:00:00.000Z" });
+    expect(probe.fiveHour).toEqual({
+      label: "5h",
+      utilization: 12,
+      resetsAt: "2026-01-01T05:00:00.000Z",
+    });
+    expect(probe.sevenDay).toEqual({
+      label: "Week",
+      utilization: 40,
+      resetsAt: "2026-01-07T00:00:00.000Z",
+    });
     expect(probe.absence).toBeNull();
     expect(probe.email).toBe("george@example.com");
     expect(probe.subscriptionType).toBe("max");
@@ -36,6 +44,22 @@ describe("readSubscriptionUsageResponse", () => {
     expect(probe.fiveHour).toBeNull();
   });
 
+  it("reports a plan whose limits are switched off as unavailable, not unsupported", () => {
+    // Captured on 20 August 2026 from an account whose organization has turned
+    // Claude Code subscription access off. The plan is real and the SDK names
+    // it, and it sends no windows at all. Calling that "billed per token"
+    // would deny a plan the account has.
+    const probe = readSubscriptionUsageResponse(
+      { subscription_type: "max", rate_limits_available: true, rate_limits: null },
+      { email: "george@flexslot.gg", subscriptionType: "Claude Max" },
+    );
+
+    expect(probe.absence).toBe("unavailable");
+    expect(probe.subscriptionType).toBe("max");
+    expect(probe.email).toBe("george@flexslot.gg");
+    expect(probe.fiveHour).toBeNull();
+  });
+
   it("reports limits that are available but empty as unavailable", () => {
     const probe = readSubscriptionUsageResponse(
       { rate_limits_available: true, rate_limits: {} },
@@ -44,6 +68,26 @@ describe("readSubscriptionUsageResponse", () => {
 
     expect(probe.absence).toBe("unavailable");
     expect(probe.fiveHour).toBeNull();
+  });
+
+  it("keeps a plan that reports only the long window", () => {
+    // The short window carries the number a person feels first, but a plan
+    // that reports only a weekly window still has a figure worth showing.
+    const probe = readSubscriptionUsageResponse(
+      {
+        rate_limits_available: true,
+        rate_limits: { seven_day: { utilization: 6, resets_at: "2026-01-07T00:00:00.000Z" } },
+      },
+      account,
+    );
+
+    expect(probe.absence).toBeNull();
+    expect(probe.fiveHour).toBeNull();
+    expect(probe.sevenDay).toEqual({
+      label: "Week",
+      utilization: 6,
+      resetsAt: "2026-01-07T00:00:00.000Z",
+    });
   });
 
   it("ignores a window whose utilization is not a usable percentage", () => {
@@ -69,7 +113,7 @@ describe("readSubscriptionUsageResponse", () => {
       account,
     );
 
-    expect(probe.fiveHour).toEqual({ utilization: 3, resetsAt: null });
+    expect(probe.fiveHour).toEqual({ label: "5h", utilization: 3, resetsAt: null });
   });
 
   it("reads a real answer from a Claude Max account", () => {
@@ -107,6 +151,7 @@ describe("readSubscriptionUsageResponse", () => {
 
     expect(probe.absence).toBeNull();
     expect(probe.fiveHour).toEqual({
+      label: "5h",
       utilization: 10,
       resetsAt: "2026-08-16T17:00:00.137018+00:00",
     });

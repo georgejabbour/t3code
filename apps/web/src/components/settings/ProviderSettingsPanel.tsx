@@ -114,6 +114,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { SubscriptionSelectorPanel } from "../subscriptions/SubscriptionSelectorPanel";
+import { useOpenAddProviderDialogFromSearch } from "../subscriptions/useOpenAddProviderDialogFromSearch";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
@@ -582,6 +583,8 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  // Added by this fork. See the subscription selector in PATCHES.md.
+  useOpenAddProviderDialogFromSearch(setIsAddInstanceDialogOpen);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
@@ -1153,7 +1156,7 @@ export function EnvironmentProviderSettings({
   return (
     <>
       {/* Added by this fork. See the subscription selector in PATCHES.md. */}
-      <SettingsSection title="Claude subscriptions">
+      <SettingsSection title="Subscriptions">
         <SubscriptionSelectorPanel
           environmentId={environmentId}
           activeInstanceId={

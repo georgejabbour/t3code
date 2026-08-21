@@ -1,9 +1,16 @@
 /**
- * SubscriptionSelector - pick which Claude subscription new threads use.
+ * SubscriptionSelector - pick which subscription new threads use.
  *
- * One Claude provider instance is one claude.ai subscription, because each
- * instance points at its own credentials directory. This panel lists them with
- * the share of each plan still available, and sets the one new threads use.
+ * One provider instance is one sign-in, because each instance points at its
+ * own credentials directory: a Claude instance is a claude.ai plan, a Codex
+ * instance is a ChatGPT plan. This panel lists them with the share of each
+ * plan still available, and sets the one new threads use.
+ *
+ * Every instance that can carry a plan is listed, including one that is turned
+ * off. A subscription a person added should stay visible, with a line saying
+ * why it shows no number, and a way to reach the Providers screen that governs
+ * it. Hiding it made an added subscription look as though it had never been
+ * added at all.
  *
  * Nothing routes on its own. The subscription changes when a person changes it
  * here, which is what makes the number beside each row worth reading.
@@ -19,10 +26,11 @@ import {
   type SubscriptionUsageRow,
   type SubscriptionWindowView,
 } from "@t3tools/shared/subscriptionUsage";
-import { CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon, SettingsIcon } from "lucide-react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ProviderInstanceIcon } from "~/components/chat/ProviderInstanceIcon";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
@@ -38,6 +46,12 @@ export interface SubscriptionSelectorProps {
   readonly onSelect: (instanceId: ProviderInstanceId) => void;
   readonly onRefresh: () => void;
   readonly onAddSubscription: () => void;
+  /**
+   * Opens the Providers screen, where a subscription is turned on or off.
+   * Carries the instance a reader pressed, or null when they pressed the entry
+   * at the foot of the panel instead.
+   */
+  readonly onManageSubscription: (instanceId: ProviderInstanceId | null) => void;
   /** Present so the caller can key a refresh to one environment. */
   readonly environmentId?: EnvironmentId | null;
   /** Drawn under the list, for the subscription in use. */
@@ -98,41 +112,65 @@ function WindowLine({
   );
 }
 
+/**
+ * One subscription.
+ *
+ * A row that is turned on picks the subscription new threads use. A row that
+ * is turned off cannot be picked, because a thread started on it would find no
+ * provider to run, so it opens the Providers screen instead. Both look alike
+ * apart from the dimming, so a reader can still read the plan name and the
+ * reason it shows no number.
+ */
 function SubscriptionRow({
   row,
   onSelect,
+  onManage,
 }: {
   row: SubscriptionUsageRow;
   onSelect: (instanceId: ProviderInstanceId) => void;
+  onManage: (instanceId: ProviderInstanceId) => void;
 }) {
   const { subscription } = row;
+  const isDisabled = !subscription.enabled;
   const handleClick = useCallback(() => {
+    if (isDisabled) {
+      onManage(subscription.instanceId);
+      return;
+    }
     onSelect(subscription.instanceId);
-  }, [onSelect, subscription.instanceId]);
+  }, [isDisabled, onManage, onSelect, subscription.instanceId]);
 
   return (
     <button
       type="button"
       aria-pressed={row.isActive}
       data-testid={`subscription-row-${subscription.instanceId}`}
+      data-enabled={subscription.enabled}
       onClick={handleClick}
       className="hover:bg-accent flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left"
     >
-      <span
-        aria-hidden="true"
-        className="mt-0.5 size-5 shrink-0 rounded-full border"
-        style={subscription.accentColor ? { backgroundColor: subscription.accentColor } : undefined}
+      <ProviderInstanceIcon
+        driverKind={subscription.driver}
+        displayName={subscription.displayName}
+        accentColor={subscription.accentColor ?? undefined}
+        className={cn("mt-0.5 size-5", isDisabled && "opacity-40")}
+        iconClassName="size-5"
       />
-      <span className="min-w-0 flex-1">
+      <span className={cn("min-w-0 flex-1", isDisabled && "opacity-60")}>
         <span className="flex items-center gap-1.5">
           <span className="truncate text-sm">{subscription.displayName}</span>
           {row.isActive ? <CheckIcon aria-label="In use" className="size-3.5 shrink-0" /> : null}
+          {isDisabled ? (
+            <SettingsIcon
+              aria-label="Turned off. Open Providers to turn it back on."
+              className="text-muted-foreground ml-auto size-3.5 shrink-0"
+            />
+          ) : null}
         </span>
-        {row.windows.length === 0 ? (
-          <span className="text-muted-foreground block truncate text-xs">
-            {describeSubscription(subscription)}
-          </span>
-        ) : (
+        <span className="text-muted-foreground block truncate text-xs">
+          {describeSubscription(subscription)}
+        </span>
+        {row.windows.length === 0 ? null : (
           <span className="mt-1 flex flex-col gap-1.5">
             {row.windows.map((window) => (
               <WindowLine
@@ -156,6 +194,7 @@ export function SubscriptionSelector({
   onSelect,
   onRefresh,
   onAddSubscription,
+  onManageSubscription,
   children,
 }: SubscriptionSelectorProps) {
   // The countdowns are written in minutes at their finest, so a minute tick is
@@ -170,6 +209,10 @@ export function SubscriptionSelector({
     () => summarizeSubscriptionUsage(usage?.subscriptions ?? [], activeInstanceId, nowMs),
     [usage?.subscriptions, activeInstanceId, nowMs],
   );
+
+  const handleManageAll = useCallback(() => {
+    onManageSubscription(null);
+  }, [onManageSubscription]);
 
   const freshness = describeSubscriptionFreshness({
     hasReading: usage !== null,
@@ -232,12 +275,17 @@ export function SubscriptionSelector({
 
       {summary.rows.length === 0 ? (
         <p className="text-muted-foreground px-2 py-2 text-xs">
-          {isRevalidating ? "Reading subscriptions…" : "No Claude subscription is connected yet."}
+          {isRevalidating ? "Reading subscriptions…" : "No subscription is connected yet."}
         </p>
       ) : (
         <div className="flex flex-col">
           {summary.rows.map((row) => (
-            <SubscriptionRow key={row.subscription.instanceId} row={row} onSelect={onSelect} />
+            <SubscriptionRow
+              key={row.subscription.instanceId}
+              row={row}
+              onSelect={onSelect}
+              onManage={onManageSubscription}
+            />
           ))}
         </div>
       )}
@@ -259,6 +307,16 @@ export function SubscriptionSelector({
       >
         <PlusIcon aria-hidden="true" className="size-5 shrink-0" />
         <span className="text-sm">Add another subscription</span>
+      </button>
+
+      <button
+        type="button"
+        data-testid="subscription-manage"
+        onClick={handleManageAll}
+        className="hover:bg-accent flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left"
+      >
+        <SettingsIcon aria-hidden="true" className="size-5 shrink-0" />
+        <span className="text-sm">Manage in Providers</span>
       </button>
     </div>
   );
