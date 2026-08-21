@@ -30,15 +30,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
-import * as Result from "effect/Result";
 import { query as claudeQuery, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
-import type {
-  ClaudeSettings,
-  SubscriptionUsageAbsence,
-  SubscriptionUsageWindow,
-} from "@t3tools/contracts";
+import type { ClaudeSettings, SubscriptionUsageWindow } from "@t3tools/contracts";
 
+import type { SubscriptionUsageProbe } from "./subscriptionUsageProbe.ts";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { buildClaudeCapabilitiesProbeQueryOptions } from "./Layers/ClaudeProvider.ts";
@@ -55,14 +51,17 @@ const EXPERIMENTAL_USAGE_METHOD =
 
 const USAGE_PROBE_TIMEOUT_MS = 25_000;
 
-/** What one instance reported, in this fork's own shape. */
-export interface ClaudeSubscriptionUsageProbe {
-  readonly email: string | null;
-  readonly subscriptionType: string | null;
-  readonly fiveHour: SubscriptionUsageWindow | null;
-  readonly sevenDay: SubscriptionUsageWindow | null;
-  readonly absence: SubscriptionUsageAbsence | null;
-}
+/** Claude's short window is always five hours, and its long window a week. */
+const CLAUDE_SHORT_WINDOW_LABEL = "5h";
+const CLAUDE_LONG_WINDOW_LABEL = "Week";
+
+/**
+ * What one Claude instance reported.
+ *
+ * The same shape the Codex probe fills, so the service that lists both treats
+ * them alike. The alias is kept because this fork's tests name it.
+ */
+export type ClaudeSubscriptionUsageProbe = SubscriptionUsageProbe;
 
 const waitForAbortSignal = (signal: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
@@ -80,7 +79,14 @@ function readUtilization(value: unknown): number | null {
     : null;
 }
 
-function readWindow(value: unknown): SubscriptionUsageWindow | null {
+/**
+ * Read one window, and name it.
+ *
+ * Claude reports exactly two windows and states their length in their own
+ * field names, so the label is fixed here rather than derived. Codex states a
+ * duration instead, which is why the label travels on the wire at all.
+ */
+function readWindow(label: string, value: unknown): SubscriptionUsageWindow | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -90,7 +96,7 @@ function readWindow(value: unknown): SubscriptionUsageWindow | null {
     return null;
   }
   const resetsAt = typeof record.resets_at === "string" ? record.resets_at : null;
-  return { utilization, resetsAt };
+  return { label, utilization, resetsAt };
 }
 
 /**
@@ -119,9 +125,9 @@ export function readSubscriptionUsageResponse(
   const reportedPlan =
     typeof record.subscription_type === "string" ? record.subscription_type : subscriptionType;
 
-  // The SDK says this is false for an API key, Bedrock, Vertex, and a sign-in
-  // whose scope omits the profile. None of those has a plan limit to report.
-  if (record.rate_limits_available !== true || record.rate_limits === null) {
+  // The SDK says this is false for an API key, Bedrock and Vertex. None of
+  // those bills against a plan, so none of them has a window to report.
+  if (record.rate_limits_available !== true) {
     return {
       ...base,
       subscriptionType: reportedPlan,
@@ -131,16 +137,30 @@ export function readSubscriptionUsageResponse(
     };
   }
 
+  // Limits apply to this sign-in, and the SDK still sent none. A sign-in whose
+  // scope omits the profile lands here, and so does an account whose
+  // organization has switched plan access off: the plan is named, the windows
+  // are not. Calling that "unsupported" would deny a plan the account has.
+  if (record.rate_limits === null || record.rate_limits === undefined) {
+    return {
+      ...base,
+      subscriptionType: reportedPlan,
+      fiveHour: null,
+      sevenDay: null,
+      absence: "unavailable",
+    };
+  }
+
   const limits = record.rate_limits as { five_hour?: unknown; seven_day?: unknown } | undefined;
-  const fiveHour = readWindow(limits?.five_hour);
-  const sevenDay = readWindow(limits?.seven_day);
+  const fiveHour = readWindow(CLAUDE_SHORT_WINDOW_LABEL, limits?.five_hour);
+  const sevenDay = readWindow(CLAUDE_LONG_WINDOW_LABEL, limits?.seven_day);
 
   return {
     ...base,
     subscriptionType: reportedPlan,
     fiveHour,
     sevenDay,
-    absence: fiveHour === null ? "unavailable" : null,
+    absence: fiveHour === null && sevenDay === null ? "unavailable" : null,
   };
 }
 
@@ -153,7 +173,9 @@ export function readSubscriptionUsageResponse(
  * `absence` says why there is no number.
  */
 export const probeClaudeSubscriptionUsage = (
-  claudeSettings: ClaudeSettings,
+  // Narrowed to the two fields the probe reads, so the caller can hand over a
+  // sign-in it rebuilt from a cache key rather than a whole settings envelope.
+  claudeSettings: Pick<ClaudeSettings, "binaryPath" | "homePath">,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ): Effect.Effect<ClaudeSubscriptionUsageProbe, never, Path.Path> => {
@@ -194,13 +216,25 @@ export const probeClaudeSubscriptionUsage = (
         | { readonly email?: string; readonly subscriptionType?: string }
         | undefined;
 
+      // A tool that started but names no account is signed out. Saying so
+      // beats "usage not reported", which sounds like a limit nobody read.
+      if (account === undefined) {
+        return {
+          email: null,
+          subscriptionType: null,
+          fiveHour: null,
+          sevenDay: null,
+          absence: "signedOut",
+        } satisfies ClaudeSubscriptionUsageProbe;
+      }
+
       const readUsage = (q as unknown as Record<string, undefined | (() => Promise<unknown>)>)[
         EXPERIMENTAL_USAGE_METHOD
       ];
       if (typeof readUsage !== "function") {
         return {
-          email: account?.email ?? null,
-          subscriptionType: account?.subscriptionType ?? null,
+          email: account.email ?? null,
+          subscriptionType: account.subscriptionType ?? null,
           fiveHour: null,
           sevenDay: null,
           absence: "unavailable",
@@ -216,10 +250,11 @@ export const probeClaudeSubscriptionUsage = (
       }),
     ),
     Effect.timeoutOption(USAGE_PROBE_TIMEOUT_MS),
-    Effect.result,
-    Effect.map((result) => {
-      if (Result.isFailure(result)) return failed;
-      return Option.isSome(result.success) ? result.success.value : failed;
-    }),
+    Effect.map((answer) => Option.getOrElse(answer, () => failed)),
+    // `catchCause` and not `catchTag`: a binary that is missing, or an SDK
+    // that throws where it used to return, arrives as a defect rather than as
+    // a typed failure. One instance that cannot start must not stop the rest
+    // of the list from being read.
+    Effect.catchCause(() => Effect.succeed(failed)),
   );
 };

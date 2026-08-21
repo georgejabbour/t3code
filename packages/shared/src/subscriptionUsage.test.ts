@@ -1,4 +1,4 @@
-import { ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -12,16 +12,32 @@ import {
 
 const NOW = Date.parse("2026-08-16T12:00:00.000Z");
 
+/** A short window, named the way the Claude probe names it. */
+const shortWindow = (utilization: number, resetsAt: string | null = null) => ({
+  label: "5h",
+  utilization,
+  resetsAt,
+});
+
+/** A long window, named the way both probes name a seven-day one. */
+const longWindow = (utilization: number, resetsAt: string | null = null) => ({
+  label: "Week",
+  utilization,
+  resetsAt,
+});
+
 const subscription = (
   id: string,
   overrides: Partial<SubscriptionUsage> = {},
 ): SubscriptionUsage => ({
   instanceId: ProviderInstanceId.make(id),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
   displayName: id,
   accentColor: null,
   email: null,
   subscriptionType: "max",
-  fiveHour: { utilization: 10, resetsAt: null },
+  fiveHour: shortWindow(10),
   sevenDay: null,
   absence: null,
   collectedAt: "2026-01-01T00:00:00.000Z",
@@ -30,11 +46,9 @@ const subscription = (
 
 describe("remainingPercentForSubscription", () => {
   it("reports what is left of the five-hour window", () => {
-    expect(
-      remainingPercentForSubscription(
-        subscription("a", { fiveHour: { utilization: 12, resetsAt: null } }),
-      ),
-    ).toBe(88);
+    expect(remainingPercentForSubscription(subscription("a", { fiveHour: shortWindow(12) }))).toBe(
+      88,
+    );
   });
 
   it("reports nothing when the subscription has no window", () => {
@@ -46,11 +60,20 @@ describe("remainingPercentForSubscription", () => {
   });
 
   it("never reports less than nothing when a plan is over its allowance", () => {
+    expect(remainingPercentForSubscription(subscription("a", { fiveHour: shortWindow(100) }))).toBe(
+      0,
+    );
+  });
+
+  it("falls back to the long window for a plan that reports only one", () => {
+    // A ChatGPT Pro 5x account reports a single seven-day window and no
+    // five-hour one. Reading the short slot alone showed that plan as unknown
+    // while the figure was already in hand.
     expect(
       remainingPercentForSubscription(
-        subscription("a", { fiveHour: { utilization: 100, resetsAt: null } }),
+        subscription("a", { fiveHour: null, sevenDay: longWindow(6) }),
       ),
-    ).toBe(0);
+    ).toBe(94);
   });
 });
 
@@ -58,10 +81,10 @@ describe("summarizeSubscriptionUsage", () => {
   it("adds the remaining percentages the way the header shows them", () => {
     const summary = summarizeSubscriptionUsage(
       [
-        subscription("a", { fiveHour: { utilization: 12, resetsAt: null } }),
-        subscription("b", { fiveHour: { utilization: 10, resetsAt: null } }),
-        subscription("c", { fiveHour: { utilization: 10, resetsAt: null } }),
-        subscription("d", { fiveHour: { utilization: 8, resetsAt: null } }),
+        subscription("a", { fiveHour: shortWindow(12) }),
+        subscription("b", { fiveHour: shortWindow(10) }),
+        subscription("c", { fiveHour: shortWindow(10) }),
+        subscription("d", { fiveHour: shortWindow(8) }),
       ],
       null,
       NOW,
@@ -84,8 +107,8 @@ describe("summarizeSubscriptionUsage", () => {
   it("keeps the order the server sent", () => {
     const summary = summarizeSubscriptionUsage(
       [
-        subscription("a", { fiveHour: { utilization: 90, resetsAt: null } }),
-        subscription("b", { fiveHour: { utilization: 1, resetsAt: null } }),
+        subscription("a", { fiveHour: shortWindow(90) }),
+        subscription("b", { fiveHour: shortWindow(1) }),
       ],
       null,
       NOW,
@@ -97,7 +120,7 @@ describe("summarizeSubscriptionUsage", () => {
   it("counts only the subscriptions that reported a window", () => {
     const summary = summarizeSubscriptionUsage(
       [
-        subscription("a", { fiveHour: { utilization: 20, resetsAt: null } }),
+        subscription("a", { fiveHour: shortWindow(20) }),
         subscription("b", { fiveHour: null, absence: "unsupported" }),
       ],
       null,
@@ -106,6 +129,76 @@ describe("summarizeSubscriptionUsage", () => {
 
     expect(summary.connectedCount).toBe(1);
     expect(summary.totalRemainingPercent).toBe(80);
+    expect(summary.rows[1]?.remainingPercent).toBeNull();
+  });
+
+  it("counts one account once, however many instances read it", () => {
+    // Two Codex instances can point at one ChatGPT sign-in, which is what a
+    // second instance for different launch arguments looks like. Both rows are
+    // worth showing, because either can be the one new threads use. Adding
+    // both to the total would report twice the capacity the account has.
+    const summary = summarizeSubscriptionUsage(
+      [
+        subscription("codex", {
+          driver: ProviderDriverKind.make("codex"),
+          email: "person@example.com",
+          fiveHour: null,
+          sevenDay: longWindow(6),
+        }),
+        subscription("codex_second", {
+          driver: ProviderDriverKind.make("codex"),
+          email: "person@example.com",
+          fiveHour: null,
+          sevenDay: longWindow(6),
+        }),
+      ],
+      null,
+      NOW,
+    );
+
+    expect(summary.rows).toHaveLength(2);
+    expect(summary.connectedCount).toBe(1);
+    expect(summary.totalRemainingPercent).toBe(94);
+  });
+
+  it("counts one address on two providers as two accounts", () => {
+    // A person signs in to claude.ai and to ChatGPT with the same address.
+    // Those are two plans with two separate allowances.
+    const summary = summarizeSubscriptionUsage(
+      [
+        subscription("claudeAgent", { email: "person@example.com", fiveHour: shortWindow(10) }),
+        subscription("codex", {
+          driver: ProviderDriverKind.make("codex"),
+          email: "person@example.com",
+          fiveHour: shortWindow(20),
+        }),
+      ],
+      null,
+      NOW,
+    );
+
+    expect(summary.connectedCount).toBe(2);
+    expect(summary.totalRemainingPercent).toBe(170);
+  });
+
+  it("keeps a row for a subscription that is turned off", () => {
+    const summary = summarizeSubscriptionUsage(
+      [
+        subscription("on", { fiveHour: shortWindow(10) }),
+        subscription("off", {
+          enabled: false,
+          subscriptionType: null,
+          fiveHour: null,
+          sevenDay: null,
+          absence: "disabled",
+        }),
+      ],
+      null,
+      NOW,
+    );
+
+    expect(summary.rows.map((row) => row.subscription.instanceId)).toEqual(["on", "off"]);
+    expect(summary.connectedCount).toBe(1);
     expect(summary.rows[1]?.remainingPercent).toBeNull();
   });
 
@@ -167,8 +260,8 @@ describe("the windows a row shows", () => {
     const summary = summarizeSubscriptionUsage(
       [
         subscription("a", {
-          fiveHour: { utilization: 11, resetsAt: "2026-08-16T17:00:00.000Z" },
-          sevenDay: { utilization: 20, resetsAt: "2026-08-18T16:00:00.000Z" },
+          fiveHour: shortWindow(11, "2026-08-16T17:00:00.000Z"),
+          sevenDay: longWindow(20, "2026-08-18T16:00:00.000Z"),
         }),
       ],
       null,
@@ -176,20 +269,20 @@ describe("the windows a row shows", () => {
     );
 
     expect(summary.rows[0]?.windows).toEqual([
-      { label: "5h", remainingPercent: 89, resetsIn: "5h" },
-      { label: "Week", remainingPercent: 80, resetsIn: "2d 4h" },
+      { label: "5h", remainingPercent: 89, resetsIn: "5h", isLongWindow: false },
+      { label: "Week", remainingPercent: 80, resetsIn: "2d 4h", isLongWindow: true },
     ]);
   });
 
   it("shows only the windows the provider reported", () => {
     const summary = summarizeSubscriptionUsage(
-      [subscription("a", { fiveHour: { utilization: 5, resetsAt: null }, sevenDay: null })],
+      [subscription("a", { fiveHour: shortWindow(5), sevenDay: null })],
       null,
       now,
     );
 
     expect(summary.rows[0]?.windows).toEqual([
-      { label: "5h", remainingPercent: 95, resetsIn: null },
+      { label: "5h", remainingPercent: 95, resetsIn: null, isLongWindow: false },
     ]);
   });
 
@@ -214,12 +307,42 @@ describe("describeSubscription", () => {
       describeSubscription(
         subscription("a", { subscriptionType: null, fiveHour: null, absence: "unsupported" }),
       ),
-    ).toBe("No plan limit on this sign-in");
+    ).toBe("Billed per token, so no plan limit");
     expect(
       describeSubscription(
         subscription("a", { subscriptionType: null, fiveHour: null, absence: "failed" }),
       ),
     ).toBe("Usage could not be read");
+  });
+
+  it("names the plan and the reason when a plan is known but unread", () => {
+    // An account whose organization has switched plan access off reports
+    // exactly this: a plan name, and no windows. Showing only the plan name
+    // would leave a reader hunting for a percentage that never arrives.
+    expect(
+      describeSubscription(
+        subscription("a", {
+          subscriptionType: "max",
+          fiveHour: null,
+          sevenDay: null,
+          absence: "unavailable",
+        }),
+      ),
+    ).toBe("max · Signed in, but the plan reports no limit");
+  });
+
+  it("says a subscription is turned off rather than leaving it blank", () => {
+    expect(
+      describeSubscription(
+        subscription("a", {
+          enabled: false,
+          subscriptionType: null,
+          fiveHour: null,
+          sevenDay: null,
+          absence: "disabled",
+        }),
+      ),
+    ).toBe("Turned off in Providers");
   });
 });
 
