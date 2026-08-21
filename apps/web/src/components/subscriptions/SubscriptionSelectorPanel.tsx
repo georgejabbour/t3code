@@ -55,6 +55,7 @@ export function SubscriptionSelectorPanel({
   readonly environmentId: EnvironmentId | null;
   readonly activeInstanceId: string | null;
   readonly onSelect: (instanceId: ProviderInstanceId) => void;
+  /** Closes the popover, so navigating away does not leave it open behind. */
   readonly onAfterAddSubscription?: () => void;
 }) {
   const navigate = useNavigate();
@@ -98,7 +99,15 @@ export function SubscriptionSelectorPanel({
     void refresh({ environmentId, input: {} });
   }, [environmentId, refresh]);
 
+  // `add: true` opens the add-provider dialog on arrival, so a reader who
+  // asked to add a subscription lands on the form instead of on a screen they
+  // have to search.
   const handleAddSubscription = useCallback(() => {
+    onAfterAddSubscription?.();
+    void navigate({ to: "/settings/providers", search: { add: true } });
+  }, [navigate, onAfterAddSubscription]);
+
+  const handleManageSubscription = useCallback(() => {
     onAfterAddSubscription?.();
     void navigate({ to: "/settings/providers" });
   }, [navigate, onAfterAddSubscription]);
@@ -112,6 +121,7 @@ export function SubscriptionSelectorPanel({
       onSelect={onSelect}
       onRefresh={handleRefresh}
       onAddSubscription={handleAddSubscription}
+      onManageSubscription={handleManageSubscription}
       environmentId={environmentId}
     >
       {activeInstanceId === null ? null : (

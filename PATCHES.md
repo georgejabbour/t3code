@@ -99,6 +99,8 @@ stops with an error.
 | 13    | `discoverClaudeProjectCommands`            | `dist/bin.mjs`, the server bundle           |
 | 13    | `provider.getProjectPrompts`               | `dist/client/assets`, the web client bundle |
 | 14    | `no setting was saved`                     | `dist/bin.mjs`, the server bundle           |
+| 15    | `t3/provider/CodexSubscriptionUsage.probe` | `dist/bin.mjs`, the server bundle           |
+| 15    | `Turned off in Providers`                  | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -963,3 +965,97 @@ the same shape, so upstream will meet this the day it adds its own third
 **Marker.** `no setting was saved`, part of the log message. The guard in
 `stripDefaultServerSettings` holds no string literal, so no marker can watch it.
 The four tests above are its check. Run them before an install.
+
+## Patch 15 — every subscription in one panel, whichever provider it belongs to
+
+**Commit:** `feat: show every provider subscription, not only Claude`
+
+**Why.** The panel Patch 11 added read one driver, `claudeAgent`, and skipped
+every instance that was switched off. A machine with three subscription
+sign-ins therefore showed one row. Two ChatGPT plans behind the Codex
+command-line tool had numbers to report and no place to report them, and a
+Claude sign-in whose organization had switched plan access off was invisible
+rather than listed with a reason. A person who added a subscription and later
+turned it off could not tell whether it had ever been added.
+
+**What.** The panel now lists every provider instance whose driver can carry a
+paid plan: `claudeAgent` and `codex`. Turned off or not, each one gets a row.
+The header counts accounts rather than rows. A row shows its provider's mark,
+the plan name, the windows the plan reports, and, when there is no number, the
+reason there is none.
+
+**Reading a ChatGPT plan.** `apps/server/src/provider/CodexSubscriptionUsage.ts`
+starts `codex app-server`, the long-running mode T3 Code already starts for the
+provider health check, and asks it two questions: `account/read` for the
+account and the plan, and `account/rateLimits/read` for the windows. Both are
+declared in the generated protocol under `packages/effect-codex-app-server`, so
+no string lookup is needed here, unlike the Claude route in Patch 11.
+
+**The two window slots.** A plan reports at most two windows, a short one and a
+long one. The contract still names those slots `fiveHour` and `sevenDay`,
+because the record of past windows on disk is keyed by those names and a rename
+would throw away ninety days of it. Each window now carries its own `label`,
+written by the server, so a slot never claims a length it does not have. That
+matters: Codex states a duration in minutes rather than a name, and a ChatGPT
+Pro 5x account reports **one seven-day window as its primary and no five-hour
+window at all**. Trusting the field name would have drawn a weekly figure under
+the heading "5h".
+
+**One subprocess per sign-in, not per instance.** The answer cache is keyed by
+the sign-in — driver, binary, credentials directory, launch arguments and
+declared environment — rather than by the instance id. Two instances that read
+one account therefore cost one subprocess between them. The key is also the
+whole input the probe needs, and `subscriptionSignInFromKey` reads it straight
+back, because a cache hands its lookup nothing but the key.
+
+**Design notes.**
+
+- A row that is turned off cannot be picked. A thread started on it would find
+  no provider to run. Pressing it opens the Providers screen instead, which is
+  where a subscription is turned back on.
+- "Add another subscription" now navigates with `?add=1`, and the Providers
+  screen opens the add-provider dialog on arrival. Landing on a long screen and
+  hunting for a small plus button was the step that made adding a second
+  sign-in feel out of reach.
+- The header adds one figure per account. Two instances on one ChatGPT sign-in
+  would otherwise report twice the capacity the account has.
+- `unsupported` now means only what its name says: an API key, Bedrock or
+  Vertex, none of which bills against a plan. A sign-in that names a plan and
+  reports no window is `unavailable`. An account whose organization has
+  switched Claude Code subscription access off is exactly that case, and
+  calling it "billed per token" denied it a plan it has.
+- Both probes end with `Effect.catchCause`. A missing binary throws a defect
+  rather than a typed failure, and one instance that cannot start must not stop
+  the rest of the list from being read.
+- Cursor, Grok and OpenCode are left out. None reports a plan window T3 Code can
+  read, so a row for one would show a name and no number every time, which
+  teaches a reader to ignore the panel.
+
+**Tests.**
+
+```sh
+vp test run src/provider/CodexSubscriptionUsage.test.ts \
+            src/provider/ClaudeSubscriptionUsage.test.ts \
+            src/provider/SubscriptionUsageService.test.ts   # from apps/server
+vp test run src/subscriptionUsage.test.ts \
+            src/subscriptionUsageHistory.test.ts            # from packages/shared
+```
+
+**Files.** New: `apps/server/src/provider/CodexSubscriptionUsage.ts`,
+`apps/server/src/provider/subscriptionUsageProbe.ts`,
+`apps/web/src/components/subscriptions/useOpenAddProviderDialogFromSearch.ts`,
+and a test beside each. Edited: `packages/contracts/src/subscriptionUsage.ts`,
+`packages/contracts/src/settings.ts` (one comment),
+`packages/shared/src/subscriptionUsage.ts`,
+`apps/server/src/provider/SubscriptionUsageService.ts`,
+`apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
+`apps/web/src/components/subscriptions/SubscriptionSelector.tsx`,
+`SubscriptionSelectorPanel.tsx`, `SubscriptionSidebarButton.tsx`. A line or two
+each: `apps/web/src/routes/settings.providers.tsx` and
+`apps/web/src/components/settings/ProviderSettingsPanel.tsx`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1.
+
+**Markers.** `t3/provider/CodexSubscriptionUsage.probe`, the trace name one
+read carries, and `Turned off in Providers`, the line a switched-off row
+shows.
