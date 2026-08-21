@@ -1,4 +1,4 @@
-import { ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,14 +7,30 @@ import {
   summarizeSubscriptionHistory,
 } from "./subscriptionUsageHistory.ts";
 
+/** A short window, named the way the Claude probe names it. */
+const shortWindow = (utilization: number, resetsAt: string | null) => ({
+  label: "5h",
+  utilization,
+  resetsAt,
+});
+
+/** A long window, named the way both probes name a seven-day one. */
+const longWindow = (utilization: number, resetsAt: string | null) => ({
+  label: "Week",
+  utilization,
+  resetsAt,
+});
+
 const subscription = (overrides: Partial<SubscriptionUsage> = {}): SubscriptionUsage => ({
   instanceId: ProviderInstanceId.make("personal"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
   displayName: "Personal",
   accentColor: null,
   email: null,
   subscriptionType: "max",
-  fiveHour: { utilization: 10, resetsAt: "2026-08-16T17:00:00.000Z" },
-  sevenDay: { utilization: 20, resetsAt: "2026-08-18T15:00:00.000Z" },
+  fiveHour: shortWindow(10, "2026-08-16T17:00:00.000Z"),
+  sevenDay: longWindow(20, "2026-08-18T15:00:00.000Z"),
   absence: null,
   collectedAt: "2026-08-16T12:00:00.000Z",
   ...overrides,
@@ -39,12 +55,12 @@ describe("recordSubscriptionSample", () => {
     let peaks = recordSubscriptionSample([], subscription(), "2026-08-16T12:00:00.000Z");
     peaks = recordSubscriptionSample(
       peaks,
-      subscription({ fiveHour: { utilization: 80, resetsAt: "2026-08-16T17:00:00.000Z" } }),
+      subscription({ fiveHour: shortWindow(80, "2026-08-16T17:00:00.000Z") }),
       "2026-08-16T14:00:00.000Z",
     );
     peaks = recordSubscriptionSample(
       peaks,
-      subscription({ fiveHour: { utilization: 60, resetsAt: "2026-08-16T17:00:00.000Z" } }),
+      subscription({ fiveHour: shortWindow(60, "2026-08-16T17:00:00.000Z") }),
       "2026-08-16T15:00:00.000Z",
     );
 
@@ -59,12 +75,12 @@ describe("recordSubscriptionSample", () => {
   it("starts a new row once the window resets", () => {
     let peaks = recordSubscriptionSample(
       [],
-      subscription({ fiveHour: { utilization: 96, resetsAt: "2026-08-16T17:00:00.000Z" } }),
+      subscription({ fiveHour: shortWindow(96, "2026-08-16T17:00:00.000Z") }),
       "2026-08-16T16:00:00.000Z",
     );
     peaks = recordSubscriptionSample(
       peaks,
-      subscription({ fiveHour: { utilization: 3, resetsAt: "2026-08-16T22:00:00.000Z" } }),
+      subscription({ fiveHour: shortWindow(3, "2026-08-16T22:00:00.000Z") }),
       "2026-08-16T17:30:00.000Z",
     );
 
@@ -75,7 +91,7 @@ describe("recordSubscriptionSample", () => {
   it("skips a window with no reset time, which has no identity", () => {
     const peaks = recordSubscriptionSample(
       [],
-      subscription({ fiveHour: { utilization: 40, resetsAt: null }, sevenDay: null }),
+      subscription({ fiveHour: shortWindow(40, null), sevenDay: null }),
       "2026-08-16T12:00:00.000Z",
     );
 
