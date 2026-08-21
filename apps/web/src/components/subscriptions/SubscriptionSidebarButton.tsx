@@ -60,7 +60,7 @@ export function SubscriptionSidebarButton() {
               <PopoverTrigger
                 render={
                   <SidebarMenuButton
-                    aria-label="Claude subscriptions"
+                    aria-label="Subscriptions"
                     data-testid="subscription-sidebar-button"
                     size="icon"
                   >
@@ -70,7 +70,7 @@ export function SubscriptionSidebarButton() {
               />
             }
           />
-          <TooltipPopup side="top">Claude subscriptions</TooltipPopup>
+          <TooltipPopup side="top">Subscriptions</TooltipPopup>
         </Tooltip>
         <PopoverPopup align="start" side="top">
           <SubscriptionSelectorPanel
