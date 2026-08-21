@@ -21,15 +21,31 @@ export interface SubscriptionWindowView {
   readonly remainingPercent: number | null;
   /** How long until the window resets, such as "2h 14m", or null when unknown. */
   readonly resetsIn: string | null;
+  /** True for the longer of a plan's two windows, so a view can rank them. */
+  readonly isLongWindow: boolean;
+}
+
+/**
+ * The account behind a row, as one string.
+ *
+ * Two rows share an account when they name the same provider and the same
+ * signed-in address. Without an address there is nothing to match on, so the
+ * instance id keeps the row to itself rather than merging it with a stranger.
+ */
+export function subscriptionAccountKey(subscription: SubscriptionUsage): string {
+  const email = subscription.email?.trim();
+  return email && email.length > 0
+    ? `${subscription.driver}:${email.toLowerCase()}`
+    : `instance:${subscription.instanceId}`;
 }
 
 /** A subscription as the selector draws it. */
 export interface SubscriptionUsageRow {
   readonly subscription: SubscriptionUsage;
   /**
-   * Percentage of the five-hour window still available, 0 to 100, or null when
+   * Percentage of the tightest window still available, 0 to 100, or null when
    * the subscription reports no window at all. This is the figure the header
-   * adds up, because it is the one a person feels within a session.
+   * adds up, because it is the one a person feels within a sitting.
    */
   readonly remainingPercent: number | null;
   /** Every window the subscription reported, in the order they are shown. */
@@ -167,50 +183,70 @@ export function describeSubscriptionFreshness({
   };
 }
 
+/**
+ * One window, ready to draw.
+ *
+ * The label comes from the server rather than from the slot the window sits
+ * in. Claude always reports five hours and a week, but a Codex plan can report
+ * a single seven-day window and nothing else, and calling that one "5h"
+ * because it arrived in the short slot would state a length nobody measured.
+ */
 function windowView(
-  label: string,
   window: SubscriptionUsage["fiveHour"],
+  isLongWindow: boolean,
   nowMs: number,
 ): SubscriptionWindowView | null {
   if (window === null) {
     return null;
   }
   return {
-    label,
+    label: window.label,
     remainingPercent: Math.max(0, Math.min(100, Math.round(100 - window.utilization))),
     resetsIn: formatResetCountdown(window.resetsAt, nowMs),
+    isLongWindow,
   };
 }
 
 /** What the selector shows above the list of subscriptions. */
 export interface SubscriptionUsageSummary {
   readonly rows: ReadonlyArray<SubscriptionUsageRow>;
-  /** Number of subscriptions that reported a usable window. */
+  /**
+   * Number of separate accounts that reported a usable window.
+   *
+   * Counts accounts, not rows. Two instances that read one account are one
+   * connected subscription, however many rows the list draws for them.
+   */
   readonly connectedCount: number;
   /**
    * The remaining percentages added together, as the header shows them. Four
-   * subscriptions with 90 each read as 360. Null when none reported a window,
-   * because a total of zero would claim there is nothing left rather than that
-   * nothing is known.
+   * accounts with 90 each read as 360. Counted once per account, for the
+   * reason above. Null when none reported a window, because a total of zero
+   * would claim there is nothing left rather than that nothing is known.
    */
   readonly totalRemainingPercent: number | null;
 }
 
 /**
- * Percentage of a subscription's five-hour window still available.
+ * Percentage of a subscription's tightest window still available.
  *
- * Returns null when the subscription reports no window, which happens for an
- * API key, for Bedrock and Vertex, and for a sign-in whose scope omits the
- * profile. Those cases have no plan limit to report, so there is no number to
- * show and none should be invented.
+ * The short window is the one a person feels within a sitting, so it answers
+ * first. A plan that reports only a long window still deserves a number, and a
+ * ChatGPT Pro 5x plan is exactly that: it reports one seven-day window and no
+ * five-hour one. Reading only the short slot showed that plan as unknown while
+ * the panel had its figure in hand.
+ *
+ * Returns null when the subscription reports no window at all, which happens
+ * for an API key, for Bedrock and Vertex, for an instance that is turned off,
+ * and for a sign-in whose scope omits the profile. None of those has a plan
+ * limit to report, so there is no number to show and none should be invented.
  */
 export function remainingPercentForSubscription(subscription: SubscriptionUsage): number | null {
-  const window = subscription.fiveHour;
+  const window = subscription.fiveHour ?? subscription.sevenDay;
   if (window === null) {
     return null;
   }
   const remaining = 100 - window.utilization;
-  // The SDK has reported a utilization above 100 when a plan is over its
+  // A provider has reported a utilization above 100 when a plan is over its
   // allowance. Nothing below zero is left, and saying so beats a negative.
   return Math.max(0, Math.min(100, Math.round(remaining)));
 }
@@ -231,43 +267,73 @@ export function summarizeSubscriptionUsage(
     subscription,
     remainingPercent: remainingPercentForSubscription(subscription),
     windows: [
-      windowView("5h", subscription.fiveHour, nowMs),
-      windowView("Week", subscription.sevenDay, nowMs),
+      windowView(subscription.fiveHour, false, nowMs),
+      windowView(subscription.sevenDay, true, nowMs),
     ].filter((window): window is SubscriptionWindowView => window !== null),
     isActive: subscription.instanceId === activeInstanceId,
   }));
 
-  const known = rows.filter((row) => row.remainingPercent !== null);
+  // Two instances can read one account, which is what happens when a person
+  // keeps a second Codex instance for a different set of launch arguments.
+  // Both rows are worth showing, because either can be the one new threads
+  // use, but the header must count that account once. Adding it twice would
+  // report twice the capacity the account actually has.
+  const counted = new Map<string, number>();
+  for (const row of rows) {
+    if (row.remainingPercent === null) {
+      continue;
+    }
+    const key = subscriptionAccountKey(row.subscription);
+    if (!counted.has(key)) {
+      counted.set(key, row.remainingPercent);
+    }
+  }
+
   return {
     rows,
-    connectedCount: known.length,
+    connectedCount: counted.size,
     totalRemainingPercent:
-      known.length === 0
-        ? null
-        : known.reduce((total, row) => total + (row.remainingPercent ?? 0), 0),
+      counted.size === 0 ? null : [...counted.values()].reduce((total, value) => total + value, 0),
   };
+}
+
+/**
+ * Why a subscription shows no percentage, written for a reader.
+ *
+ * Returns null when a number is on screen and nothing needs explaining.
+ */
+export function describeSubscriptionAbsence(subscription: SubscriptionUsage): string | null {
+  switch (subscription.absence) {
+    case "disabled":
+      return "Turned off in Providers";
+    case "signedOut":
+      return "Not signed in";
+    case "unsupported":
+      return "Billed per token, so no plan limit";
+    case "unavailable":
+      return "Signed in, but the plan reports no limit";
+    case "failed":
+      return "Usage could not be read";
+    case null:
+      return null;
+  }
 }
 
 /**
  * The line under a subscription's name.
  *
- * Names the plan when the SDK reported one, and says why a number is missing
- * when it did not. A reader who sees no percentage should learn the reason
- * without opening settings.
+ * Names the plan when the tool reported one, and says why a number is missing
+ * when there is none. A reader who sees no percentage should learn the reason
+ * without opening settings, and a reader whose plan is named but unread should
+ * see both facts rather than only the friendlier one. An account whose
+ * organization has switched plan access off reports exactly that: a plan name
+ * and no windows.
  */
 export function describeSubscription(subscription: SubscriptionUsage): string {
-  const plan = subscription.subscriptionType;
-  if (plan !== null) {
-    return plan;
+  const plan = subscription.subscriptionType?.trim();
+  const reason = describeSubscriptionAbsence(subscription);
+  if (plan && plan.length > 0) {
+    return reason === null ? plan : `${plan} · ${reason}`;
   }
-  switch (subscription.absence) {
-    case "unsupported":
-      return "No plan limit on this sign-in";
-    case "unavailable":
-      return "Usage not reported";
-    case "failed":
-      return "Usage could not be read";
-    case null:
-      return "Connected";
-  }
+  return reason ?? "Connected";
 }
