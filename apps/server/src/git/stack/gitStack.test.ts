@@ -11,7 +11,7 @@ const capturedView = `{
   "branches": [
     {
       "name": "auth",
-      "head": "aaa1111",
+      "base": "ddd4444",
       "base": "ddd4444",
       "isCurrent": false,
       "isMerged": false,

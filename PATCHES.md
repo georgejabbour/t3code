@@ -102,7 +102,7 @@ stops with an error.
 | 15    | `t3/provider/CodexSubscriptionUsage.probe` | `dist/bin.mjs`, the server bundle           |
 | 15    | `Turned off in Providers`                  | `dist/client/assets`, the web client bundle |
 | 16    | `t3/git/stack/GitStackService`             | `dist/bin.mjs`, the server bundle           |
-| 16    | `data-git-stack-chain-card`                | `dist/client/assets`, the web client bundle |
+| 16    | `git-stack-chain-card`                     | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -1144,4 +1144,4 @@ no stacked-pull-request support of any kind today; if that changes, delete
 this patch and install the published `t3` again.
 
 **Markers.** `t3/git/stack/GitStackService`, the server's own service tag, and
-`data-git-stack-chain-card`, the attribute on the chain card element.
+`git-stack-chain-card`, the test id on the chain card element.
