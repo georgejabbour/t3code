@@ -74,6 +74,13 @@ import {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import {
+  GitStackActionResult,
+  GitStackError,
+  GitStackRunActionInput,
+  GitStackView,
+} from "./gitStack.ts";
 import {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
@@ -289,6 +296,10 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+
+  // Git stack methods. Added by this fork; see Patch 16 in PATCHES.md.
+  gitStackView: "gitStack.view",
+  gitStackRunAction: "gitStack.runAction",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -940,6 +951,20 @@ const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullReque
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+// Added by this fork. See Patch 16 in PATCHES.md. The view answers null when
+// the checkout holds no stack, which every caller reads as "render nothing".
+const WsGitStackViewRpc = Rpc.make(WS_METHODS.gitStackView, {
+  payload: Schema.Struct({ cwd: TrimmedNonEmptyString }),
+  success: Schema.NullOr(GitStackView),
+  error: Schema.Union([GitStackError, EnvironmentAuthorizationError]),
+});
+
+const WsGitStackRunActionRpc = Rpc.make(WS_METHODS.gitStackRunAction, {
+  payload: GitStackRunActionInput,
+  success: GitStackActionResult,
+  error: Schema.Union([GitStackError, EnvironmentAuthorizationError]),
+});
+
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
@@ -1311,6 +1336,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  // Added by this fork. See Patch 16 in PATCHES.md.
+  WsGitStackViewRpc,
+  WsGitStackRunActionRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
