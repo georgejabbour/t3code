@@ -19,6 +19,8 @@ import { useId, useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackChainCard } from "~/components/stacks/GitStackChainCard";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -472,6 +474,14 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+      <div className="px-4 pt-3">
+        <GitStackChainCard
+          environmentId={environmentId}
+          cwd={detail.workspaceRoot}
+          branchName={detail.headBranch}
+          mergePrNumber={detail.state === "open" ? reference.number : null}
+        />
+      </div>
       <section className="px-4 py-2.5">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
