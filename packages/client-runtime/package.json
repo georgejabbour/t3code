@@ -91,6 +91,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/git-stacks": {
+      "types": "./src/state/gitStacks.ts",
+      "default": "./src/state/gitStacks.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
