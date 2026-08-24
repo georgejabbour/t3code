@@ -121,6 +121,8 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { useGitStackPositionLabels } from "../state/gitStacks";
 import {
   pullRequestSurfaceId,
   selectActiveRightPanelSurface,
@@ -356,6 +358,22 @@ function PullRequestsRouteView() {
         environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
     [environments],
+  );
+  // Added by this fork. One stack read per project checkout, so rows whose
+  // branch sits in a GitHub stack can show their position in the chain.
+  // See Patch 16 in PATCHES.md.
+  const stackTargets = useMemo(
+    () =>
+      projects.map((project) => ({
+        environmentId: project.environmentId,
+        cwd: project.workspaceRoot,
+      })),
+    [projects],
+  );
+  const stackLabelsByBranch = useGitStackPositionLabels(stackTargets);
+  const workspaceRootByProject = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.workspaceRoot] as const)),
+    [projects],
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
@@ -1626,6 +1644,11 @@ function PullRequestsRouteView() {
                     environmentLabels.get(entry.environmentId) !== undefined
                       ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
                       : {})}
+                    stackLabel={
+                      stackLabelsByBranch.get(
+                        `${workspaceRootByProject.get(entry.projectId) ?? ""} ${entry.headBranch}`,
+                      ) ?? null
+                    }
                     // Ten is the floor the ranking gives a row whose own fields say nothing
                     // about the search: the host matched something this row cannot show.
                     matchedElsewhere={
