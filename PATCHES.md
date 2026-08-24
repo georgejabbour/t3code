@@ -573,6 +573,16 @@ hand and lose the pull request badge until the next turn ends.
 - A quoted `"refs/heads/…"` from a model used to leave `refs/heads/` inside the
   branch name, because quotes were stripped after that prefix was tested. The
   order is now the other way round.
+- The drift follower refuses to adopt while the CHECKED-OUT branch is a
+  placeholder, because that is the first-turn rename still in flight. It no
+  longer refuses when the RECORDED branch is a placeholder under a real
+  checkout: that state means the branch moved outside T3 Code (`gh stack
+init` and `git checkout -b` both do it), the rename it was reserved for can
+  never describe the checkout the user chose, and refusing left the thread's
+  pull request hidden forever. The rename's compare-and-swap keeps a
+  concurrent rename from corrupting either side. Seen live on 24 August 2026:
+  a `gh stack` chain on `nerdragegaming` left the record at `t3code/8e543a92`
+  while the worktree sat on `george/nrg-435`.
 
 **Files.** New: `apps/server/src/project/BranchPrefix.ts`,
 `apps/mobile/src/features/threads/t3-project-file-branch-prefix.ts`,
