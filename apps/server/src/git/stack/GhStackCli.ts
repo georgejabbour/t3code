@@ -40,7 +40,11 @@ const RawStackPullRequest = Schema.Struct({
 
 const RawStackBranch = Schema.Struct({
   name: Schema.String,
-  head: Schema.String,
+  /**
+   * The extension's own answer leaves this field out on a branch that has no
+   * pull request yet, so it is optional here and filled with an empty string.
+   */
+  head: Schema.optional(Schema.String),
   base: Schema.String,
   isCurrent: Schema.Boolean,
   isMerged: Schema.Boolean,
@@ -78,7 +82,7 @@ export function normalizeStackView(rawView: RawStackView): GitStackView {
     currentBranch,
     branches: rawView.branches.map((branch) => ({
       name: branch.name,
-      head: branch.head,
+      head: branch.head ?? "",
       base: branch.base,
       isCurrent: branch.isCurrent,
       isMerged: branch.isMerged,
