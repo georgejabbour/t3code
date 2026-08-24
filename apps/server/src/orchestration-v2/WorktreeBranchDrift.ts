@@ -30,6 +30,8 @@ export const layer = Layer.effectDiscard(
             if (branch === null) return;
             const prefix = yield* resolveBranchPrefixForWorkspace(loader, change.cwd);
             if (isTemporaryWorktreeBranch(branch, prefix)) return;
+            // Adopt a real checkout even if the recorded branch is a placeholder.
+            // The expected branch rejects a concurrent metadata change.
             const snapshot = yield* orchestrator.getShellSnapshot({ location: "active" });
             const owners = snapshot.threads.filter((thread) => thread.worktreePath === change.cwd);
             const thread = owners.length === 1 ? owners[0] : undefined;
