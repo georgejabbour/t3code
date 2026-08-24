@@ -93,6 +93,9 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+// Added by this fork. GitHub stack reads and actions; see Patch 16 in PATCHES.md.
+import * as GhStackCli from "./git/stack/GhStackCli.ts";
+import * as GitStackService from "./git/stack/GitStackService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
@@ -338,6 +341,11 @@ const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(GitLayerLive),
 );
 
+// Added by this fork. Reads and actions for GitHub stacks; see Patch 16 in PATCHES.md.
+const GitStackLayerLive = GitStackService.layer.pipe(
+  Layer.provide(GhStackCli.layer.pipe(Layer.provide(VcsProcess.layer))),
+);
+
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
@@ -353,6 +361,7 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(VcsProvisioningService.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
   Layer.provideMerge(GitWorkflowLayerLive),
+  Layer.provideMerge(GitStackLayerLive),
   Layer.provideMerge(ReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
   Layer.provideMerge(
