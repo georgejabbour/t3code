@@ -172,6 +172,8 @@ import {
   type SidebarSection,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackPositionMarker } from "./stacks/GitStackPositionMarker";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -1470,6 +1472,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         aria-label={prStatus.tooltip}
       >
         #{pr.number}
+        {/* Added by this fork. Chain position when the branch sits in a GitHub
+            stack; renders nothing otherwise. See Patch 16 in PATCHES.md. */}
+        <GitStackPositionMarker
+          environmentId={thread.environmentId}
+          cwd={gitCwd}
+          branchName={thread.branch}
+        />
       </a>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
