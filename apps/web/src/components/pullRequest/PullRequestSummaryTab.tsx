@@ -20,6 +20,8 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackChainCard } from "~/components/stacks/GitStackChainCard";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -515,6 +517,16 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+      {/* Added by this fork. The stack chain, when this pull request belongs to one;
+          renders nothing otherwise. See Patch 16 in PATCHES.md. */}
+      <div className="px-4 pt-3">
+        <GitStackChainCard
+          environmentId={environmentId}
+          cwd={detail.workspaceRoot}
+          branchName={detail.headBranch}
+          mergePrNumber={detail.state === "open" ? reference.number : null}
+        />
+      </div>
       <section className="px-4 py-3">
         <div>
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
