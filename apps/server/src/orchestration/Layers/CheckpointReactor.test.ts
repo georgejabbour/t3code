@@ -1073,6 +1073,33 @@ describe("CheckpointReactor", () => {
     expect(thread?.branch).toBe("t3code/original-branch");
   });
 
+  it("adopts a real checkout even when the recorded branch is an abandoned placeholder", async () => {
+    // `gh stack init` and a plain `git checkout -b` both rename or replace the
+    // worktree's branch outside T3 Code. The record then still holds the
+    // placeholder the first-turn rename was waiting for, and that rename can
+    // never describe the checkout the user chose. The client hides the pull
+    // request while the two disagree, so the placeholder record must not
+    // block adoption of the user's own branch.
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/8e543a92",
+      localStatusRefName: "george/nrg-435",
+    });
+
+    harness.emitStatusChange("george/nrg-435");
+
+    await waitForEvent(
+      harness.engine,
+      (event) =>
+        event.type === "thread.meta-updated" &&
+        (event as unknown as { payload: { branch?: string } }).payload.branch === "george/nrg-435",
+    );
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("george/nrg-435");
+  });
+
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {
     const pullRequestRefreshCalls: string[] = [];
     const harness = await createHarness({
