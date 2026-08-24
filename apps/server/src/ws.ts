@@ -119,6 +119,8 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+// Added by this fork. GitHub stack reads and actions; see Patch 16 in PATCHES.md.
+import * as GitStackService from "./git/stack/GitStackService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
@@ -510,6 +512,7 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const gitStack = yield* GitStackService.GitStackService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -2397,6 +2400,17 @@ const makeWsRpcLayer = (
             gitWorkflow
               .preparePullRequestThread(input)
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "git" },
+          ),
+        // Added by this fork. GitHub stack reads and actions; see Patch 16 in PATCHES.md.
+        [WS_METHODS.gitStackView]: ({ cwd }) =>
+          observeRpcEffect(WS_METHODS.gitStackView, gitStack.view({ cwd }), {
+            "rpc.aggregate": "git",
+          }),
+        [WS_METHODS.gitStackRunAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitStackRunAction,
+            gitStack.runAction(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
