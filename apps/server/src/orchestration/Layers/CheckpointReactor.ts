@@ -581,6 +581,16 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      // A recorded branch that is still the placeholder does not block
+      // adoption here. The refusal that matters is the one above: a temporary
+      // CHECKED-OUT branch means the first-turn rename is still in flight.
+      // A placeholder record under a real checkout means the branch moved
+      // outside T3 Code — `gh stack init` and `git checkout -b` both do it —
+      // and the rename that placeholder was waiting for can never describe
+      // the checkout the user actually chose. Its compare-and-swap below
+      // makes a concurrent rename fail cleanly instead of corrupting either
+      // side, so adopting the user's branch is the safe answer.
+
       const shell = yield* projectionSnapshotQuery.getShellSnapshot();
       const worktreeIsShared = shell.threads.some(
         (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
