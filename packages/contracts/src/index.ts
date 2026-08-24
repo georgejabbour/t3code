@@ -16,6 +16,8 @@ export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
 export * from "./git.ts";
+// Added by this fork. See Patch 16 in PATCHES.md.
+export * from "./gitStack.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./pullRequest.ts";
