@@ -75,6 +75,8 @@ import {
 import { Group, GroupSeparator } from "~/components/ui/group";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackMenuItems } from "~/components/stacks/GitStackMenuItems";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -1788,6 +1790,10 @@ export default function GitActionsControl({
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
+              {/* Added by this fork. Stack commands when the checkout sits in
+                  a GitHub stack; renders nothing otherwise. See Patch 16 in
+                  PATCHES.md. */}
+              <GitStackMenuItems environmentId={activeEnvironmentId} cwd={gitCwd} />
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,
