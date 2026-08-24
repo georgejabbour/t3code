@@ -225,6 +225,8 @@ import {
   type SidebarSection,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackPositionMarker } from "./stacks/GitStackPositionMarker";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -1705,16 +1707,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }, [onThreadActivate, props.isActive, threadRef]);
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
-      <ThreadPullRequestBadgeControl
-        render={<InlineButton />}
-        badge={prBadgeShape}
-        pullRequests={thread.pullRequests}
-        number={pr?.number ?? currentLinkedPr?.number}
-        url={pr?.url ?? currentLinkedPr?.url}
-        status={prStatus}
-        onOpenList={handlePrListClick}
-        onOpenPullRequest={handlePrClick}
-      />
+      <span className="inline-flex shrink-0 items-center">
+        <ThreadPullRequestBadgeControl
+          render={<InlineButton />}
+          badge={prBadgeShape}
+          pullRequests={thread.pullRequests}
+          number={pr?.number ?? currentLinkedPr?.number}
+          url={pr?.url ?? currentLinkedPr?.url}
+          status={prStatus}
+          onOpenList={handlePrListClick}
+          onOpenPullRequest={handlePrClick}
+        />
+        {prStatus && pr ? (
+          <GitStackPositionMarker
+            environmentId={thread.environmentId}
+            cwd={gitCwd}
+            branchName={thread.branch}
+          />
+        ) : null}
+      </span>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span
