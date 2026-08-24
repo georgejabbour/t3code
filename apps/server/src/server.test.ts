@@ -149,6 +149,9 @@ import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRun
 import * as SubscriptionUsageService from "./provider/SubscriptionUsageService.ts";
 import * as SubscriptionUsageHistoryStore from "./provider/SubscriptionUsageHistoryStore.ts";
 import * as ProjectPromptsService from "./provider/ProjectPromptsService.ts";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackCommandError } from "@t3tools/contracts";
+import * as GitStackService from "./git/stack/GitStackService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -928,6 +931,19 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.succeed(ProjectPromptsService.ProjectPromptsService, {
             getProjectPrompts: () => Effect.succeed({ skills: [], slashCommands: [] }),
+          }),
+          // Added by this fork. No test here runs `gh stack`, so the reads
+          // answer "no stack" and the actions refuse.
+          Layer.succeed(GitStackService.GitStackService, {
+            view: () => Effect.succeed(null),
+            runAction: () =>
+              Effect.fail(
+                new GitStackCommandError({
+                  cwd: ".",
+                  operation: "test",
+                  stderrTail: "not stubbed in this test",
+                }),
+              ),
           }),
         ),
       ),

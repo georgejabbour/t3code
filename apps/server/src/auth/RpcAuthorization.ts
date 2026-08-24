@@ -116,6 +116,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitRunStackedAction]: AuthOrchestrationOperateScope,
+  // Added by this fork. Reading the stack chain is a read; running submit,
+  // sync, rebase or merge rewrites branches and pull requests, so it operates.
+  // See Patch 16 in PATCHES.md.
+  [WS_METHODS.gitStackView]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitStackRunAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitPreparePullRequestThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
