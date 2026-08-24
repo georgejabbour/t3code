@@ -101,6 +101,8 @@ stops with an error.
 | 14    | `no setting was saved`                     | `dist/bin.mjs`, the server bundle           |
 | 15    | `t3/provider/CodexSubscriptionUsage.probe` | `dist/bin.mjs`, the server bundle           |
 | 15    | `Turned off in Providers`                  | `dist/client/assets`, the web client bundle |
+| 16    | `t3/git/stack/GitStackService`             | `dist/bin.mjs`, the server bundle           |
+| 16    | `data-git-stack-chain-card`                | `dist/client/assets`, the web client bundle |
 
 Patch 2's marker is the whole call, `execCommand("copy")`, not the method name on
 its own. Upstream already ships a syntax-highlighting grammar chunk that contains
@@ -1042,3 +1044,104 @@ each: `apps/web/src/routes/settings.providers.tsx` and
 **Markers.** `t3/provider/CodexSubscriptionUsage.probe`, the trace name one
 read carries, and `Turned off in Providers`, the line a switched-off row
 shows.
+
+## Patch 16 — GitHub stacks in the interface
+
+**Commits:**
+
+- `feat(server): read GitHub stacks and run their non-interactive commands`
+- `feat(client): stack query and action atoms for the web surfaces`
+- `feat(web): show GitHub stack chains and run stack actions`
+
+**Why.** George reviews his own work as stacked pull requests, managed by the
+`gh-stack` extension (`gh extension install github/gh-stack`). T3 Code showed
+each pull request on its own and knew nothing about the chain between them:
+which branch sits on which, which needs a rebase after the branch below moved,
+and what a merge of one link does to the links under it.
+
+**What.** When a checkout belongs to a stack, four places say so:
+
+1. The pull request's summary panel draws the chain — trunk-first, numbered,
+   with each branch's pull request state, a "here" mark on the current branch,
+   and a "needs rebase" flag. Beside it sit three commands (submit, sync,
+   rebase upstack) and a merge whose dialog names every pull request that
+   would land before it runs.
+2. The git actions menu carries the same three commands.
+3. A sidebar row's pull request number gains "n/N" — second of three reads
+   "2/3".
+4. Rows on the pull requests list page carry the same mark.
+
+Every surface renders nothing when the checkout belongs to no stack, so a
+repository without `gh-stack` looks exactly as it did.
+
+**The safety rules, and why they are refusals rather than warnings.**
+`sync` and `rebase` rewrite the history of every branch above the checkout.
+T3 Code holds one worktree per thread, and another thread may have that next
+branch checked out; rewriting history underneath it either fails half-way or
+leaves the other thread standing on commits nothing references. So:
+
+- The action refuses while the calling worktree holds uncommitted changes.
+  Untracked files are fine.
+- It refuses while any branch above the checkout is checked out anywhere else,
+  naming the branch and the path that blocks it. `git worktree list` answers
+  this in one read.
+- Merge refuses a pull request number that belongs to no branch of the chain,
+  so a typo cannot land somebody else's work.
+
+A rebase conflict arrives as the extension's exit code 3, and the error tells
+the reader the two commands that finish or undo the run. No interface here
+resolves markers, and none aborts on its own: half-finished is recoverable
+either way, and guessing is not.
+
+**Design notes.**
+
+- Everything rides two new remote procedure calls, `gitStack.view` and
+  `gitStack.runAction`, keeping this fork's edit to `ws.ts` at one insertion
+  block. The view answers null for "no stack", which every client reads as
+  "render nothing".
+- Only the extension's non-interactive invocations are used, each carrying the
+  flags its documentation requires: `--auto`, `--yes`, and an explicit
+  `--remote` wherever the command pushes. The remote follows
+  `remote.pushDefault`, then the repository's single remote, then `origin`;
+  several remotes with no default is a refusal with the one-line fix, because
+  guessing wrong would push to somebody.
+- The view is held fifteen seconds per checkout, so a sidebar of threads on one
+  repository costs one `gh` call. Every successful action drops its entry and
+  reads the chain again, so the panel redraws from the answer the action
+  itself produced.
+- A failed read also renders nothing: a missing or unauthenticated `gh`
+  degrades to today's interface, never to an error strip beside every thread.
+- Mobile is untouched. Its thread rows keep the plain change request pill;
+  there is no detail surface there to hang a chain on yet.
+- The deterministic service tags follow the file paths:
+  `t3/git/stack/GhStackCli` and `t3/git/stack/GitStackService`.
+
+**Tests.**
+
+```sh
+pnpm test run src/git/stack/gitStack.test.ts   # from apps/server
+```
+
+Covers the answer parser (upper-case states, absent pull request, trunk-as-
+current), the worktree list reader, the branches-above rule, and the stderr
+tail. The pre-flight rules ride typed effects over real git reads; the tests
+prove the pure decisions they are built from.
+
+**Files.** New: `packages/contracts/src/gitStack.ts`,
+`apps/server/src/git/stack/GhStackCli.ts`,
+`apps/server/src/git/stack/GitStackService.ts` and their tests,
+`packages/client-runtime/src/state/gitStacks.ts`,
+`apps/web/src/state/gitStacks.ts`, and three components under
+`apps/web/src/components/stacks/`. Edited, a few lines each:
+`packages/contracts/src/{index,rpc}.ts`, `apps/server/src/auth/RpcAuthorization.ts`,
+`apps/server/src/{server,server.test,ws}.ts`, one package export line in
+`packages/client-runtime/package.json`, and four render points:
+`PullRequestSummaryTab.tsx`, `Sidebar.tsx`, `PullRequestRow.tsx`,
+`_chat.pull-requests.tsx`, plus the menu block in `GitActionsControl.tsx`.
+
+**Upstream status.** Not filed, for the reason given in Patch 1. Upstream has
+no stacked-pull-request support of any kind today; if that changes, delete
+this patch and install the published `t3` again.
+
+**Markers.** `t3/git/stack/GitStackService`, the server's own service tag, and
+`data-git-stack-chain-card`, the attribute on the chain card element.
