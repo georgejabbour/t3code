@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { GitStackCommandError, GitStackView, type VcsError } from "@t3tools/contracts";
@@ -100,6 +101,20 @@ export function normalizeStackView(rawView: RawStackView): GitStackView {
 // the wire.
 const decodeRawStackView = Schema.decodeEffect(Schema.fromJsonString(RawStackView));
 const decodeContractView = Schema.decodeUnknownEffect(GitStackView);
+const decodeRawStackViewSync = Schema.decodeSync(Schema.fromJsonString(RawStackView));
+
+/**
+ * One whole answer, decoded synchronously. The service reads through the Effect
+ * path above; this form exists for callers and tests that hold the raw string
+ * and want a plain result.
+ */
+export function parseStackViewJson(raw: string): Result.Result<GitStackView, unknown> {
+  try {
+    return Result.succeed(normalizeStackView(decodeRawStackViewSync(raw.trim())));
+  } catch (error) {
+    return Result.fail(error);
+  }
+}
 
 export interface RawCommandOutcome {
   readonly exitCode: number;
