@@ -7101,6 +7101,11 @@ function ChatViewContent(props: ChatViewProps) {
         }
         composerDraftTarget={composerDraftTarget}
         onStateChange={handlePullRequestTabStatusChange}
+        threadRef={{
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+        }}
+        threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
       />
     ) : activeRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
