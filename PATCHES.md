@@ -1081,6 +1081,7 @@ shows.
 - `feat(web): show GitHub stack chains and run stack actions`
 - `fix(server): find a stack in whichever checkout tracks it`
 - `fix(web): stack rows move the thread's own worktree`
+- `fix(web): the stack chain marks only one branch "here"`
 
 **Why.** George reviews his own work as stacked pull requests, managed by the
 `gh-stack` extension (`gh extension install github/gh-stack`). T3 Code showed
@@ -1091,10 +1092,10 @@ and what a merge of one link does to the links under it.
 **What.** When a checkout belongs to a stack, four places say so:
 
 1. The pull request's summary panel draws the chain — trunk-first, numbered,
-   with each branch's pull request state, a "here" mark on the current branch,
-   and a "needs rebase" flag. Beside it sit three commands (submit, sync,
-   rebase upstack) and a merge whose dialog names every pull request that
-   would land before it runs.
+   with each branch's pull request state, a "here" mark on the branch the
+   reader's own worktree sits on, and a "needs rebase" flag. Beside it sit
+   three commands (submit, sync, rebase upstack) and a merge whose dialog
+   names every pull request that would land before it runs.
 2. The git actions menu carries the same three commands.
 3. A sidebar row's pull request number gains "n/N" — second of three reads
    "2/3".
@@ -1144,35 +1145,58 @@ either way, and guessing is not.
   request pill gains the same "n/N" mark, in both the current and the legacy
   list. There is no pull request detail surface on native to hang a chain
   card on; the web app in a phone browser is the full experience there.
+- The "here" mark is handed to the chain card by the surface that opened it,
+  and is never read from the stack answer. `GitStackBranch.isCurrent` describes
+  whichever checkout answered the read, and the server finds that checkout by
+  searching the repository's worktrees, so the flag regularly names a branch in
+  a worktree the reader has never opened. Beside a thread the card is handed
+  that thread's branch; the pull requests page hands in nothing, because a
+  chain drawn there is one nobody stands in.
+- One function decides what a row click does, and both the tooltip and the
+  click read its answer. Beside a thread a row checks the branch out and opens
+  its pull request; elsewhere it only opens the pull request, and says so. The
+  answer carries the three values a checkout needs, so the two paths cannot
+  drift apart.
 - The deterministic service tags follow the file paths:
   `t3/git/stack/GhStackCli` and `t3/git/stack/GitStackService`.
 
 **Tests.**
 
 ```sh
-pnpm test run src/git/stack/gitStack.test.ts   # from apps/server
+pnpm test run src/git/stack/gitStack.test.ts        # from apps/server
+pnpm test run src/components/stacks                 # from apps/web
 ```
 
-Covers the answer parser (upper-case states, absent pull request, trunk-as-
-current), the worktree list reader including prunable checkouts, the order in
-which checkouts are asked for a chain, the branches-above rule, and the stderr
-tail. The pre-flight rules ride typed effects over real git reads; the tests
-prove the pure decisions they are built from.
+The server tests cover the answer parser (upper-case states, absent pull
+request, trunk-as-current), the worktree list reader including prunable
+checkouts, the order in which checkouts are asked for a chain, the
+branches-above rule, and the stderr tail. The pre-flight rules ride typed
+effects over real git reads; the tests prove the pure decisions they are built
+from.
+
+The web test renders the chain rows and holds the marks apart: exactly one row
+carries "here" when the checkout that answered the read sits on a different
+branch than the reader's worktree, no row carries it when the card speaks for
+no worktree, and a row tooltip promises a checkout only when the click performs
+one.
 
 **Files.** New: `packages/contracts/src/gitStack.ts`,
 `apps/server/src/git/stack/GhStackCli.ts`,
 `apps/server/src/git/stack/GitStackService.ts` and their tests,
 `packages/client-runtime/src/state/gitStacks.ts`,
 `apps/web/src/state/gitStacks.ts`, three components under
-`apps/web/src/components/stacks/`, `apps/mobile/src/state/gitStacks.ts`, and
+`apps/web/src/components/stacks/` and the chain card's test,
+`apps/mobile/src/state/gitStacks.ts`, and
 `apps/mobile/src/components/GitStackPositionMarker.tsx`. Edited, a few lines
 each:
 `packages/contracts/src/{index,rpc}.ts`, `apps/server/src/auth/RpcAuthorization.ts`,
 `apps/server/src/{server,server.test,ws}.ts`, one package export line in
-`packages/client-runtime/package.json`, and four render points:
+`packages/client-runtime/package.json`, and the render points:
 `PullRequestSummaryTab.tsx`, `Sidebar.tsx`, `PullRequestRow.tsx`,
-`_chat.pull-requests.tsx`, the menu block in `GitActionsControl.tsx`, and the
-two native list rows `thread-list-items.tsx` / `thread-list-v2-items.tsx`.
+`_chat.pull-requests.tsx`, the menu block in `GitActionsControl.tsx`, the
+`ChatView.tsx` and `PullRequestDetailPanel.tsx` lines that hand the thread's
+branch down, and the two native list rows `thread-list-items.tsx` /
+`thread-list-v2-items.tsx`.
 
 **Where a stack is tracked, and why it changed everything above.**
 The `gh-stack` extension writes the chain it knows about into a file called

@@ -7515,6 +7515,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadId: activeThread.id,
         }}
         threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
+        threadBranch={activeThread.branch ?? null}
       />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
