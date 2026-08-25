@@ -524,6 +524,7 @@ export function PullRequestSummaryTab({
           environmentId={environmentId}
           cwd={detail.workspaceRoot}
           branchName={detail.headBranch}
+          branch={detail.headBranch}
           mergePrNumber={detail.state === "open" ? reference.number : null}
         />
       </div>
