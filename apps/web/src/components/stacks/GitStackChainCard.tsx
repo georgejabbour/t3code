@@ -62,6 +62,7 @@ export function GitStackChainCard({
   environmentId,
   cwd,
   branchName,
+  branch,
   mergePrNumber = null,
 }: {
   environmentId: EnvironmentId;
@@ -69,10 +70,19 @@ export function GitStackChainCard({
   cwd: string;
   /** The branch to mark as "you are here"; usually the thread's or the PR's head branch. */
   branchName?: string | null;
+  /**
+   * The branch whose chain to read when `cwd` sits on the trunk — the PR's
+   * head branch. The server retries from the worktree holding it.
+   */
+  branch?: string | null;
   /** When set, offers to merge this pull request plus every open one below it. */
   mergePrNumber?: number | null;
 }) {
-  const { view } = useGitStack({ environmentId, cwd });
+  const { view } = useGitStack({
+    environmentId,
+    cwd,
+    ...(branch ? { branch } : {}),
+  });
   if (!view) return null;
   return (
     <ChainCardInner
