@@ -369,6 +369,8 @@ export function PullRequestDetailPanel({
   onStateChange,
   context = "page",
   composerDraftTarget,
+  threadRef,
+  threadCwd,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -404,6 +406,14 @@ export function PullRequestDetailPanel({
    * land here instead of opening a new thread — the branch is already under the reader's feet.
    */
   composerDraftTarget?: ScopedThreadRef | DraftId;
+  /**
+   * Added by this fork. The thread beside which this panel is open, when there
+   * is one. The stack chain card uses it to check a clicked stack member out
+   * into this thread's worktree and open its panel here. See Patch 16 in
+   * PATCHES.md.
+   */
+  threadRef?: ScopedThreadRef | undefined;
+  threadCwd?: string | null | undefined;
 }) {
   const pullRequestKey = `${reference.projectId}:${reference.repository}#${reference.number}`;
   const [tab, setTab] = useState<DetailTab>("summary");
@@ -1932,6 +1942,8 @@ export function PullRequestDetailPanel({
                   fixCheckLabel={handoffLabels.fixCheck}
                   onFixFinding={startFixFinding}
                   onRefresh={refreshDetail}
+                  threadRef={threadRef}
+                  threadCwd={threadCwd}
                 />
               </div>
             ) : null}
