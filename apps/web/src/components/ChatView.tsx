@@ -7938,6 +7938,11 @@ export default function ChatView(props: ChatViewProps) {
         {...(linkedThreadPullRequest === null
           ? { onStateChange: handlePullRequestTabStatusChange }
           : {})}
+        threadRef={{
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+        }}
+        threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
       />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel

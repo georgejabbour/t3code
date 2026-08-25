@@ -1,9 +1,17 @@
-import type { EnvironmentId, GitStackBranch, GitStackView } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  GitStackBranch,
+  GitStackView,
+  PullRequestRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { GitBranchIcon, GitPullRequestIcon, LayersIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { useGitStack, useGitStackAction } from "~/state/gitStacks";
+import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
@@ -63,6 +71,9 @@ export function GitStackChainCard({
   cwd,
   branchName,
   branch,
+  reference,
+  threadRef,
+  threadCwd,
   mergePrNumber = null,
 }: {
   environmentId: EnvironmentId;
@@ -75,6 +86,15 @@ export function GitStackChainCard({
    * head branch. The server retries from the worktree holding it.
    */
   branch?: string | null;
+  /**
+   * The pull request reference whose repository the chain members belong to.
+   * Every branch of a stack shares one repository.
+   */
+  reference?: PullRequestRef | undefined;
+  /** The thread beside which this card is open, when there is one. */
+  threadRef?: ScopedThreadRef | undefined;
+  /** The worktree the thread checks branches out into. */
+  threadCwd?: string | null | undefined;
   /** When set, offers to merge this pull request plus every open one below it. */
   mergePrNumber?: number | null;
 }) {
@@ -91,6 +111,9 @@ export function GitStackChainCard({
       cwd={cwd}
       branchName={branchName ?? null}
       mergePrNumber={mergePrNumber}
+      reference={reference ?? null}
+      threadRef={threadRef ?? null}
+      threadCwd={threadCwd ?? null}
     />
   );
 }
@@ -101,17 +124,73 @@ function ChainCardInner({
   cwd,
   branchName,
   mergePrNumber,
+  reference,
+  threadRef,
+  threadCwd,
 }: {
   view: GitStackView;
   environmentId: EnvironmentId;
   cwd: string;
   branchName: string | null;
   mergePrNumber: number | null;
+  reference: PullRequestRef | null;
+  threadRef: ScopedThreadRef | null;
+  threadCwd: string | null;
 }) {
   const { run } = useGitStackAction(environmentId);
   const openPrLink = useOpenPrLink();
+  const prepare = usePreparePullRequestThreadAction({
+    environmentId: threadRef?.environmentId ?? null,
+    cwd: threadCwd,
+  });
   const [running, setRunning] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  /**
+   * What a chain row does. With a thread beside the panel: check that pull
+   * request's branch out into the thread's worktree, then open its panel here
+   * — the reader walks the stack and the thread follows. Cmd/ctrl+click still
+   * opens GitHub. Without a thread there is nothing to check out into, so the
+   * row falls back to the pull request surface's own navigation.
+   */
+  const traverse = async (
+    event: ReactMouseEvent<HTMLElement, MouseEvent>,
+    pr: { number: number; url: string },
+  ) => {
+    if (event.metaKey || event.ctrlKey) {
+      window.open(pr.url, "_blank");
+      return;
+    }
+    if (threadRef === null || threadCwd === null || reference === null) {
+      openPrLink(event, pr.url);
+      return;
+    }
+    event.preventDefault();
+    if (running !== null) return;
+    setRunning(`checkout-${pr.number}`);
+    const result = await prepare.run({
+      reference: pr.url,
+      mode: "worktree",
+      threadId: threadRef.threadId,
+    });
+    setRunning(null);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: `Could not check out #${pr.number}`,
+        description: String(
+          (result.cause as { message?: string } | undefined)?.message ??
+            "The checkout failed. See the server log for details.",
+        ),
+      });
+      return;
+    }
+    useRightPanelStore.getState().openPullRequest(threadRef, {
+      projectId: reference.projectId,
+      repository: reference.repository,
+      number: pr.number,
+    });
+  };
 
   const execute = async (action: "submit" | "sync" | "rebase" | "merge", prNumber?: number) => {
     if (running !== null) return;
@@ -196,9 +275,10 @@ function ChainCardInner({
               {branch.pr ? (
                 <button
                   type="button"
-                  onClick={(event) => openPrLink(event, branch.pr!.url)}
-                  className="hover:bg-accent/60 -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded px-1 py-0.5 text-left"
-                  title={`Open pull request #${branch.pr.number}`}
+                  disabled={running !== null}
+                  onClick={(event) => void traverse(event, branch.pr!)}
+                  className="hover:bg-accent/60 -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded px-1 py-0.5 text-left disabled:opacity-60"
+                  title={`Check out ${branch.name} and open pull request #${branch.pr.number}`}
                 >
                   {row}
                 </button>
