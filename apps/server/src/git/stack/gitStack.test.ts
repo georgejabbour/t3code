@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { branchesAbove, parseWorktreeList } from "./GitStackService.ts";
+import { branchesAbove, findWorktreeForBranch, parseWorktreeList } from "./GitStackService.ts";
 import { normalizeStackView, parseStackViewJson, stderrTail } from "./GhStackCli.ts";
 
 // Added by this fork. See Patch 16 in PATCHES.md.
@@ -89,6 +89,28 @@ describe("parseWorktreeList", () => {
       { path: "/wt/one", branch: "auth" },
       { path: "/wt/two", branch: null },
     ]);
+  });
+});
+
+describe("findWorktreeForBranch", () => {
+  const checkouts = parseWorktreeList(
+    [
+      "worktree /repo",
+      "HEAD aaa1111",
+      "",
+      "worktree /wt/one",
+      "HEAD bbb2222",
+      "branch refs/heads/george/nrg-435",
+      "",
+    ].join("\n"),
+  );
+
+  it("names the checkout holding the branch", () => {
+    expect(findWorktreeForBranch(checkouts, "george/nrg-435")).toBe("/wt/one");
+  });
+
+  it("answers null when no checkout holds the branch", () => {
+    expect(findWorktreeForBranch(checkouts, "george/nrg-999")).toBeNull();
   });
 });
 
