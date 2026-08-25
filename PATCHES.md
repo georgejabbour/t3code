@@ -1113,8 +1113,10 @@ either way, and guessing is not.
   itself produced.
 - A failed read also renders nothing: a missing or unauthenticated `gh`
   degrades to today's interface, never to an error strip beside every thread.
-- Mobile is untouched. Its thread rows keep the plain change request pill;
-  there is no detail surface there to hang a chain on yet.
+- The native mobile app carries one surface: the thread list row's change
+  request pill gains the same "n/N" mark, in both the current and the legacy
+  list. There is no pull request detail surface on native to hang a chain
+  card on; the web app in a phone browser is the full experience there.
 - The deterministic service tags follow the file paths:
   `t3/git/stack/GhStackCli` and `t3/git/stack/GitStackService`.
 
@@ -1133,13 +1135,16 @@ prove the pure decisions they are built from.
 `apps/server/src/git/stack/GhStackCli.ts`,
 `apps/server/src/git/stack/GitStackService.ts` and their tests,
 `packages/client-runtime/src/state/gitStacks.ts`,
-`apps/web/src/state/gitStacks.ts`, and three components under
-`apps/web/src/components/stacks/`. Edited, a few lines each:
+`apps/web/src/state/gitStacks.ts`, three components under
+`apps/web/src/components/stacks/`, `apps/mobile/src/state/gitStacks.ts`, and
+`apps/mobile/src/components/GitStackPositionMarker.tsx`. Edited, a few lines
+each:
 `packages/contracts/src/{index,rpc}.ts`, `apps/server/src/auth/RpcAuthorization.ts`,
 `apps/server/src/{server,server.test,ws}.ts`, one package export line in
 `packages/client-runtime/package.json`, and four render points:
 `PullRequestSummaryTab.tsx`, `Sidebar.tsx`, `PullRequestRow.tsx`,
-`_chat.pull-requests.tsx`, plus the menu block in `GitActionsControl.tsx`.
+`_chat.pull-requests.tsx`, the menu block in `GitActionsControl.tsx`, and the
+two native list rows `thread-list-items.tsx` / `thread-list-v2-items.tsx`.
 
 **Upstream status.** Not filed, for the reason given in Patch 1. Upstream has
 no stacked-pull-request support of any kind today; if that changes, delete
