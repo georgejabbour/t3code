@@ -41,6 +41,14 @@ interface SafeReadOutcome {
  *
  * `submit` and `merge` touch neither the working tree nor history below their
  * arguments, so they carry neither check.
+ *
+ * One property of the extension shapes everything below. It keeps its stack
+ * tracking in a file inside the git directory of the checkout that set the
+ * stack up, and every linked worktree has its own git directory. So a chain
+ * one worktree knows about is invisible from the repository root and from
+ * every other worktree of the same repository. Reads and actions therefore
+ * search this repository's checkouts for one that can see the branch the
+ * caller named, and act there.
  */
 
 const VIEW_CACHE_TTL_SECONDS = 15;
@@ -51,22 +59,26 @@ const ACTION_SUMMARY_LINES = 6;
 
 const VIEW_CACHE_TTL = Duration.seconds(VIEW_CACHE_TTL_SECONDS);
 
-interface WorktreeCheckout {
+export interface WorktreeCheckout {
   readonly path: string;
   /** Null for a detached head or a bare repository, neither of which names a branch. */
   readonly branch: string | null;
+  /** True when git reports the directory is gone, so no command can run there. */
+  readonly prunable: boolean;
 }
 
 export function parseWorktreeList(stdout: string): ReadonlyArray<WorktreeCheckout> {
   const checkouts: Array<WorktreeCheckout> = [];
   let path: string | null = null;
   let branch: string | null = null;
+  let prunable = false;
   const flush = () => {
     if (path !== null) {
-      checkouts.push({ path, branch });
+      checkouts.push({ path, branch, prunable });
     }
     path = null;
     branch = null;
+    prunable = false;
   };
   for (const line of stdout.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -77,6 +89,8 @@ export function parseWorktreeList(stdout: string): ReadonlyArray<WorktreeCheckou
         .slice("branch ".length)
         .trim()
         .replace(/^refs\/heads\//, "");
+    } else if (line === "prunable" || line.startsWith("prunable ")) {
+      prunable = true;
     }
   }
   flush();
@@ -95,12 +109,13 @@ export class GitStackService extends Context.Service<
   GitStackService,
   {
     /**
-     * The stack covering `cwd`, or null when there is none. The extension
-     * refuses to report a chain from a checkout on the trunk, so when `branch`
-     * is named and `cwd` answers "not in a stack", the read is retried from a
-     * worktree that holds that branch. Held for a few seconds so a sidebar of
-     * threads sharing one repository costs one read, not one per row. Every
-     * successful action drops its own entry before re-reading.
+     * The stack covering `cwd`, or null when there is none. Naming `branch`
+     * asks for the chain that holds that branch: the extension tracks a stack
+     * inside one checkout's git directory, so the answer often lives in a
+     * worktree rather than at `cwd`, and a named branch that no chain holds
+     * reads as no stack. Held for a few seconds so a sidebar of threads
+     * sharing one repository costs one read, not one per row. Every successful
+     * action empties the cache before re-reading.
      */
     readonly view: (input: {
       readonly cwd: string;
@@ -121,37 +136,90 @@ export function findWorktreeForBranch(
   return checkouts.find((checkout) => checkout.branch === branch)?.path ?? null;
 }
 
+/** How many checkouts one stack read asks before it gives up. */
+const MAX_STACK_PROBES = 8;
+
+/**
+ * The checkouts worth asking about the stack that holds `branch`, best first.
+ *
+ * The checkout that holds the branch comes first, because it is the one that
+ * usually answers. The rest follow in the order git lists them. A checkout git
+ * calls prunable has no directory left to run in, and one with no branch cannot
+ * answer at all, because the extension reports the chain of the current branch.
+ * The list is capped so a repository with dozens of worktrees does not turn one
+ * panel into dozens of `gh` runs.
+ */
+export function stackProbeOrder(
+  checkouts: ReadonlyArray<WorktreeCheckout>,
+  askedCwd: string,
+  branch: string,
+  limit: number = MAX_STACK_PROBES,
+): ReadonlyArray<string> {
+  const usable = checkouts.filter(
+    (checkout) => !checkout.prunable && checkout.branch !== null && checkout.path !== askedCwd,
+  );
+  return [
+    ...usable.filter((checkout) => checkout.branch === branch),
+    ...usable.filter((checkout) => checkout.branch !== branch),
+  ]
+    .slice(0, limit)
+    .map((checkout) => checkout.path);
+}
+
+/**
+ * One stack, together with the checkout whose git directory tracks it. Actions
+ * need the second half: a command run where the tracking is missing reports
+ * that no stack covers the checkout.
+ */
+interface StackReading {
+  readonly cwd: string;
+  readonly view: GitStackView;
+}
+
+function viewHoldsBranch(view: GitStackView | null, branch: string): view is GitStackView {
+  return view !== null && view.branches.some((entry) => entry.name === branch);
+}
+
 export const make = Effect.gen(function* () {
   const ghStack = yield* GhStackCli.GhStackCli;
   const process = yield* VcsProcess.VcsProcess;
 
-  const readView = Effect.fn("GitStackService.readView")(function* (cwd: string, branch?: string) {
+  const readStack = Effect.fn("GitStackService.readStack")(function* (
+    cwd: string,
+    branch?: string,
+  ) {
     const atCwd = yield* ghStack.view(cwd);
-    if (atCwd !== null || branch === undefined) {
-      return atCwd;
+    if (branch === undefined) {
+      return atCwd === null ? null : ({ cwd, view: atCwd } satisfies StackReading);
     }
-    // The extension refuses to report a chain from a checkout on the trunk,
-    // and a project's root checkout usually sits there. The chain still lives
-    // in the repository, so ask again from the worktree that holds the branch
-    // the caller named — for a pull request panel that is the pull request's
-    // own head branch, and the answer is the chain that pull request sits in.
-    const listing = yield* readGitSafe({ cwd, args: ["worktree", "list", "--porcelain"] });
-    if (listing.exitCode !== 0) {
-      return null;
+    if (viewHoldsBranch(atCwd, branch)) {
+      return { cwd, view: atCwd } satisfies StackReading;
     }
-    const holder = findWorktreeForBranch(parseWorktreeList(listing.stdout), branch);
-    if (holder === null || holder === cwd) {
-      return null;
+    // The caller's own checkout cannot see the branch, either because it tracks
+    // no stack or because it tracks a different one. Ask this repository's other
+    // checkouts, and take the first chain that holds the branch. A pull request
+    // panel names the pull request's own head branch, so the answer is the chain
+    // that pull request sits in.
+    const checkouts = yield* worktreeCheckouts(cwd);
+    for (const candidate of stackProbeOrder(checkouts, cwd, branch)) {
+      // A checkout that cannot answer is not a failure of the read: the next
+      // one may still hold the chain.
+      const view = yield* ghStack.view(candidate).pipe(Effect.orElseSucceed(() => null));
+      if (viewHoldsBranch(view, branch)) {
+        return { cwd: candidate, view } satisfies StackReading;
+      }
     }
-    return yield* ghStack.view(holder);
+    // Answering with a chain that leaves the branch out would draw the reader a
+    // stack their pull request does not sit in.
+    return null;
   });
 
   const viewCache = yield* Cache.makeWith(
-    Effect.fn("GitStackService.readView.cached")(function* (input: {
+    Effect.fn("GitStackService.readStack.cached")(function* (input: {
       readonly cwd: string;
       readonly branch?: string | undefined;
     }) {
-      return yield* readView(input.cwd, input.branch);
+      return yield* readStack(input.cwd, input.branch);
     }),
     {
       capacity: VIEW_CACHE_CAPACITY,
@@ -159,7 +227,11 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const invalidate = (cwd: string) => Cache.invalidate(viewCache, { cwd });
+  // A stack action moves branches across a whole repository, and one repository
+  // is reachable through its root and through every worktree, under keys this
+  // cache cannot relate to each other. So a successful action drops every entry
+  // rather than pretending to know which ones it invalidated.
+  const invalidate = Cache.invalidateAll(viewCache);
 
   /**
    * One short git read whose failure reads as "no answer". Every caller here
@@ -274,18 +346,83 @@ export const make = Effect.gen(function* () {
       stderrTail: "No GitHub stack covers this checkout.",
     });
 
+  /**
+   * Moves the caller's own checkout onto the branch of a pull request in the
+   * stack.
+   *
+   * This one action runs where the caller asked and nowhere else: a reader
+   * walking the chain from a thread wants that thread's working tree to follow.
+   * It also needs no stack tracking beforehand, because `gh stack checkout`
+   * reads the stack from GitHub and starts tracking it when the checkout has
+   * none — which is how a thread's worktree gains tracking in the first place.
+   */
+  const runCheckout = Effect.fn("GitStackService.runCheckout")(function* (
+    input: GitStackRunActionInput,
+  ) {
+    if (input.prNumber === undefined) {
+      return yield* new GitStackCommandError({
+        cwd: input.cwd,
+        operation: "checkout",
+        stderrTail: "A checkout names the pull request to switch to.",
+      });
+    }
+    if (yield* isDirty(input.cwd)) {
+      return yield* new GitStackPreflightError({ cwd: input.cwd, reason: "dirty-worktree" });
+    }
+    const outcome = yield* runGh({ cwd: input.cwd, args: ["checkout", String(input.prNumber)] });
+    if (outcome.exitCode !== 0) {
+      // Git refuses a branch that another worktree already holds, and the
+      // extension passes that refusal through. Its wording names the blocking
+      // directory, so the reader knows which checkout to close.
+      return yield* new GitStackCommandError({
+        cwd: input.cwd,
+        operation: "checkout",
+        exitCode: outcome.exitCode,
+        stderrTail: stderrTail(outcome.stderr),
+      });
+    }
+    yield* invalidate;
+    const reading = yield* Cache.get(viewCache, { cwd: input.cwd });
+    if (reading === null) {
+      return yield* new GitStackCommandError({
+        cwd: input.cwd,
+        operation: "checkout",
+        stderrTail:
+          "The checkout moved, but the stack could not be read back. Refresh to see the result.",
+      });
+    }
+    return {
+      action: "checkout",
+      summary: summaryFrom(outcome),
+      view: reading.view,
+    } satisfies GitStackActionResult;
+  });
+
   const runAction: GitStackService["Service"]["runAction"] = (input) =>
     Effect.gen(function* () {
-      const view = yield* Cache.get(viewCache, { cwd: input.cwd });
-      if (view === null) {
+      if (input.action === "checkout") {
+        return yield* runCheckout(input);
+      }
+
+      // Every other action runs where the stack tracking lives, which is not
+      // always where the caller stands: a pull request panel acts from the
+      // project's root checkout, while the tracking sits in the worktree that
+      // set the stack up.
+      const reading = yield* Cache.get(viewCache, {
+        cwd: input.cwd,
+        ...(input.branch === undefined ? {} : { branch: input.branch }),
+      });
+      if (reading === null) {
         return yield* notInStack(input);
       }
+      const cwd = reading.cwd;
+      const view = reading.view;
 
       const rewritesHistory = input.action === "sync" || input.action === "rebase";
 
-      if (rewritesHistory && (yield* isDirty(input.cwd))) {
+      if (rewritesHistory && (yield* isDirty(cwd))) {
         return yield* new GitStackPreflightError({
-          cwd: input.cwd,
+          cwd,
           reason: "dirty-worktree",
         });
       }
@@ -293,12 +430,12 @@ export const make = Effect.gen(function* () {
       if (rewritesHistory) {
         const guarded =
           view.currentBranch !== null ? branchesAbove(view, view.currentBranch) : view.branches;
-        const checkouts = yield* worktreeCheckouts(input.cwd);
+        const checkouts = yield* worktreeCheckouts(cwd);
         for (const branch of guarded) {
           const holder = checkouts.find((checkout) => checkout.branch === branch.name);
           if (holder !== undefined) {
             return yield* new GitStackPreflightError({
-              cwd: input.cwd,
+              cwd,
               reason: "branch-checked-out-elsewhere",
               blockedBranch: branch.name,
               blockedWorktreePath: holder.path,
@@ -310,7 +447,7 @@ export const make = Effect.gen(function* () {
       if (input.action === "merge") {
         if (input.prNumber === undefined) {
           return yield* new GitStackCommandError({
-            cwd: input.cwd,
+            cwd,
             operation: "merge",
             stderrTail: "A merge names the pull request to land.",
           });
@@ -320,7 +457,7 @@ export const make = Effect.gen(function* () {
         );
         if (!knownNumbers.has(input.prNumber)) {
           return yield* new GitStackCommandError({
-            cwd: input.cwd,
+            cwd,
             operation: "merge",
             stderrTail: `Pull request #${input.prNumber} belongs to no branch of this stack.`,
           });
@@ -331,9 +468,9 @@ export const make = Effect.gen(function* () {
       // pick a different default per invocation, which is exactly what its own
       // documentation warns against.
       const outcome = yield* input.action === "submit" || input.action === "sync"
-        ? Effect.flatMap(resolvePushRemote(input.cwd), (remote) =>
+        ? Effect.flatMap(resolvePushRemote(cwd), (remote) =>
             runGh({
-              cwd: input.cwd,
+              cwd,
               args:
                 input.action === "submit"
                   ? ["submit", "--auto", "--remote", remote]
@@ -341,29 +478,29 @@ export const make = Effect.gen(function* () {
             }),
           )
         : input.action === "rebase"
-          ? runGh({ cwd: input.cwd, args: ["rebase", "--upstack"] })
+          ? runGh({ cwd, args: ["rebase", "--upstack"] })
           : runGh({
-              cwd: input.cwd,
+              cwd,
               args: ["merge", String(input.prNumber), "--yes"],
             });
 
       if (outcome.exitCode === 3) {
-        return yield* new GitStackConflictError({ cwd: input.cwd, operation: input.action });
+        return yield* new GitStackConflictError({ cwd, operation: input.action });
       }
       if (outcome.exitCode !== 0) {
         return yield* new GitStackCommandError({
-          cwd: input.cwd,
+          cwd,
           operation: input.action,
           exitCode: outcome.exitCode,
           stderrTail: stderrTail(outcome.stderr),
         });
       }
 
-      yield* invalidate(input.cwd);
-      const nextView = yield* Cache.get(viewCache, { cwd: input.cwd });
-      if (nextView === null) {
+      yield* invalidate;
+      const nextReading = yield* Cache.get(viewCache, { cwd });
+      if (nextReading === null) {
         return yield* new GitStackCommandError({
-          cwd: input.cwd,
+          cwd,
           operation: input.action,
           stderrTail:
             "The action ran, but the stack could not be read back. Refresh to see the result.",
@@ -372,13 +509,13 @@ export const make = Effect.gen(function* () {
       return {
         action: input.action,
         summary: summaryFrom(outcome),
-        view: nextView,
+        view: nextReading.view,
       } satisfies GitStackActionResult;
     });
 
   return {
     view: (input: { readonly cwd: string; readonly branch?: string | undefined }) =>
-      Cache.get(viewCache, input),
+      Cache.get(viewCache, input).pipe(Effect.map((reading) => reading?.view ?? null)),
     runAction,
   };
 });
