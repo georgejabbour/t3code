@@ -3,6 +3,7 @@ import { GitBranchIcon, GitPullRequestIcon, LayersIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useGitStack, useGitStackAction } from "~/state/gitStacks";
+import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
@@ -98,6 +99,7 @@ function ChainCardInner({
   mergePrNumber: number | null;
 }) {
   const { run } = useGitStackAction(environmentId);
+  const openPrLink = useOpenPrLink();
   const [running, setRunning] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -145,8 +147,8 @@ function ChainCardInner({
         {[...view.branches].reverse().map((branch, reversedIndex) => {
           const position = view.branches.length - reversedIndex;
           const isHere = branch.name === branchName || branch.isCurrent;
-          return (
-            <li key={branch.name} className="flex items-center gap-2 text-sm">
+          const row = (
+            <>
               <span className="text-muted-foreground/60 w-6 shrink-0 text-right text-xs tabular-nums">
                 {position}
               </span>
@@ -156,6 +158,11 @@ function ChainCardInner({
                 <GitBranchIcon className="text-muted-foreground/50 size-3.5 shrink-0" />
               )}
               <span className={cn("truncate", isHere && "font-medium")}>{branch.name}</span>
+              {branch.pr ? (
+                <span className="text-muted-foreground/60 shrink-0 text-xs tabular-nums">
+                  #{branch.pr.number}
+                </span>
+              ) : null}
               {isHere ? (
                 <span className="text-muted-foreground/60 shrink-0 text-[10px] uppercase">
                   here
@@ -169,6 +176,25 @@ function ChainCardInner({
                   needs rebase
                 </span>
               ) : null}
+            </>
+          );
+          // A branch with a pull request traverses: plain click opens it in
+          // the pull request surface, cmd/ctrl+click opens GitHub. Branches
+          // without one are rows of the chain, not links.
+          return (
+            <li key={branch.name} className="text-sm">
+              {branch.pr ? (
+                <button
+                  type="button"
+                  onClick={(event) => openPrLink(event, branch.pr!.url)}
+                  className="hover:bg-accent/60 -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded px-1 py-0.5 text-left"
+                  title={`Open pull request #${branch.pr.number}`}
+                >
+                  {row}
+                </button>
+              ) : (
+                <span className="flex items-center gap-2 px-1 py-0.5">{row}</span>
+              )}
             </li>
           );
         })}
