@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import { stackPosition } from "@t3tools/client-runtime/state/git-stacks";
 import { useGitStack } from "~/state/gitStacks";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 // Added by this fork. A tiny "position in chain" read-out for rows that already
 // show a pull request number; see Patch 16 in PATCHES.md.
@@ -25,12 +26,20 @@ export function GitStackPositionMarker({
   const position = stackPosition(view, branchName ?? null);
   if (position === null) return null;
   return (
-    <span
-      data-testid="git-stack-position-marker"
-      title={`Branch ${position} of ${view.branches.length} in this stack`}
-      className="text-muted-foreground/70 ml-1 text-[10px] tabular-nums"
-    >
-      {position}/{view.branches.length}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-testid="git-stack-position-marker"
+            className="text-muted-foreground/70 ml-1 text-[10px] tabular-nums"
+          />
+        }
+      >
+        {position}/{view.branches.length}
+      </TooltipTrigger>
+      <TooltipPopup>
+        Branch {position} of {view.branches.length} in this stack
+      </TooltipPopup>
+    </Tooltip>
   );
 }
