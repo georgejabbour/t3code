@@ -8763,6 +8763,7 @@ export default function ChatView(props: ChatViewProps) {
           threadId: activeThread.id,
         }}
         threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
+        threadBranch={activeThread.branch ?? null}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
