@@ -64,15 +64,37 @@ export type GitStackView = typeof GitStackView.Type;
  *                  current one onto the change just made below it.
  * - `merge`     -> `gh stack merge <pr> --yes`: merge the named pull request
  *                  plus every unmerged pull request below it, all-or-nothing.
+ * - `checkout`  -> `gh stack checkout <pr>`: move the calling checkout onto the
+ *                  branch of the named pull request. When that checkout tracks
+ *                  no stack yet, the extension reads the stack from GitHub and
+ *                  starts tracking it there.
  */
-export const GitStackActionKind = Schema.Literals(["submit", "sync", "rebase", "merge"]);
+export const GitStackActionKind = Schema.Literals([
+  "submit",
+  "sync",
+  "rebase",
+  "merge",
+  "checkout",
+]);
 export type GitStackActionKind = typeof GitStackActionKind.Type;
 
 export const GitStackRunActionInput = Schema.Struct({
+  /**
+   * The checkout the caller acts from. `checkout` always runs here, because
+   * moving this working tree is the whole point of it. Every other action runs
+   * in the checkout that can read the stack, which `branch` helps to find.
+   */
   cwd: TrimmedNonEmptyString,
   action: GitStackActionKind,
-  /** Required by `merge`, refused by every other action. */
+  /** Required by `merge` and by `checkout`, refused by every other action. */
   prNumber: Schema.optional(PositiveInt),
+  /**
+   * The branch whose stack the action belongs to. The `gh stack` extension
+   * keeps its stack tracking inside one checkout's git directory, so a chain
+   * can be invisible from `cwd`; naming the branch lets the server find the
+   * checkout that does see it. Ignored by `checkout`.
+   */
+  branch: Schema.optional(TrimmedNonEmptyString),
 });
 export type GitStackRunActionInput = typeof GitStackRunActionInput.Type;
 
