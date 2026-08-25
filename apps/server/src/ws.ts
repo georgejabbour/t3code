@@ -2403,8 +2403,8 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "git" },
           ),
         // Added by this fork. GitHub stack reads and actions; see Patch 16 in PATCHES.md.
-        [WS_METHODS.gitStackView]: ({ cwd }) =>
-          observeRpcEffect(WS_METHODS.gitStackView, gitStack.view({ cwd }), {
+        [WS_METHODS.gitStackView]: (input) =>
+          observeRpcEffect(WS_METHODS.gitStackView, gitStack.view(input), {
             "rpc.aggregate": "git",
           }),
         [WS_METHODS.gitStackRunAction]: (input) =>
