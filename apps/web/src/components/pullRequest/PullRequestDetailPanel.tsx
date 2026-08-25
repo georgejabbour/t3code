@@ -479,6 +479,7 @@ export function PullRequestDetailPanel({
   onSelectPullRequest,
   threadRef,
   threadCwd,
+  threadBranch,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -532,6 +533,12 @@ export function PullRequestDetailPanel({
    */
   threadRef?: ScopedThreadRef | undefined;
   threadCwd?: string | null | undefined;
+  /**
+   * The branch that thread's worktree sits on. The stack chain card marks it
+   * "here", so the mark follows the reader's own working tree rather than the
+   * pull request they happen to be reading.
+   */
+  threadBranch?: string | null | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -2679,6 +2686,7 @@ export function PullRequestDetailPanel({
                   onRefresh={refreshDetail}
                   threadRef={threadRef}
                   threadCwd={threadCwd}
+                  threadBranch={threadBranch}
                 />
               </div>
             ) : null}
