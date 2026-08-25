@@ -95,12 +95,16 @@ export class GitStackService extends Context.Service<
   GitStackService,
   {
     /**
-     * The stack at `cwd`, or null when there is none. Held for a few seconds so
-     * a sidebar of threads sharing one repository costs one read, not one per
-     * row. Every successful action drops its own entry before re-reading.
+     * The stack covering `cwd`, or null when there is none. The extension
+     * refuses to report a chain from a checkout on the trunk, so when `branch`
+     * is named and `cwd` answers "not in a stack", the read is retried from a
+     * worktree that holds that branch. Held for a few seconds so a sidebar of
+     * threads sharing one repository costs one read, not one per row. Every
+     * successful action drops its own entry before re-reading.
      */
     readonly view: (input: {
       readonly cwd: string;
+      readonly branch?: string | undefined;
     }) => Effect.Effect<GitStackView | null, GitStackCommandError>;
 
     readonly runAction: (
@@ -109,13 +113,45 @@ export class GitStackService extends Context.Service<
   }
 >()("t3/git/stack/GitStackService") {}
 
+/** The worktree checkout that holds `branch`, or null when none does. */
+export function findWorktreeForBranch(
+  checkouts: ReadonlyArray<WorktreeCheckout>,
+  branch: string,
+): string | null {
+  return checkouts.find((checkout) => checkout.branch === branch)?.path ?? null;
+}
+
 export const make = Effect.gen(function* () {
   const ghStack = yield* GhStackCli.GhStackCli;
   const process = yield* VcsProcess.VcsProcess;
 
+  const readView = Effect.fn("GitStackService.readView")(function* (cwd: string, branch?: string) {
+    const atCwd = yield* ghStack.view(cwd);
+    if (atCwd !== null || branch === undefined) {
+      return atCwd;
+    }
+    // The extension refuses to report a chain from a checkout on the trunk,
+    // and a project's root checkout usually sits there. The chain still lives
+    // in the repository, so ask again from the worktree that holds the branch
+    // the caller named — for a pull request panel that is the pull request's
+    // own head branch, and the answer is the chain that pull request sits in.
+    const listing = yield* readGitSafe({ cwd, args: ["worktree", "list", "--porcelain"] });
+    if (listing.exitCode !== 0) {
+      return null;
+    }
+    const holder = findWorktreeForBranch(parseWorktreeList(listing.stdout), branch);
+    if (holder === null || holder === cwd) {
+      return null;
+    }
+    return yield* ghStack.view(holder);
+  });
+
   const viewCache = yield* Cache.makeWith(
-    Effect.fn("GitStackService.readView")(function* (cwd: string) {
-      return yield* ghStack.view(cwd);
+    Effect.fn("GitStackService.readView.cached")(function* (input: {
+      readonly cwd: string;
+      readonly branch?: string | undefined;
+    }) {
+      return yield* readView(input.cwd, input.branch);
     }),
     {
       capacity: VIEW_CACHE_CAPACITY,
@@ -123,7 +159,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const invalidate = (cwd: string) => Cache.invalidate(viewCache, cwd);
+  const invalidate = (cwd: string) => Cache.invalidate(viewCache, { cwd });
 
   /**
    * One short git read whose failure reads as "no answer". Every caller here
@@ -240,7 +276,7 @@ export const make = Effect.gen(function* () {
 
   const runAction: GitStackService["Service"]["runAction"] = (input) =>
     Effect.gen(function* () {
-      const view = yield* Cache.get(viewCache, input.cwd);
+      const view = yield* Cache.get(viewCache, { cwd: input.cwd });
       if (view === null) {
         return yield* notInStack(input);
       }
@@ -324,7 +360,7 @@ export const make = Effect.gen(function* () {
       }
 
       yield* invalidate(input.cwd);
-      const nextView = yield* Cache.get(viewCache, input.cwd);
+      const nextView = yield* Cache.get(viewCache, { cwd: input.cwd });
       if (nextView === null) {
         return yield* new GitStackCommandError({
           cwd: input.cwd,
@@ -341,7 +377,8 @@ export const make = Effect.gen(function* () {
     });
 
   return {
-    view: (input: { readonly cwd: string }) => Cache.get(viewCache, input.cwd),
+    view: (input: { readonly cwd: string; readonly branch?: string | undefined }) =>
+      Cache.get(viewCache, input),
     runAction,
   };
 });
