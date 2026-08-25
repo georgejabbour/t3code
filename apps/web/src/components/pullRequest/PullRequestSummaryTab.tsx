@@ -443,6 +443,7 @@ export function PullRequestSummaryTab({
   onRefresh,
   threadRef,
   threadCwd,
+  threadBranch,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
@@ -466,6 +467,7 @@ export function PullRequestSummaryTab({
    * worktree. See Patch 16 in PATCHES.md. */
   threadRef?: ScopedThreadRef | undefined;
   threadCwd?: string | null | undefined;
+  threadBranch?: string | null | undefined;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
@@ -611,7 +613,8 @@ export function PullRequestSummaryTab({
         <GitStackChainCard
           environmentId={environmentId}
           cwd={detail.workspaceRoot}
-          branchName={detail.headBranch}
+          viewingBranch={detail.headBranch}
+          threadBranch={threadBranch}
           branch={detail.headBranch}
           reference={reference}
           threadRef={threadRef}
