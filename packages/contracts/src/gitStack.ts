@@ -30,6 +30,14 @@ export const GitStackBranch = Schema.Struct({
    * is true.
    */
   base: Schema.String,
+  /**
+   * True when the checkout that answered this read sits on this branch.
+   *
+   * That checkout is not the caller's. The server searches a repository's
+   * worktrees for one whose git directory tracks the chain, so this flag
+   * regularly names a branch in a worktree the reader has never opened. Never
+   * draw "you are here" from it; use a branch the caller already knows.
+   */
   isCurrent: Schema.Boolean,
   isMerged: Schema.Boolean,
   isQueued: Schema.Boolean,
@@ -44,6 +52,10 @@ export type GitStackBranch = typeof GitStackBranch.Type;
  * merges first, the last entry sits at the top. `currentBranch` is null when
  * the checkout sits on a branch outside the chain, for example on the trunk
  * itself.
+ *
+ * `currentBranch` names the branch of the checkout that answered the read, which
+ * is the checkout a stack action would run in. It is not the caller's checkout;
+ * see `GitStackBranch.isCurrent`.
  */
 export const GitStackView = Schema.Struct({
   trunk: TrimmedNonEmptyString,
