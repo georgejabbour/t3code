@@ -471,6 +471,7 @@ export function PullRequestSummaryTab({
   onRefresh,
   onRefreshChecks = onRefresh,
   threadCwd,
+  threadBranch,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
@@ -488,6 +489,7 @@ export function PullRequestSummaryTab({
   onRefreshChecks?: () => void;
   /** The worktree for the thread beside this panel, when there is one. */
   threadCwd?: string | null | undefined;
+  threadBranch?: string | null | undefined;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
@@ -718,7 +720,8 @@ export function PullRequestSummaryTab({
         <GitStackChainCard
           environmentId={environmentId}
           cwd={detail.workspaceRoot}
-          branchName={detail.headBranch}
+          viewingBranch={detail.headBranch}
+          threadBranch={threadBranch}
           branch={detail.headBranch}
           reference={reference}
           threadRef={threadRef}
