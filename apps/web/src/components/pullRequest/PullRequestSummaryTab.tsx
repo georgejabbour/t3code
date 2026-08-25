@@ -470,6 +470,7 @@ export function PullRequestSummaryTab({
   onFixFinding,
   onRefresh,
   onRefreshChecks = onRefresh,
+  threadCwd,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
@@ -485,6 +486,8 @@ export function PullRequestSummaryTab({
   onFixFinding?: (finding: PullRequestFinding) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
+  /** The worktree for the thread beside this panel, when there is one. */
+  threadCwd?: string | null | undefined;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
@@ -717,6 +720,9 @@ export function PullRequestSummaryTab({
           cwd={detail.workspaceRoot}
           branchName={detail.headBranch}
           branch={detail.headBranch}
+          reference={reference}
+          threadRef={threadRef}
+          threadCwd={threadCwd}
           mergePrNumber={detail.state === "open" ? reference.number : null}
         />
       </div>
