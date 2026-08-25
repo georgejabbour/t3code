@@ -96,12 +96,16 @@ function PullRequestRowImpl({
           </span>
           {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
           {stackLabel ? (
-            <span
-              title="Position in this pull request's stack"
-              className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px] tabular-nums"
-            >
-              {stackLabel}
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px] tabular-nums" />
+                }
+              >
+                {stackLabel}
+              </TooltipTrigger>
+              <TooltipPopup>Position in this pull request's stack</TooltipPopup>
+            </Tooltip>
           ) : null}
           {environmentLabel ? (
             <span className="max-w-32 shrink-0 truncate">{environmentLabel}</span>
