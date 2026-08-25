@@ -4,6 +4,7 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -384,6 +385,8 @@ export function PullRequestSummaryTab({
   fixCheckLabel = "Fix",
   onFixFinding,
   onRefresh,
+  threadRef,
+  threadCwd,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -396,6 +399,11 @@ export function PullRequestSummaryTab({
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
   onRefresh: () => void;
+  /** Added by this fork. The thread beside which this panel is open, when there
+   * is one — the stack chain card checks clicked members out into its
+   * worktree. See Patch 16 in PATCHES.md. */
+  threadRef?: ScopedThreadRef | undefined;
+  threadCwd?: string | null | undefined;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
@@ -525,6 +533,9 @@ export function PullRequestSummaryTab({
           cwd={detail.workspaceRoot}
           branchName={detail.headBranch}
           branch={detail.headBranch}
+          reference={reference}
+          threadRef={threadRef}
+          threadCwd={threadCwd}
           mergePrNumber={detail.state === "open" ? reference.number : null}
         />
       </div>
