@@ -459,6 +459,7 @@ export function PullRequestDetailPanel({
   composerDraftTarget,
   threadRef,
   threadCwd,
+  threadBranch,
 }: {
   environmentId: EnvironmentId;
   /**
@@ -505,6 +506,12 @@ export function PullRequestDetailPanel({
    */
   threadRef?: ScopedThreadRef | undefined;
   threadCwd?: string | null | undefined;
+  /**
+   * The branch that thread's worktree sits on. The stack chain card marks it
+   * "here", so the mark follows the reader's own working tree rather than the
+   * pull request they happen to be reading.
+   */
+  threadBranch?: string | null | undefined;
 }) {
   const pullRequestKey = `${reference.projectId}:${reference.repository}#${reference.number}`;
   const matchingListEntry =
@@ -2348,6 +2355,7 @@ export function PullRequestDetailPanel({
                   onRefresh={refreshDetail}
                   threadRef={threadRef}
                   threadCwd={threadCwd}
+                  threadBranch={threadBranch}
                 />
               </div>
             ) : null}
