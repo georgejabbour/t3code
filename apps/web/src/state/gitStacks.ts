@@ -17,12 +17,19 @@ export const gitStackEnvironment = createGitStackEnvironmentAtoms(connectionAtom
 export interface GitStackTarget {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
+  /**
+   * The branch whose stack the caller cares about, when the checkout itself
+   * may not sit on it — a pull request panel reads from the project root,
+   * which usually sits on the trunk, and the extension refuses to report a
+   * chain from there. The server retries from the worktree holding the branch.
+   */
+  readonly branch?: string;
 }
 
 /**
- * The stack at `cwd`, or null when the checkout belongs to none. A read failure
- * reads as "no stack" too: a missing or broken `gh` install must not turn into
- * a strip of errors beside every thread that happens to sit in a repository.
+ * The stack covering `cwd`, or null when there is none. A failed read reads as
+ * "no stack": a missing or broken `gh` install must not turn into a strip of
+ * errors beside every thread that happens to sit in a repository.
  */
 export function useGitStack(target: GitStackTarget | null): {
   readonly view: GitStackView | null;
@@ -33,7 +40,7 @@ export function useGitStack(target: GitStackTarget | null): {
     target
       ? gitStackEnvironment.view({
           environmentId: target.environmentId,
-          input: { cwd: target.cwd },
+          input: { cwd: target.cwd, ...(target.branch ? { branch: target.branch } : {}) },
         })
       : null,
   );
