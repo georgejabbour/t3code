@@ -1054,6 +1054,8 @@ shows.
 - `feat(server): read GitHub stacks and run their non-interactive commands`
 - `feat(client): stack query and action atoms for the web surfaces`
 - `feat(web): show GitHub stack chains and run stack actions`
+- `fix(server): find a stack in whichever checkout tracks it`
+- `fix(web): stack rows move the thread's own worktree`
 
 **Why.** George reviews his own work as stacked pull requests, managed by the
 `gh-stack` extension (`gh extension install github/gh-stack`). T3 Code showed
@@ -1127,7 +1129,8 @@ pnpm test run src/git/stack/gitStack.test.ts   # from apps/server
 ```
 
 Covers the answer parser (upper-case states, absent pull request, trunk-as-
-current), the worktree list reader, the branches-above rule, and the stderr
+current), the worktree list reader including prunable checkouts, the order in
+which checkouts are asked for a chain, the branches-above rule, and the stderr
 tail. The pre-flight rules ride typed effects over real git reads; the tests
 prove the pure decisions they are built from.
 
@@ -1145,6 +1148,52 @@ each:
 `PullRequestSummaryTab.tsx`, `Sidebar.tsx`, `PullRequestRow.tsx`,
 `_chat.pull-requests.tsx`, the menu block in `GitActionsControl.tsx`, and the
 two native list rows `thread-list-items.tsx` / `thread-list-v2-items.tsx`.
+
+**Where a stack is tracked, and why it changed everything above.**
+The `gh-stack` extension writes the chain it knows about into a file called
+`gh-stack`, inside the git directory of the checkout that set the stack up.
+Git gives every linked worktree its own git directory. So a chain that one
+worktree knows about is invisible from the repository root and from every
+other worktree of the same repository — `gh stack view` answers "current
+branch is not part of a stack" there, and answers it with the same exit code
+as a repository that uses no stacks at all.
+
+T3 Code runs each thread in its own worktree, so this is the normal case, not
+an edge case. Three parts of this patch read as broken because of it:
+
+1. The chain card showed for the pull request whose branch the thread was
+   standing on, and for no other member of the chain.
+2. Clicking another member created a second worktree for its branch instead of
+   moving the thread's own working tree, so the thread stayed where it was and
+   the new panel had no chain to draw.
+3. Submit, sync and rebase upstack ran from the project's root checkout, which
+   sees no stack, so all three answered "No GitHub stack covers this checkout".
+
+The fixes, in the same order:
+
+1. A read that names a branch now asks this repository's checkouts in turn and
+   takes the first chain that holds that branch. The checkout holding the
+   branch is asked first, prunable and detached checkouts are skipped, and the
+   list is capped at eight so a repository with dozens of worktrees does not
+   turn one panel into dozens of `gh` runs. A named branch that no chain holds
+   reads as no stack, rather than as somebody else's chain.
+2. A chain row now runs a new `checkout` action, `gh stack checkout <pr>`, in
+   the thread's own worktree. That command moves that working tree onto the
+   branch, and when the worktree tracks no stack yet it reads the stack from
+   GitHub and starts tracking it there — which is also how the worktree gains
+   the tracking that step 1 then finds. It refuses a worktree holding
+   uncommitted changes, and git's own refusal passes through when another
+   worktree already holds the branch, naming that directory.
+3. Every other action carries the branch too, and runs in the checkout that can
+   read the chain rather than in the one the caller happened to stand in.
+
+Two smaller consequences. A successful action now empties the whole read cache
+rather than one entry: one repository is reachable through its root and through
+every worktree, under cache keys that cannot be related to each other, so
+pretending to know which entries went stale would be a lie. And the position
+mark on the pull requests list page still reads only what the project's root
+checkout can see, because giving that page the same search would cost up to
+eight `gh` runs per project on a page that lists every project at once.
 
 **Upstream status.** Not filed, for the reason given in Patch 1. Upstream has
 no stacked-pull-request support of any kind today; if that changes, delete
