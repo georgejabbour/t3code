@@ -428,6 +428,7 @@ export function PullRequestDetailPanel({
   composerDraftTarget,
   onBack,
   onSelectPullRequest,
+  threadCwd,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -475,6 +476,8 @@ export function PullRequestDetailPanel({
    * expects to land on it, with this one still open behind.
    */
   onBack?: (() => void) | undefined;
+  /** The worktree for the thread beside this panel, when there is one. */
+  threadCwd?: string | null | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -2735,6 +2738,7 @@ export function PullRequestDetailPanel({
                   onFixFinding={startFixFinding}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
+                  threadCwd={threadCwd}
                 />
               </div>
             ) : null}
