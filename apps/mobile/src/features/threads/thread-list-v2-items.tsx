@@ -5,6 +5,8 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
+// Added by this fork. See Patch 16 in PATCHES.md.
+import { GitStackPositionMarker } from "../../components/GitStackPositionMarker";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -790,6 +792,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             #{pr.label}
           </Text>
+        ) : null}
+        {/* Added by this fork. Chain position when the branch sits in a
+            GitHub stack; renders nothing otherwise. See Patch 16 in
+            PATCHES.md. */}
+        {pr ? (
+          <GitStackPositionMarker
+            environmentId={thread.environmentId}
+            cwd={thread.worktreePath ?? props.projectCwd ?? props.project?.workspaceRoot ?? null}
+            branchName={thread.branch}
+            className={cn(
+              "text-xs",
+              selected ? "text-user-bubble-foreground" : "text-foreground-muted",
+            )}
+            style={{ fontFamily: MONO_FONT }}
+          />
         ) : null}
         {props.providerDriver ? (
           <View className="opacity-60">
