@@ -969,9 +969,15 @@ const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullReque
 });
 
 // Added by this fork. See Patch 16 in PATCHES.md. The view answers null when
-// the checkout holds no stack, which every caller reads as "render nothing".
+// no stack covers the checkout, which every caller reads as "render nothing".
+// `branch` names the branch whose stack the caller cares about: the extension
+// refuses to report a chain from a trunk checkout, so the server looks for a
+// worktree holding that branch and asks there.
 const WsGitStackViewRpc = Rpc.make(WS_METHODS.gitStackView, {
-  payload: Schema.Struct({ cwd: TrimmedNonEmptyString }),
+  payload: Schema.Struct({
+    cwd: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
   success: Schema.NullOr(GitStackView),
   error: Schema.Union([GitStackError, EnvironmentAuthorizationError]),
 });
