@@ -11,6 +11,7 @@
  * Supported images already within budget pass through untouched. HEIC/HEIF
  * photos are decoded to JPEG first because providers cannot consume them.
  */
+import heicDecoderUrl from "heic-to/csp?url";
 
 /**
  * Longest edge kept when an image has to be re-encoded. Sized so a typical
@@ -37,6 +38,10 @@ const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
 const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
 const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
+
+function loadHeicDecoder(): Promise<typeof import("heic-to/csp")> {
+  return import(/* @vite-ignore */ heicDecoderUrl);
+}
 
 export interface CompressedStashImage {
   dataUrl: string;
@@ -449,7 +454,7 @@ export async function prepareImageForAttachment(
     if (dimensionError) {
       return { ok: false, reason: dimensionError };
     }
-    const { heicTo } = await import("heic-to/csp");
+    const { heicTo } = await loadHeicDecoder();
     converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
   } catch {
     return { ok: false, reason: "unreadable" };
