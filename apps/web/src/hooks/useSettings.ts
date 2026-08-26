@@ -360,15 +360,6 @@ export function useUpdateClientSettings() {
   }, []);
 }
 
-export function __resetClientSettingsPersistenceForTests(): void {
-  clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
-  clientSettingsHydrated = false;
-  clientSettingsHydrationPromise = null;
-  clientSettingsListeners.clear();
-  clientSettingsHydrationListeners.clear();
-}
-
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = settings;
