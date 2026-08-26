@@ -13,10 +13,10 @@ import {
   type SubscriptionUsageHistory,
   type SubscriptionUsageList,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import { serverEnvironment } from "~/state/server";
@@ -59,17 +59,18 @@ export function SubscriptionSelectorPanel({
   readonly onAfterAddSubscription?: () => void;
 }) {
   const navigate = useNavigate();
+  const [isRefreshingServer, setIsRefreshingServer] = useState(false);
   // The query family is keyed by the whole request, and it needs an
   // environment. Without one there is nothing to ask, so the panel reads the
   // idle result the family returns for a request it never sends.
-  const result = useAtomValue(
-    serverEnvironment.subscriptionUsage(
-      environmentId === null
-        ? { environmentId: NO_ENVIRONMENT_ID, input: {} }
-        : { environmentId, input: {} },
-    ),
+  const usageAtom = serverEnvironment.subscriptionUsage(
+    environmentId === null
+      ? { environmentId: NO_ENVIRONMENT_ID, input: {} }
+      : { environmentId, input: {} },
   );
-  const refresh = useAtomCommand(serverEnvironment.refreshSubscriptionUsage, {
+  const result = useAtomValue(usageAtom);
+  const refreshQuery = useAtomRefresh(usageAtom);
+  const refreshServer = useAtomCommand(serverEnvironment.refreshSubscriptionUsage, {
     reportFailure: false,
   });
 
@@ -89,15 +90,21 @@ export function SubscriptionSelectorPanel({
   const history = Option.getOrNull(
     AsyncResult.value(historyResult),
   ) as SubscriptionUsageHistory | null;
-  const isRevalidating = AsyncResult.isWaiting(result);
+  const isRevalidating = isRefreshingServer || AsyncResult.isWaiting(result);
   const updatedAtMs = readingTimestamp(result);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     if (environmentId === null) {
       return;
     }
-    void refresh({ environmentId, input: {} });
-  }, [environmentId, refresh]);
+    setIsRefreshingServer(true);
+    try {
+      await refreshServer({ environmentId, input: {} });
+    } finally {
+      refreshQuery();
+      setIsRefreshingServer(false);
+    }
+  }, [environmentId, refreshQuery, refreshServer]);
 
   // `add: true` opens the add-provider dialog on arrival, so a reader who
   // asked to add a subscription lands on the form instead of on a screen they
