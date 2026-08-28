@@ -963,7 +963,10 @@ The four tests above are its check. Run them before an install.
 
 ## Patch 15 — every subscription in one panel, whichever provider it belongs to
 
-**Commit:** `feat: show every provider subscription, not only Claude`
+**Commits:**
+
+- `feat: show every provider subscription, not only Claude`
+- `fix(web): mount the add-provider search reader as a child element`
 
 **Why.** The panel Patch 11 added read one driver, `claudeAgent`, and skipped
 every instance that was switched off. A machine with three subscription
@@ -1025,6 +1028,14 @@ back, because a cache hands its lookup nothing but the key.
 - Cursor, Grok and OpenCode are left out. None reports a plan window T3 Code can
   read, so a row for one would show a name and no number every time, which
   teaches a reader to ignore the panel.
+- The `?add=1` reader is a child element, `OpenAddProviderDialogFromSearch`,
+  rather than a hook call in the provider panel's own body. Upstream's test
+  `ProviderSettingsPanel.environment.test.tsx` calls that panel as a plain
+  function, with stand-ins for four React hooks and no router, so a router
+  hook in the body stopped five upstream tests. A child element does not run
+  there, because the test reads the element tree the panel returns and never
+  renders it. The app mounts the child with the panel, so the dialog still
+  opens on arrival.
 
 **Tests.**
 
@@ -1034,12 +1045,17 @@ vp test run src/provider/CodexSubscriptionUsage.test.ts \
             src/provider/SubscriptionUsageService.test.ts   # from apps/server
 vp test run src/subscriptionUsage.test.ts \
             src/subscriptionUsageHistory.test.ts            # from packages/shared
+vp test run --project unit \
+            src/components/subscriptions/useOpenAddProviderDialogFromSearch.test.ts \
+            src/components/settings/ProviderSettingsPanel.environment.test.tsx
+                                                            # from apps/web
 ```
 
 **Files.** New: `apps/server/src/provider/CodexSubscriptionUsage.ts`,
 `apps/server/src/provider/subscriptionUsageProbe.ts`,
 `apps/web/src/components/subscriptions/useOpenAddProviderDialogFromSearch.ts`,
-and a test beside each. Edited: `packages/contracts/src/subscriptionUsage.ts`,
+which also exports the child element, and a test beside each. Edited:
+`packages/contracts/src/subscriptionUsage.ts`,
 `packages/contracts/src/settings.ts` (one comment),
 `packages/shared/src/subscriptionUsage.ts`,
 `apps/server/src/provider/SubscriptionUsageService.ts`,
@@ -1047,7 +1063,8 @@ and a test beside each. Edited: `packages/contracts/src/subscriptionUsage.ts`,
 `apps/web/src/components/subscriptions/SubscriptionSelector.tsx`,
 `SubscriptionSelectorPanel.tsx`, `SubscriptionSidebarButton.tsx`. A line or two
 each: `apps/web/src/routes/settings.providers.tsx` and
-`apps/web/src/components/settings/ProviderSettingsPanel.tsx`.
+`apps/web/src/components/settings/ProviderSettingsPanel.tsx`, where the fork
+adds two imports and one block of elements and nothing else.
 
 **Upstream status.** Not filed, for the reason given in Patch 1.
 
