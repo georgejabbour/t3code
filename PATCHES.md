@@ -42,7 +42,7 @@ never makes the difference against upstream larger.
 A clean rebase does not prove the patch still works. This fork's tests copy
 upstream types and upstream test data. Upstream keeps adding to both, on lines
 this fork never edits. Git therefore reports no conflict, and the typecheck or the
-tests fail straight after. Four cases have appeared so far. The first two appeared
+tests fail straight after. Five cases have appeared so far. The first two appeared
 while verifying `0.0.34-nightly.20260810.1061`:
 
 1. Upstream added two required fields to `ProcessRunOutput`, so Patch 1's test
@@ -51,7 +51,11 @@ while verifying `0.0.34-nightly.20260810.1061`:
    this fork made `startSession` refuse a folder that is not on disk. Tests in
    `apps/server/src/provider/Layers/ProviderService.test.ts` must name a real
    folder through the `sessionCwd` helper there. Any new upstream test in that
-   file needs the same helper.
+   file needs the same helper. This returned on 23 August 2026: upstream's
+   `feat(codex): submit thread feedback to OpenAI (#7949)` added
+   "recovers a stopped Codex session before uploading feedback", which starts a
+   session in `/tmp/feedback-project`. The rebase onto
+   `0.0.36-nightly.20260828.1209` stayed clean and that one test failed.
 
 3. Upstream's `packages/shared/src/t3ProjectFile.test.ts` lists every script
    field by name. Patch 1 adds `runOnWorktreeRemove` to that schema, so the
@@ -68,12 +72,25 @@ while verifying `0.0.34-nightly.20260810.1061`:
    by hand breaks the same way. The real layer stays correct: `server.ts` provides
    `ArchivedThreadReaperLive` through `ProviderRuntimeLayerLive`.
 
+5. Upstream's `apps/web/src/components/settings/ProviderSettingsPanel.environment.test.tsx`
+   calls `EnvironmentProviderSettings` as a plain function. It supplies
+   stand-ins for `useCallback`, `useMemo`, `useRef` and `useState`, and no
+   router. Patch 15 called a router hook in that component's body, so every
+   test in the file threw
+   `Cannot read properties of null (reading 'useContext')`. The reader is now a
+   child element, which the test never renders. Any upstream test that calls a
+   component this fork extends breaks the same way, and only a hook the test
+   does not stand in for triggers it.
+
 The second case was broken from 8 August 2026 and nobody saw it. By default the
 updater runs no tests, and even with `--test` it runs a few files only. The third
 case was broken for as long, and found on 11 August 2026 by running the whole
 suite. The type check caught the fourth case on 20 August 2026, before any test
-ran. Run the tests of every file this fork edits before an install, not the few
-that `--test` names. Better, run `pnpm test` and read the result.
+ran. The fifth case, and the return of the second, were both found on
+28 August 2026 while rebasing onto `0.0.36-nightly.20260828.1209`; both had been
+broken for days, and neither file is one the updater runs. Run the tests of
+every file this fork edits before an install, not the few that `--test` names.
+Better, run `pnpm test` and read the result.
 
 After an install, the script reads the built output and looks for one text marker
 from each patch. A missing marker means the build lost that patch, and the script
