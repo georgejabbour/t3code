@@ -1059,7 +1059,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId,
-        cwd: "/tmp/feedback-project",
+        cwd: sessionCwd("feedback-project"),
         runtimeMode: "full-access",
       });
       yield* routing.codex.stopSession(threadId);
