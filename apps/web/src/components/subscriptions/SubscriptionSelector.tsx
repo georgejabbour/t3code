@@ -35,6 +35,9 @@ import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 
+const FIVE_HOUR_MARKS = [20, 40, 60, 80] as const;
+const SEVEN_DAY_MARKS = [1, 2, 3, 4, 5, 6].map((day) => (day / 7) * 100);
+
 export interface SubscriptionSelectorProps {
   /** The last reading, kept on screen while a newer one is in flight. */
   readonly usage: SubscriptionUsageList | null;
@@ -75,6 +78,12 @@ function WindowLine({
 }) {
   const remaining = window.remainingPercent;
   const isLow = remaining !== null && remaining <= 10;
+  let marks: readonly number[] = [];
+  if (window.label === "5h") marks = FIVE_HOUR_MARKS;
+  if (window.isLongWindow) marks = SEVEN_DAY_MARKS;
+  const markTestId = window.isLongWindow
+    ? "subscription-week-day-mark"
+    : "subscription-session-hour-mark";
   return (
     <span className="flex flex-col gap-1">
       <span className="flex items-baseline gap-1.5 text-xs">
@@ -92,10 +101,7 @@ function WindowLine({
         )}
       </span>
       {remaining === null ? null : (
-        <span
-          aria-hidden="true"
-          className="bg-muted-foreground/20 block h-1 overflow-hidden rounded-full"
-        >
+        <span aria-hidden="true" className="bg-muted-foreground/20 relative block h-1 rounded-full">
           <span
             className={cn(
               "block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
@@ -106,6 +112,14 @@ function WindowLine({
               backgroundColor: isLow ? undefined : (accentColor ?? undefined),
             }}
           />
+          {marks.map((position) => (
+            <span
+              key={position}
+              data-testid={markTestId}
+              className="bg-background pointer-events-none absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${position}%` }}
+            />
+          ))}
         </span>
       )}
     </span>
