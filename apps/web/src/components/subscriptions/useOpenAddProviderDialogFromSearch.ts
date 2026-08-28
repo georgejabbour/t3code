@@ -28,7 +28,6 @@ export function searchWithoutAddFlag(search: Record<string, unknown>): Record<st
   const { add: _add, ...rest } = search;
   return rest;
 }
-
 /** Reads `?add=1` on the Providers screen and opens the dialog once. */
 export function useOpenAddProviderDialogFromSearch(setOpen: (open: boolean) => void): void {
   const navigate = useNavigate();
