@@ -82,13 +82,31 @@ while verifying `0.0.34-nightly.20260810.1061`:
    component this fork extends breaks the same way, and only a hook the test
    does not stand in for triggers it.
 
+6. `0.0.38-nightly.20260831.1240` added
+   `apps/mobile/src/state/use-thread-outbox-drain.test.ts`. That test stands in
+   for every app-state module the file under test imports, so none of them ever
+   loads for real. Patch 8 adds one more app-state import to that file, through
+   `t3-project-file-branch-prefix.ts`, and the test has no stand-in for it. The
+   real module reaches `apps/mobile/src/state/projects.ts`, which reaches the
+   connection layer, which reaches React Native itself. The runner then fails to
+   parse React Native's entry file and reports
+   `RolldownError: Parse failure: Flow is not supported`, with no test run at
+   all. The fork's own file now loads the project atoms inside its function
+   instead of at the top, so the module graph the test walks stays clear of
+   React Native. Keeping the change in the fork's own new file means no upstream
+   test needs an edit. Any upstream test that stands in for a whole layer breaks
+   the same way when this fork adds one more member of that layer.
+
 The second case was broken from 8 August 2026 and nobody saw it. By default the
 updater runs no tests, and even with `--test` it runs a few files only. The third
 case was broken for as long, and found on 11 August 2026 by running the whole
 suite. The type check caught the fourth case on 20 August 2026, before any test
 ran. The fifth case, and the return of the second, were both found on
 28 August 2026 while rebasing onto `0.0.36-nightly.20260828.1209`; both had been
-broken for days, and neither file is one the updater runs. Run the tests of
+broken for days, and neither file is one the updater runs. The sixth case
+appeared on 31 August 2026, in the rebase onto `0.0.38-nightly.20260831.1240`,
+in a test file upstream added in that same nightly. The type check passed and
+the rebase was clean; only the whole test suite showed it. Run the tests of
 every file this fork edits before an install, not the few that `--test` names.
 Better, run `pnpm test` and read the result.
 
