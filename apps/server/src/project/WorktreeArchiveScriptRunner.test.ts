@@ -44,6 +44,7 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
   } satisfies OrchestrationProject;
   return Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getCommandReadModel: () => Effect.die("unused"),
+    getEventReplayStats: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
