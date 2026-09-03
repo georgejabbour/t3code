@@ -441,7 +441,6 @@ export function PullRequestSummaryTab({
   actionPending,
   onCommentAction,
   onRefresh,
-  threadRef,
   threadCwd,
   threadBranch,
 }: {
@@ -462,10 +461,8 @@ export function PullRequestSummaryTab({
     action: "close" | "reopen",
   ) => Promise<{ readonly commentPosted: boolean }>;
   onRefresh: () => void;
-  /** Added by this fork. The thread beside which this panel is open, when there
-   * is one — the stack chain card checks clicked members out into its
-   * worktree. See Patch 16 in PATCHES.md. */
-  threadRef?: ScopedThreadRef | undefined;
+  /** Added by this fork. The open thread's worktree, which the stack chain
+   * card checks clicked members out into. See Patch 16 in PATCHES.md. */
   threadCwd?: string | null | undefined;
   threadBranch?: string | null | undefined;
 }) {
