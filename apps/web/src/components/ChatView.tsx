@@ -3261,11 +3261,11 @@ export default function ChatView(props: ChatViewProps) {
           activeRuntime?.providerInstanceId,
           activeThread?.modelSelection.instanceId,
           activeProjectDefaultModelSelection?.instanceId,
-          // Added by this fork. The subscription selector records which Claude
-          // subscription to use, and a thread with no choice of its own takes
-          // it. The resolver skips it while the instance it names is disabled
-          // or unavailable.
-          primaryServerSettings.activeSubscriptionInstanceId,
+          // Added by this fork. Use the selected Claude subscription when the thread has no selection.
+          // The resolver ignores disabled or unavailable provider instances.
+          providerInstanceEntries.find(
+            (entry) => entry.instanceId === settings.activeSubscriptionInstanceId,
+          )?.instanceId,
         ],
         lockedProvider,
         lockedInstanceId:
@@ -3276,9 +3276,9 @@ export default function ChatView(props: ChatViewProps) {
       activeThread?.modelSelection.instanceId,
       activeRuntime?.providerInstanceId,
       lockedProvider,
-      primaryServerSettings.activeSubscriptionInstanceId,
       providerInstanceEntries,
       selectedProviderByThreadId,
+      settings.activeSubscriptionInstanceId,
     ],
   );
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
@@ -10940,10 +10940,6 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
-        threadRef={{
-          environmentId: activeThread.environmentId,
-          threadId: activeThread.id,
-        }}
         threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
         threadBranch={activeThread.branch ?? null}
       />
