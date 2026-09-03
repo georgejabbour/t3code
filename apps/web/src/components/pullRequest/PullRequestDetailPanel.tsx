@@ -455,7 +455,6 @@ export function PullRequestDetailPanel({
   onClose,
   context = "page",
   composerDraftTarget,
-  threadRef,
   threadCwd,
   threadBranch,
 }: {
@@ -495,12 +494,10 @@ export function PullRequestDetailPanel({
    */
   composerDraftTarget?: ScopedThreadRef | DraftId;
   /**
-   * Added by this fork. The thread beside which this panel is open, when there
-   * is one. The stack chain card uses it to check a clicked stack member out
-   * into this thread's worktree and open its panel here. See Patch 16 in
-   * PATCHES.md.
+   * Added by this fork. The open thread's worktree. The stack chain card uses
+   * it to check a clicked stack member out into this thread's worktree and
+   * open its panel here. See Patch 16 in PATCHES.md.
    */
-  threadRef?: ScopedThreadRef | undefined;
   threadCwd?: string | null | undefined;
   /**
    * The branch that thread's worktree sits on. The stack chain card marks it
@@ -2366,7 +2363,6 @@ export function PullRequestDetailPanel({
                   actionPending={actionPending}
                   onCommentAction={performCommentAction}
                   onRefresh={refreshDetail}
-                  threadRef={threadRef}
                   threadCwd={threadCwd}
                   threadBranch={threadBranch}
                 />
