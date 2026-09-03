@@ -2458,9 +2458,12 @@ function ChatViewContent(props: ChatViewProps) {
           activeProject?.defaultModelSelection?.instanceId,
           // Added by this fork. The subscription selector records which Claude
           // subscription to use, and a thread with no choice of its own takes
-          // it. The resolver skips it while the instance it names is disabled
-          // or unavailable.
-          primaryServerSettings.activeSubscriptionInstanceId,
+          // it. The lookup keeps the saved name only while the instance it
+          // names is still configured; the resolver also skips a disabled or
+          // unavailable one.
+          providerInstanceEntries.find(
+            (entry) => entry.instanceId === primaryServerSettings.activeSubscriptionInstanceId,
+          )?.instanceId,
         ],
         lockedProvider,
         lockedInstanceId:
@@ -7510,10 +7513,6 @@ function ChatViewContent(props: ChatViewProps) {
         {...(linkedThreadPullRequest === null
           ? { onStateChange: handlePullRequestTabStatusChange }
           : {})}
-        threadRef={{
-          environmentId: activeThread.environmentId,
-          threadId: activeThread.id,
-        }}
         threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
         threadBranch={activeThread.branch ?? null}
       />
