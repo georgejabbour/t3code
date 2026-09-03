@@ -148,7 +148,7 @@ export function GitStackChainCard({
    */
   reference?: PullRequestRef | undefined;
   /** The thread beside which this card is open, when there is one. */
-  threadRef?: ScopedThreadRef | undefined;
+  threadRef?: ScopedThreadRef | null | undefined;
   /** The thread's own worktree, which a row click moves onto the clicked branch. */
   threadCwd?: string | null | undefined;
   /** When set, offers to merge this pull request plus every open one below it. */
