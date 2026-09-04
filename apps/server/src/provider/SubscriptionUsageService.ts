@@ -34,11 +34,15 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
@@ -60,6 +64,8 @@ export const SUBSCRIPTION_USAGE_CACHE_TTL = Duration.minutes(5);
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
 /**
  * Drivers that sign in to a paid plan rather than billing per token.
@@ -129,7 +135,14 @@ export interface SubscriptionSignIn {
  * second subprocess to learn what the first one already knows.
  */
 export function subscriptionSignInOf(config: ProviderInstanceConfig): SubscriptionSignIn {
-  const settings = (config.config ?? {}) as Record<string, unknown>;
+  const rawSettings = config.config ?? {};
+  const settings = (
+    config.driver === CODEX_DRIVER
+      ? Option.getOrElse(decodeCodexSettings(rawSettings), () => rawSettings)
+      : config.driver === CLAUDE_DRIVER
+        ? Option.getOrElse(decodeClaudeSettings(rawSettings), () => rawSettings)
+        : rawSettings
+  ) as Record<string, unknown>;
   const readString = (name: string): string => {
     const value = settings[name];
     return typeof value === "string" ? value.trim() : "";

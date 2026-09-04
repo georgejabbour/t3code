@@ -110,6 +110,23 @@ describe("the sign-in a usage probe reads", () => {
     expect(personal).not.toBe(work);
   });
 
+  it("uses the Codex command default when an instance stores only its credentials directory", () => {
+    for (const config of [
+      { homePath: "~/.codex-second" },
+      { binaryPath: "", homePath: "~/.codex-second" },
+    ]) {
+      const signIn = subscriptionSignInOf(
+        instance({ driver: ProviderDriverKind.make("codex"), config }),
+      );
+
+      expect(signIn).toMatchObject({
+        binaryPath: "codex",
+        homePath: "~/.codex-second",
+        launchArgs: "",
+      });
+    }
+  });
+
   it("gives two drivers different keys, whatever else matches", () => {
     const claude = keyOf(
       instance({ driver: ProviderDriverKind.make("claudeAgent"), config: { binaryPath: "" } }),
