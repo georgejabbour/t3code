@@ -36,7 +36,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import * as ServerConfig from "../../config.ts";
 import { resolveBranchPrefixForWorkspace } from "../../project/BranchPrefix.ts";
-import { canonicalPath, isManagedWorktree, worktreeExists } from "../../project/ManagedWorktree.ts";
+import { canonicalPath, isManagedWorktree } from "../../project/ManagedWorktree.ts";
 import { T3ProjectFileLoader } from "../../project/T3ProjectFileLoader.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import {
@@ -453,60 +453,6 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  /**
-   * Recreates a thread's worktree from its branch when the directory has
-   * disappeared. Provider sessions resume into the persisted cwd, so a missing
-   * worktree makes every later turn fail as a bogus "session not found".
-   * Best-effort: on failure the turn proceeds and reports the real error.
-   */
-  const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
-    readonly id: ThreadId;
-    readonly projectId: ProjectId;
-    readonly branch: string | null;
-    readonly worktreePath: string | null;
-  }) {
-    const { worktreePath, branch } = thread;
-    if (!worktreePath || !branch) {
-      return;
-    }
-    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists) {
-      return;
-    }
-    const project = yield* resolveProject(thread.projectId);
-    if (!project) {
-      return;
-    }
-    const cwd = project.workspaceRoot;
-    yield* Effect.logWarning("provider command reactor recreating missing worktree", {
-      threadId: thread.id,
-      worktreePath,
-      branch,
-    });
-    // A directory deleted without `git worktree remove` leaves an admin entry
-    // that makes `git worktree add` refuse the path; prune clears it.
-    // Best effort like the rest of this recovery: a settings read failure
-    // falls back to the checkout's t3.json.
-    const submodules = yield* projectSettingsForThread(thread.id).pipe(
-      Effect.map((settings) => settings.worktreeSubmodules),
-      Effect.orElseSucceed(() => null),
-    );
-    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(
-        gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
-      ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("provider command reactor failed to recreate worktree", {
-              threadId: thread.id,
-              worktreePath,
-              cause: Cause.pretty(cause),
-            }),
-      ),
-    );
-  });
-
   const resolveThreadShell = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadShellById(threadId)
@@ -552,7 +498,7 @@ const make = Effect.gen(function* () {
       if (!isManagedWorktree(managedWorktreesRoot, worktreePath)) {
         return;
       }
-      if (worktreeExists(worktreePath)) {
+      if (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true))) {
         return;
       }
 
@@ -561,12 +507,22 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      // Best effort like the rest of this recovery: a settings read failure
+      // falls back to the checkout's t3.json.
+      const submodules = yield* projectSettingsForThread(input.threadId).pipe(
+        Effect.map((settings) => settings.worktreeSubmodules),
+        Effect.orElseSucceed(() => null),
+      );
       yield* Effect.gen(function* () {
-        yield* gitWorkflow.createWorktree({
-          cwd: project.workspaceRoot,
-          refName: branch,
-          path: worktreePath,
-        });
+        yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot });
+        yield* gitWorkflow.createWorktree(
+          {
+            cwd: project.workspaceRoot,
+            refName: branch,
+            path: worktreePath,
+          },
+          { submodules },
+        );
         yield* Effect.logInfo("thread worktree rebuilt from its branch", {
           threadId: input.threadId,
           branch,
@@ -604,12 +560,14 @@ const make = Effect.gen(function* () {
         );
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to rebuild a thread worktree", {
-            threadId: input.threadId,
-            branch,
-            worktreePath,
-            cause: Cause.pretty(cause),
-          }),
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("provider command reactor failed to rebuild a thread worktree", {
+                threadId: input.threadId,
+                branch,
+                worktreePath,
+                cause: Cause.pretty(cause),
+              }),
         ),
       );
     },
@@ -1429,7 +1387,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    yield* restoreMissingWorktreeForThread({
+      threadId: thread.id,
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      createdAt: event.payload.createdAt,
+    });
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {
