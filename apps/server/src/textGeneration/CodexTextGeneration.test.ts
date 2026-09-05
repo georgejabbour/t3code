@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -142,7 +143,10 @@ function withFakeCodexEnv<A, E, R>(
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
-    const textGeneration = yield* makeCodexTextGeneration(config, input.environment);
+    const textGeneration = yield* makeCodexTextGeneration(config, {
+      ...(yield* HostProcessEnvironment),
+      ...input.environment,
+    });
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
