@@ -1707,11 +1707,17 @@ export const layerWithOptions = (
           if (thread.deletedAt !== null || thread.worktreePath !== cwd || thread.branch === null) return;
           const project = yield* projectService.value.getById(thread.projectId);
           if (Option.isNone(project)) return;
-          yield* gitWorkflow.value.createWorktree({
-            cwd: project.value.workspaceRoot,
-            refName: thread.branch,
-            path: cwd,
-          });
+          const submodules = Option.isSome(serverSettings)
+            ? yield* serverSettings.value.getSettings.pipe(
+                Effect.map((settings) => resolveProjectSettings(settings, thread.projectId).settings.worktreeSubmodules),
+                Effect.orElseSucceed(() => null),
+              )
+            : null;
+          yield* gitWorkflow.value.pruneWorktrees({ cwd: project.value.workspaceRoot });
+          yield* gitWorkflow.value.createWorktree(
+            { cwd: project.value.workspaceRoot, refName: thread.branch, path: cwd },
+            { submodules },
+          );
           const now = yield* DateTime.now;
           const eventId = yield* idAllocator.allocate.event({ threadId });
           yield* eventSink.write({
