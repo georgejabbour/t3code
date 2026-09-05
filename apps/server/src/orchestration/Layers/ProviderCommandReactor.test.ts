@@ -188,7 +188,7 @@ describe("ProviderCommandReactor", () => {
     const baseDir =
       input?.baseDir ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-reactor-"));
     createdBaseDirs.add(baseDir);
-    const { stateDir } = deriveServerPathsSync(baseDir, undefined);
+    const { stateDir, worktreesDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     const tryHandlePromptCommand = vi.fn<ProviderAuthService["Service"]["tryHandlePromptCommand"]>(
@@ -262,14 +262,18 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>(() =>
       Effect.succeed({
         threadId: ThreadId.make("thread-1"),
         turnId: asTurnId("turn-1"),
       }),
     );
-    const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
-    const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
+    const compactThread = vi.fn<ProviderServiceShape["compactThread"]>(
+      () => input?.compactThreadEffect?.() ?? Effect.void,
+    );
+    const interruptTurn = vi.fn<ProviderServiceShape["interruptTurn"]>(
+      () => input?.interruptTurnEffect?.() ?? Effect.void,
+    );
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((stopInput: unknown) =>
@@ -302,7 +306,9 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
+    const pruneWorktrees = vi.fn<
+      GitWorkflowService.GitWorkflowService["Service"]["pruneWorktrees"]
+    >(() => Effect.void);
     const createWorktree = vi.fn((input: unknown) => {
       const path =
         typeof input === "object" &&
@@ -322,7 +328,7 @@ describe("ProviderCommandReactor", () => {
       NodeFS.mkdirSync(path, { recursive: true });
       return Effect.succeed({ worktree: { path, refName } });
     });
-    const refreshStatus = vi.fn((_: string) =>
+    const refreshStatus = vi.fn<VcsStatusBroadcaster["Service"]["refreshStatus"]>(() =>
       Effect.succeed({
         isRepo: true,
         hasPrimaryRemote: true,
@@ -340,7 +346,7 @@ describe("ProviderCommandReactor", () => {
         pr: null,
       }),
     );
-    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>((_) =>
+    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>(() =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
@@ -348,7 +354,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>((_) =>
+    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>(() =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateThreadTitle",
@@ -626,6 +632,7 @@ describe("ProviderCommandReactor", () => {
       generateThreadTitle,
       runtimeSessions,
       stateDir,
+      worktreesDir,
       drain,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
@@ -677,7 +684,7 @@ describe("ProviderCommandReactor", () => {
           threadId,
           title: "New thread",
           branch: "t3code/1234abcd",
-          worktreePath: NodePath.join(harness.stateDir, "missing-worktree"),
+          worktreePath: NodePath.join(harness.worktreesDir, "missing-worktree"),
         });
 
         yield* harness.engine.dispatch({
@@ -2267,7 +2274,7 @@ describe("ProviderCommandReactor", () => {
   it("recreates a missing worktree from the thread branch before starting a turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
-    const worktreePath = NodePath.join(harness.stateDir, "missing-worktree");
+    const worktreePath = NodePath.join(harness.worktreesDir, "missing-worktree");
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -2303,11 +2310,13 @@ describe("ProviderCommandReactor", () => {
       refName: "feature/restore",
       path: worktreePath,
     });
+    expect(harness.pruneWorktrees.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.createWorktree.mock.invocationCallOrder[0]!,
+    );
     expect(harness.createWorktree.mock.invocationCallOrder[0]).toBeLessThan(
       harness.startSession.mock.invocationCallOrder[0]!,
     );
   });
-
 
   it("names the branch with the prefix the project sets in t3.json", async () => {
     const projectDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-branch-prefix-"));
@@ -3246,7 +3255,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
     harness.startSession.mockImplementationOnce(
-      (_: unknown, __: unknown) => Effect.fail("simulated restart failure") as never,
+      () => Effect.fail("simulated restart failure") as never,
     );
 
     await Effect.runPromise(

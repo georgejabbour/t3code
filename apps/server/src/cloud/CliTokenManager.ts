@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The CLI loopback OAuth callback is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -385,6 +384,9 @@ export const make = Effect.gen(function* () {
         yield* Deferred.succeed(callback, code);
         return HttpServerResponse.html(renderLoopbackAuthorizationCompleteHtml());
       }),
+    );
+    const NodeHttpServer = yield* Effect.promise(
+      () => import("@effect/platform-node/NodeHttpServer"),
     );
     yield* HttpRouter.serve(callbackRoute, {
       disableListenLog: true,
