@@ -81,7 +81,7 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
+    directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
     prefix: "cursor-provider-mock-",
   });
   return writeFakeCli({
@@ -96,7 +96,7 @@ const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")
   const fileSystem = yield* FileSystem.FileSystem;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
+    directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
     prefix: "cursor-provider-about-mock-",
   });
   return writeFakeCli({
@@ -136,7 +136,7 @@ const makeProviderStatusEnvFixture = Effect.fn("makeProviderStatusEnvFixture")(f
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tempDir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
+    directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
     prefix: "cursor-provider-status-env-",
   });
   return {
@@ -149,7 +149,7 @@ const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: st
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tempDir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
+    directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
     prefix,
   });
   const exitLogPath = path.join(tempDir, "exit.log");
@@ -322,11 +322,11 @@ describe("Cursor skills", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const userHome = yield* fileSystem.makeTempDirectory({
-          directory: NodeOS.tmpdir(),
+          directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
           prefix: "cursor-skills-home-",
         });
         const workspace = yield* fileSystem.makeTempDirectory({
-          directory: NodeOS.tmpdir(),
+          directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
           prefix: "cursor-skills-workspace-",
         });
         const writeSkill = Effect.fn("writeCursorSkill")(function* (
@@ -401,15 +401,15 @@ describe("Cursor skills", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const userHome = yield* fileSystem.makeTempDirectory({
-          directory: NodeOS.tmpdir(),
+          directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
           prefix: "cursor-skills-home-",
         });
         const workspace = yield* fileSystem.makeTempDirectory({
-          directory: NodeOS.tmpdir(),
+          directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
           prefix: "cursor-skills-workspace-",
         });
         const library = yield* fileSystem.makeTempDirectory({
-          directory: NodeOS.tmpdir(),
+          directory: yield* fileSystem.realPath(NodeOS.tmpdir()),
           prefix: "cursor-skills-library-",
         });
         const writeSkill = Effect.fn("writeCursorSkill")(function* (
