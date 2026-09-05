@@ -1,3 +1,4 @@
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -1263,6 +1264,31 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       }).pipe(Effect.flip);
       expect(escape._tag).toBe("AcpRequestError");
       expect(yield* fs.exists(path.join(outside, "escape.txt"))).toBe(false);
+      if (symlinksSupported) {
+        yield* fs.writeFileString(path.join(outside, "secret.txt"), "private");
+        yield* fs.symlink(path.join(outside, "secret.txt"), path.join(cwd, "file-link"));
+        const linkedRead = yield* read({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "file-link"),
+        }).pipe(Effect.flip);
+        expect(linkedRead._tag).toBe("AcpRequestError");
+        yield* fs.symlink(outside, path.join(cwd, "directory-link"));
+        const linkedWrite = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "directory-link", "missing", "new.txt"),
+          content: "nope",
+        }).pipe(Effect.flip);
+        expect(linkedWrite._tag).toBe("AcpRequestError");
+        expect(yield* fs.exists(path.join(outside, "missing"))).toBe(false);
+        yield* fs.symlink(path.join(outside, "absent.txt"), path.join(cwd, "dangling-link"));
+        const danglingWrite = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "dangling-link"),
+          content: "nope",
+        }).pipe(Effect.flip);
+        expect(danglingWrite._tag).toBe("AcpRequestError");
+        expect(yield* fs.exists(path.join(outside, "absent.txt"))).toBe(false);
+      }
       const missing = yield* read({
         sessionId: nativeSessionId,
         path: path.join(cwd, "missing.txt"),
