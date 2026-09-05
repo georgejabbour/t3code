@@ -42,7 +42,7 @@ never makes the difference against upstream larger.
 A clean rebase does not prove the patch still works. This fork's tests copy
 upstream types and upstream test data. Upstream keeps adding to both, on lines
 this fork never edits. Git therefore reports no conflict, and the typecheck or the
-tests fail straight after. Five cases have appeared so far. The first two appeared
+tests fail straight after. Six cases have appeared so far. The first two appeared
 while verifying `0.0.34-nightly.20260810.1061`:
 
 1. Upstream added two required fields to `ProcessRunOutput`, so Patch 1's test
@@ -50,8 +50,9 @@ while verifying `0.0.34-nightly.20260810.1061`:
 2. Upstream added a test that starts a session in `/tmp/project`, one day after
    this fork made `startSession` refuse a folder that is not on disk. Tests in
    `apps/server/src/provider/Layers/ProviderService.test.ts` must name a real
-   folder through the `sessionCwd` helper there. Any new upstream test in that
-   file needs the same helper. This returned on 23 August 2026: upstream's
+   folder through the `fixtureCwd` helper there. The target nightly provides
+   this helper; it replaces the fork's `sessionCwd` helper. New tests need a real
+   folder. This problem returned on 23 August 2026: upstream's
    `feat(codex): submit thread feedback to OpenAI (#7949)` added
    "recovers a stopped Codex session before uploading feedback", which starts a
    session in `/tmp/feedback-project`. The rebase onto
@@ -151,6 +152,48 @@ Choose a marker upstream is unlikely to write for its own reasons. `includeIgnor
 was rejected for Patch 5 for that reason, and the operation string and the storage
 key were chosen instead. A bundler renames variables, so a marker must be a string
 literal, a storage key, or an attribute name.
+
+## Compatibility with `v0.0.39-nightly.20260905.1287`
+
+The series retains 73 commits from the old fork. One compatibility commit records
+these adjustments and the partial upstream absorption in Patches 2 and 9.
+
+Upstream now rejects missing or non-directory session paths with
+`ProviderWorkspaceMissingError`. The fork keeps that error at session start.
+The fork retains its check of recovered sessions and its error for unreadable folders.
+Provider tests use upstream's `fixtureCwd` helper to create their folders.
+
+The archive runner test supplies the new `getImportedAgentSessionSources` and
+`getThreadRuntimeContext` methods. The new session import integration test receives
+`T3ProjectFileLoader`, because the fork's command reactor reads project branch prefixes.
+
+The session scanner compares resolved worktree paths as well as configured paths.
+This keeps a symbolic link into a managed worktree out of the import list on macOS.
+The entrypoint test uses the resolved module path that Node supplies at runtime.
+
+Worktree recovery uses one directory guard at both upstream recovery points.
+It retains upstream's removal of obsolete Git records before worktree creation.
+It retains the fork's refusal of foreign worktrees and its activity message.
+The recovery test checks this order inside the managed worktree directory.
+
+The Antigravity file handler resolves the nearest existing ancestor before it
+creates a nested file. It checks symbolic links against the session directories.
+Its tests check nested file creation and symbolic links that leave those directories.
+Provider path tests use resolved temporary paths on macOS. The Codex text test
+retains the host environment when it adds launch arguments. The registry test
+counts only the two configured Codex commands, not optional package manager probes.
+The cloud sign-in code loads its HTTP server module when sign-in starts.
+This preserves the main server's separate module load and removes a build warning.
+
+For verification without a dependency install, use the installed Vite+ command:
+
+```sh
+./node_modules/.bin/vp run -r --concurrency-limit 2 typecheck
+./node_modules/.bin/vp run --filter t3 build
+```
+
+Select an installed Node version that satisfies `.node-version` before these commands.
+The `pnpm run` command can attempt dependency synchronization before it runs a script.
 
 ## Patch 1 — `runOnWorktreeRemove`
 
@@ -265,9 +308,11 @@ secure context.
 `apps/web/src/components/settings/ConnectionsSettings.tsx`,
 `docs/user/remote-access.md`.
 
-**Upstream status.** Not filed, for the reason given in Patch 1. Upstream serves
-the web application over plain HTTP through `t3 serve --host`, so upstream carries
-this fault too.
+**Upstream status.** The target `v0.0.39-nightly.20260905.1287` provides basic
+copy support on HTTP addresses. This patch retains the additional iOS selection
+support, page selection restoration, fallback after a failed modern clipboard
+write, and copy support at the additional call sites. Both test sets remain.
+A refused fallback reports `ClipboardWriteError`, as the fork requires.
 
 ## Patch 3 — the archived-thread sweep only removes folders T3 made
 

@@ -230,11 +230,52 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
   }) {
     const { path } = input;
     const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    let ancestor = resolved;
+    const missingParts: string[] = [];
+    let real: string;
+    while (true) {
+      const existing = yield* input.fileSystem.realPath(ancestor).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(
+                EffectAcpErrors.AcpRequestError.invalidParams(
+                  `Could not resolve path '${input.requestPath}'.`,
+                ),
+              ),
+        ),
+      );
+      if (Option.isSome(existing)) {
+        real = path.join(existing.value, ...missingParts);
+        break;
+      }
+      const link = yield* input.fileSystem.readLink(ancestor).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(
+                EffectAcpErrors.AcpRequestError.invalidParams(
+                  `Could not resolve path '${input.requestPath}'.`,
+                ),
+              ),
+        ),
+      );
+      if (Option.isSome(link)) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Path '${input.requestPath}' contains a symbolic link with an absent target.`,
+        );
+      }
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Could not resolve path '${input.requestPath}'.`,
+        );
+      }
+      missingParts.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
