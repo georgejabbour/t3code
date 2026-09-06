@@ -7,6 +7,14 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useShowIgnoredFiles } from "~/showIgnoredFilesPreference";
 
+export function directoryEntriesInput(
+  cwd: string,
+  directoryPath: string,
+  showIgnored: boolean,
+) {
+  return { cwd, directoryPath, ...(showIgnored ? { includeIgnored: true as const } : {}) };
+}
+
 /** Loads only requested directories; collapsing a folder keeps its children cached. */
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [showIgnored] = useShowIgnoredFiles();
@@ -32,7 +40,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       const requestGeneration = generation.current;
       const atom = projectEnvironment.listEntries({
         environmentId,
-        input: { cwd, directoryPath, ...(showIgnored ? { includeIgnored: true } : {}) },
+        input: directoryEntriesInput(cwd, directoryPath, showIgnored),
       });
       setPending((count) => count + 1);
       const request = (async () => {

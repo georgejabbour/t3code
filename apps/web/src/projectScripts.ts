@@ -50,11 +50,13 @@ export function releaseClaimedRoles(
 ): ProjectScript {
   const releaseSetup = saved.runOnWorktreeCreate && script.runOnWorktreeCreate;
   const releaseSettle = saved.runOnSettle && script.runOnSettle === true;
-  if (!releaseSetup && !releaseSettle) return script;
+  const releaseRemove = saved.runOnWorktreeRemove && script.runOnWorktreeRemove === true;
+  if (!releaseSetup && !releaseSettle && !releaseRemove) return script;
   return {
     ...script,
     ...(releaseSetup ? { runOnWorktreeCreate: false } : {}),
     ...(releaseSettle ? { runOnSettle: false } : {}),
+    ...(releaseRemove ? { runOnWorktreeRemove: false } : {}),
   };
 }
 

@@ -7,10 +7,12 @@ import {
   projectScriptMenuLabel,
   settleProjectScript,
   setupProjectScript,
+  worktreeRemoveScript,
 } from "@t3tools/shared/projectScripts";
 
 import {
   buildProjectScript,
+  clearSiblingLifecycleFlags,
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
@@ -19,6 +21,32 @@ import {
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
+  it("selects the new archive action and preserves the setup action", () => {
+    const previous = buildProjectScript("previous", {
+      name: "Previous",
+      command: "./previous.sh",
+      icon: "play",
+      runOnWorktreeCreate: true,
+      runOnWorktreeRemove: true,
+      previewUrl: null,
+      autoOpenPreview: false,
+    });
+    const input = {
+      ...previous,
+      name: "New archive",
+      command: "./archive.sh",
+      runOnWorktreeCreate: false,
+      runOnWorktreeRemove: true,
+      previewUrl: null,
+      autoOpenPreview: false,
+    };
+    const next = buildProjectScript("next", input);
+    const scripts = [...clearSiblingLifecycleFlags([previous], input), next];
+    expect(worktreeRemoveScript(scripts)).toEqual(next);
+    expect(setupProjectScript(scripts)?.id).toBe("previous");
+    expect(previous.runOnWorktreeRemove).toBe(true);
+  });
+
   it("builds scripts with preview settings", () => {
     expect(
       buildProjectScript("dev", {
