@@ -1,15 +1,4 @@
-/**
- * WorktreeArchiveScriptRunner - runs a project's `runOnWorktreeRemove` script to
- * completion before its worktree is removed.
- *
- * Scripts come from the checked-in `t3.json` rather than the imported project
- * scripts, so editing that file takes effect on the next removal with no
- * re-import. A repository without `t3.json`, or without a flagged script,
- * resolves to `no-script` and the removal proceeds untouched. A worktree folder
- * that is already gone resolves to `no-worktree` for the same reason.
- *
- * @module WorktreeArchiveScriptRunner
- */
+/** Runs the selected archive script before worktree removal. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,9 +7,14 @@ import * as Option from "effect/Option";
 
 import { WorktreeArchiveScriptError } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
-import { projectScriptRuntimeEnv, worktreeRemoveScript } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptRuntimeEnv,
+  resolveProjectScripts,
+  worktreeRemoveScript,
+} from "@t3tools/shared/projectScripts";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
@@ -68,6 +62,7 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const fileSystem = yield* FileSystem.FileSystem;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const run: WorktreeArchiveScriptRunner["Service"]["run"] = Effect.fn(
     "WorktreeArchiveScriptRunner.run",
@@ -94,8 +89,7 @@ export const make = Effect.gen(function* () {
     //      script that runs is its file too (relative command, cwd = worktree),
     //      so config and script stay on one branch;
     //   2. the project root's t3.json — a branch made before the file existed;
-    //   3. the project's IMPORTED scripts, which the scripts dialog's toggle
-    //      writes, for projects that check nothing in.
+    //   3. the resolved project actions, including settings overrides and defaults.
     const worktreeFile = yield* projectFileLoader.load(input.worktreePath);
     const rootFile = Option.isSome(worktreeFile)
       ? worktreeFile
@@ -106,14 +100,28 @@ export const make = Effect.gen(function* () {
 
     const script =
       fileScript ??
-      (yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(input.workspaceRoot).pipe(
-        Effect.map((project) =>
-          Option.isSome(project) ? worktreeRemoveScript(project.value.scripts) : null,
-        ),
-        // The checked-in file is the primary source and has already been read, so
-        // a projection read failure must not stop teardown resolving.
-        Effect.orElseSucceed(() => null),
-      ));
+      (yield* Effect.gen(function* () {
+        const project = yield* projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(input.workspaceRoot)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isSome(project)) {
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorktreeArchiveScriptError({
+                  scriptName: "Archive script",
+                  command: "",
+                  worktreePath: input.worktreePath,
+                  timedOut: false,
+                  stdout: "",
+                  stderr: `Cannot read project actions: ${cause}`,
+                }),
+            ),
+          );
+          return worktreeRemoveScript(resolveProjectScripts(settings, project.value));
+        }
+        return null;
+      }));
     if (!script) {
       return { status: "no-script" } as const;
     }
