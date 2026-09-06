@@ -153,10 +153,35 @@ was rejected for Patch 5 for that reason, and the operation string and the stora
 key were chosen instead. A bundler renames variables, so a marker must be a string
 literal, a storage key, or an attribute name.
 
-## Compatibility with `v0.0.39-nightly.20260905.1287`
+## Compatibility with `v0.0.39-nightly.20260906.1293`
 
-The series retains 73 commits from the old fork. One compatibility commit records
-these adjustments and the partial upstream absorption in Patches 2 and 9.
+The series retains all 74 commits from the old tested fork. The rebase adapts
+16 patch differences to upstream changes. One compatibility commit updates this
+ledger and the verification fixes. No complete patch is removed.
+
+Upstream now resolves machine script defaults and project overrides. The archive
+script helper remains beside those functions. The chat script editor clears both
+lifecycle flags in the resolved script list. The subscription fallback uses the
+resolved project model choice. Host resource queries remain beside subscription
+queries, so upstream load balancing retains its data source.
+
+Upstream keeps individual request definitions private. The fork uses the same
+pattern for archive scripts, subscriptions, project prompts, and GitHub stacks.
+The ignored-file query helper remains private. Upstream removed unused branch
+update helpers; the fork retains branch-prefix support in the active paths.
+
+The removal toggle remains in the new project settings layout. The file explorer
+retains upstream spacing and the fork's closed initial folders. The remote access
+guide retains upstream load balancing instructions and the fork's clipboard section.
+The remaining range-diff changes reflect these new surrounding lines, including
+subscription refresh and the earlier compatibility patch.
+
+The archive runner now uses the same settings resolver as the actions editor.
+Tests cover explicit overrides, deleted actions, inherited defaults, and settings failures.
+Both editors clear the previous lifecycle selection when a new action replaces it.
+The new clipboard test supplies the browser window. The file refresh test supplies the
+ignored-file preference and checks both values. The repository test command runs
+one package at a time to prevent competing workers from exhausting test time limits.
 
 Upstream now rejects missing or non-directory session paths with
 `ProviderWorkspaceMissingError`. The fork keeps that error at session start.
@@ -185,10 +210,12 @@ counts only the two configured Codex commands, not optional package manager prob
 The cloud sign-in code loads its HTTP server module when sign-in starts.
 This preserves the main server's separate module load and removes a build warning.
 
-For verification without a dependency install, use the installed Vite+ command:
+After a rebase, run `pnpm install --frozen-lockfile` with a supported Node version.
+This updates source dependencies, including mobile file packages. Then use the installed commands:
 
 ```sh
 ./node_modules/.bin/vp run -r --concurrency-limit 2 typecheck
+./node_modules/.bin/vp run -r --concurrency-limit 1 test
 ./node_modules/.bin/vp run --filter t3 build
 ```
 
@@ -987,7 +1014,7 @@ plain defect and belongs upstream.
 
 ## Patch 14 — a Duration no longer blocks every settings write
 
-**Commit:** `fix(server): stop a Duration from blocking every settings write`
+**Commit:** `fix(settings): preserve atomic values when saving`
 
 **Why.** On 19 August 2026 no setting could be changed in the user interface.
 A toggle looked like it did nothing. An edit typed straight into
