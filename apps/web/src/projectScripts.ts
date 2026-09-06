@@ -36,6 +36,19 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
   };
 }
 
+/** Keeps one selected script for each lifecycle action. */
+export function clearSiblingLifecycleFlags(
+  scripts: readonly ProjectScript[],
+  input: { readonly runOnWorktreeCreate: boolean; readonly runOnWorktreeRemove: boolean },
+): readonly ProjectScript[] {
+  return scripts.map((script) => {
+    const next = { ...script };
+    if (input.runOnWorktreeCreate) next.runOnWorktreeCreate = false;
+    if (input.runOnWorktreeRemove) next.runOnWorktreeRemove = false;
+    return next;
+  });
+}
+
 function normalizeScriptId(value: string): string {
   const cleaned = value
     .trim()

@@ -215,6 +215,7 @@ import { readT3ProjectFileBranchPrefix } from "~/lib/t3ProjectFileDefaults";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
+  clearSiblingLifecycleFlags,
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
@@ -460,23 +461,6 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./chat/composerPromptHistory";
-
-/**
- * Both lifecycle flags are single-holder: the selectors take the FIRST match, so
- * a second flagged script would win or lose by array order. Clearing the
- * siblings keeps that resolution well-defined.
- */
-function clearSiblingLifecycleFlags(
-  scripts: readonly ProjectScript[],
-  input: { readonly runOnWorktreeCreate: boolean; readonly runOnWorktreeRemove: boolean },
-): readonly ProjectScript[] {
-  return scripts.map((script) => {
-    const next = { ...script };
-    if (input.runOnWorktreeCreate) next.runOnWorktreeCreate = false;
-    if (input.runOnWorktreeRemove) next.runOnWorktreeRemove = false;
-    return next;
-  });
-}
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];

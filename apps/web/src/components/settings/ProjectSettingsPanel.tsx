@@ -54,6 +54,7 @@ import {
 } from "../../lib/projectScriptKeybindings";
 import {
   buildProjectScript,
+  clearSiblingLifecycleFlags,
   commandForProjectScript,
   nextProjectScriptId,
 } from "../../projectScripts";
@@ -362,12 +363,8 @@ export function useProjectScriptSettings(
     const next = buildProjectScript(id, input);
     return persist(
       (current) => {
-        const updated = current.map((script) =>
-          script.id === id
-            ? next
-            : input.runOnWorktreeCreate
-              ? { ...script, runOnWorktreeCreate: false }
-              : script,
+        const updated = clearSiblingLifecycleFlags(current, input).map((script) =>
+          script.id === id ? next : script,
         );
         return scriptId === null ? [...updated, next] : updated;
       },
@@ -681,20 +678,20 @@ function ProjectDetail({
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = useCallback(
-    async (input: { faviconPath: string | null; projectIcon: ProjectIconOverride | null }) => {
-      if (savingFaviconRef.current) return;
-      savingFaviconRef.current = true;
-      setIsSavingFavicon(true);
-      try {
-        await updateAllMembers(input, "Failed to update project icon");
-      } finally {
-        savingFaviconRef.current = false;
-        setIsSavingFavicon(false);
-      }
-    },
-    [updateAllMembers],
-  );
+  async function setProjectIcon(input: {
+    faviconPath: string | null;
+    projectIcon: ProjectIconOverride | null;
+  }) {
+    if (savingFaviconRef.current) return;
+    savingFaviconRef.current = true;
+    setIsSavingFavicon(true);
+    try {
+      await updateAllMembers(input, "Failed to update project icon");
+    } finally {
+      savingFaviconRef.current = false;
+      setIsSavingFavicon(false);
+    }
+  }
 
   // ----- checkout selection and scripts -----
   const hasMultipleCheckouts = group.memberProjects.length > 1;
