@@ -481,7 +481,12 @@ export const make = Effect.gen(function* () {
           ? runGh({ cwd, args: ["rebase", "--upstack"] })
           : runGh({
               cwd,
-              args: ["merge", String(input.prNumber), "--yes"],
+              args: [
+                "merge",
+                String(input.prNumber),
+                "--yes",
+                ...(input.mergeMethod ? ["--merge-method", input.mergeMethod] : []),
+              ],
             });
 
       if (outcome.exitCode === 3) {
