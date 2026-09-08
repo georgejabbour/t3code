@@ -4,7 +4,24 @@ import {
   type SubscriptionUsageList,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { act, type ComponentProps, type ReactNode } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("../ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("../ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
 
 import { SubscriptionSelector } from "./SubscriptionSelector";
 
@@ -27,6 +44,45 @@ const usage: SubscriptionUsageList = {
 };
 
 describe("SubscriptionSelector limit bars", () => {
+  it("hides email labels until requested and keeps subscription selection separate", async () => {
+    const email = "personal@example.com";
+    const onSelect = vi.fn();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", { setInterval, clearInterval });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <SubscriptionSelector
+            usage={{ subscriptions: [{ ...usage.subscriptions[0]!, displayName: email }] }}
+            isRevalidating={false}
+            updatedAtMs={null}
+            activeInstanceId="personal"
+            onSelect={onSelect}
+            onRefresh={() => {}}
+            onAddSubscription={() => {}}
+            onManageSubscription={() => {}}
+          />,
+        );
+      });
+      const mounted = renderer!;
+      expect(JSON.stringify(mounted.toJSON())).not.toContain(email);
+      const reveal = mounted.root.findByProps({ "aria-label": "Toggle account label visibility" });
+      await act(async () => reveal.props.onClick());
+      expect(JSON.stringify(mounted.toJSON())).toContain(email);
+      expect(onSelect).not.toHaveBeenCalled();
+      await act(async () => reveal.props.onClick());
+      expect(JSON.stringify(mounted.toJSON())).not.toContain(email);
+      await act(async () => {
+        mounted.root.findByProps({ "data-testid": "subscription-row-personal" }).props.onClick();
+      });
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith("personal");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("divides the five-hour bar into hours and the weekly bar into days", () => {
     const markup = renderToStaticMarkup(
       <SubscriptionSelector

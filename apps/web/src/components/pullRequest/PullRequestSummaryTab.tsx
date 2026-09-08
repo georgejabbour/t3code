@@ -4,6 +4,7 @@ import type {
   PullRequestDetailView,
   PullRequestRef,
   PullRequestReviewThread,
+  PullRequestMergeMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -472,6 +473,7 @@ export function PullRequestSummaryTab({
   onRefreshChecks = onRefresh,
   threadCwd,
   threadBranch,
+  mergeMethod,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
@@ -490,7 +492,15 @@ export function PullRequestSummaryTab({
   /** The worktree for the thread beside this panel, when there is one. */
   threadCwd?: string | null | undefined;
   threadBranch?: string | null | undefined;
+  mergeMethod?: PullRequestMergeMethod | undefined;
 }) {
+  const checkOccurrences = new Map<string, number>();
+  const checks = detail.checks.map((check) => {
+    const identity = JSON.stringify([check.name, check.url]);
+    const occurrence = checkOccurrences.get(identity) ?? 0;
+    checkOccurrences.set(identity, occurrence + 1);
+    return { check, key: `${identity}:${occurrence}` };
+  });
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
@@ -721,6 +731,7 @@ export function PullRequestSummaryTab({
           environmentId={environmentId}
           cwd={detail.workspaceRoot}
           viewingBranch={detail.headBranch}
+          mergeMethod={mergeMethod}
           threadBranch={threadBranch}
           branch={detail.headBranch}
           reference={reference}
@@ -890,14 +901,12 @@ export function PullRequestSummaryTab({
         ) : detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
-          detail.checks.map((check, index) => {
+          checks.map(({ check, key }) => {
             const finding = { kind: "check", check } as const;
             const failing = check.status === "failure" || check.status === "cancelled";
             return (
               <div
-                // Position too: the host decides how many runs share a name, and a repeated
-                // key would be a rendering fault on top of whatever the list already says.
-                key={`${index}:${check.name}:${check.url ?? ""}`}
+                key={key}
                 className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
               >
                 <button
