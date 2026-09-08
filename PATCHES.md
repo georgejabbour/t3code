@@ -153,74 +153,45 @@ was rejected for Patch 5 for that reason, and the operation string and the stora
 key were chosen instead. A bundler renames variables, so a marker must be a string
 literal, a storage key, or an attribute name.
 
-## Compatibility with `v0.0.39-nightly.20260906.1293`
+## Compatibility with `v0.0.41-nightly.20260908.1377`
 
-The series retains all 74 commits from the old tested fork. The rebase adapts
-16 patch differences to upstream changes. One compatibility commit updates this
-ledger and the verification fixes. No complete patch is removed.
+The series retains all 75 commits from the previous fork and adds one compatibility
+commit. Upstream now supplies
+the rule that adopts a real checkout over a saved placeholder branch. The patch
+`test(server): cover real checkout adoption from placeholder records` retains
+its status-change test and explanation. No complete patch is removed.
 
-Upstream now resolves machine script defaults and project overrides. The archive
-script helper remains beside those functions. The chat script editor clears both
-lifecycle flags in the resolved script list. The subscription fallback uses the
-resolved project model choice. Host resource queries remain beside subscription
-queries, so upstream load balancing retains its data source.
+The command decider uses upstream's pending-request map and the fork's direct
+error syntax. Claude retains upstream's authentication and rate-limit outcomes,
+plus the fork's session shutdown after a dead-credential result.
 
-Upstream keeps individual request definitions private. The fork uses the same
-pattern for archive scripts, subscriptions, project prompts, and GitHub stacks.
-The ignored-file query helper remains private. Upstream removed unused branch
-update helpers; the fork retains branch-prefix support in the active paths.
+Mobile task creation uses upstream's outbox path. That path retains the project
+branch prefix. The deleted direct-start hook remains deleted. Native thread rows
+retain upstream's provider instance icons and the fork's stack position marker.
 
-The removal toggle remains in the new project settings layout. The file explorer
-retains upstream spacing and the fork's closed initial folders. The remote access
-guide retains upstream load balancing instructions and the fork's clipboard section.
-The remaining range-diff changes reflect these new surrounding lines, including
-subscription refresh and the earlier compatibility patch.
+Checkpoint capture retains upstream's separate status-refresh worker and the
+fork's branch-change subscription. The tests cover both paths. Pull request panels
+use upstream's automatic status discovery and one thread reference. Stack actions
+retain the thread directory and branch. Image compression retains upstream's
+image dimensions and the fork's separate HEIC decoder load.
 
-The archive runner now uses the same settings resolver as the actions editor.
-Tests cover explicit overrides, deleted actions, inherited defaults, and settings failures.
-Both editors clear the previous lifecycle selection when a new action replaces it.
-The new clipboard test supplies the browser window. The file refresh test supplies the
-ignored-file preference and checks both values. The repository test command runs
-one package at a time to prevent competing workers from exhausting test time limits.
+Manual Git refresh now updates upstream's saved thread pull request links before
+it returns. Its test includes settled threads and excludes other workspaces.
+Native stack markers receive the project directory in both legacy views. The
+newer view uses its existing project property. The archive runner test supplies
+upstream's new `getTurnStartMessage` query.
 
-Upstream now rejects missing or non-directory session paths with
-`ProviderWorkspaceMissingError`. The fork keeps that error at session start.
-The fork retains its check of recovered sessions and its error for unreadable folders.
-Provider tests use upstream's `fixtureCwd` helper to create their folders.
-
-The archive runner test supplies the new `getImportedAgentSessionSources` and
-`getThreadRuntimeContext` methods. The new session import integration test receives
-`T3ProjectFileLoader`, because the fork's command reactor reads project branch prefixes.
-
-The session scanner compares resolved worktree paths as well as configured paths.
-This keeps a symbolic link into a managed worktree out of the import list on macOS.
-The entrypoint test uses the resolved module path that Node supplies at runtime.
-
-Worktree recovery uses one directory guard at both upstream recovery points.
-It retains upstream's removal of obsolete Git records before worktree creation.
-It retains the fork's refusal of foreign worktrees and its activity message.
-The recovery test checks this order inside the managed worktree directory.
-
-The Antigravity file handler resolves the nearest existing ancestor before it
-creates a nested file. It checks symbolic links against the session directories.
-Its tests check nested file creation and symbolic links that leave those directories.
-Provider path tests use resolved temporary paths on macOS. The Codex text test
-retains the host environment when it adds launch arguments. The registry test
-counts only the two configured Codex commands, not optional package manager probes.
-The cloud sign-in code loads its HTTP server module when sign-in starts.
-This preserves the main server's separate module load and removes a build warning.
-
-After a rebase, run `pnpm install --frozen-lockfile` with a supported Node version.
-This updates source dependencies, including mobile file packages. Then use the installed commands:
+After a rebase, install source dependencies with `pnpm install --frozen-lockfile`.
+Use the Node version from `.node-version`. Run the focused patch tests and these
+full repository checks as separate commands:
 
 ```sh
 ./node_modules/.bin/vp run -r --concurrency-limit 2 typecheck
 ./node_modules/.bin/vp run -r --concurrency-limit 1 test
-./node_modules/.bin/vp run --filter t3 build
 ```
 
-Select an installed Node version that satisfies `.node-version` before these commands.
-The `pnpm run` command can attempt dependency synchronization before it runs a script.
+The updater's `--check --target <tag> --test` path records compatibility for the
+exact target and fork head. It does not install the application.
 
 ## Patch 1 — `runOnWorktreeRemove`
 
@@ -628,6 +599,7 @@ helper supplies.
 - `fix(server): name a thread's worktree folder after the thread`
 - `fix(server): follow a branch change as the status poll reports it`
 - `feat(web): add a refresh button for git and pull request status`
+- `test(server): cover real checkout adoption from placeholder records`
 
 **Why.** A worktree showed no pull request after its branch was renamed from
 `t3code/cloudflare-r2-object-storage` to `george/nrg-33`. Reading the code
@@ -657,11 +629,9 @@ hand and lose the pull request badge until the next turn ends.
    The client hides a thread's pull request while the recorded branch and the
    checked-out branch disagree, so a `git checkout` early in a long turn hid the
    pull request for the whole turn.
-4. **The branch toolbar gained a refresh button.** T3 Code re-asks the hosting
-   provider about a pull request at most once every two minutes, and a pull
-   request opened with `gh pr create` does not shorten that wait. Window focus
-   and opening the git menu already refreshed, but neither is discoverable to
-   somebody watching a badge that has not appeared.
+4. **The branch toolbar has a refresh button.** Upstream now discovers pull
+   requests every minute and after relevant thread events. The fork's button
+   requests an immediate refresh.
 
 **Design notes.**
 
@@ -674,9 +644,8 @@ hand and lose the pull request badge until the next turn ends.
 - The status-change follower holds the branch it last saw per folder. A
   working-tree edit publishes a status too, and that must cost a map lookup
   rather than a read of the whole thread projection.
-- Detecting a new pull request without asking the provider is not possible, and
-  asking is the thing the two-minute cache exists to limit. A button the user
-  presses is the honest answer.
+- Upstream supplies automatic pull request discovery. The refresh button
+  remains available when the user needs an immediate status check.
 - A quoted `"refs/heads/…"` from a model used to leave `refs/heads/` inside the
   branch name, because quotes were stripped after that prefix was tested. The
   order is now the other way round.
@@ -690,6 +659,9 @@ init` and `git checkout -b` both do it), the rename it was reserved for can
   concurrent rename from corrupting either side. Seen live on 24 August 2026:
   a `gh stack` chain on `nerdragegaming` left the record at `t3code/8e543a92`
   while the worktree sat on `george/nrg-435`.
+
+Upstream now supplies the real-checkout adoption rule. The fork retains its
+status-change test, custom branch prefixes, and immediate branch-change response.
 
 **Files.** New: `apps/server/src/project/BranchPrefix.ts`,
 `apps/mobile/src/features/threads/t3-project-file-branch-prefix.ts`,

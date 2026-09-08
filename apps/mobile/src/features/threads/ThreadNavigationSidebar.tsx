@@ -1025,6 +1025,10 @@ function ThreadNavigationSidebarPane(
           const thread = item.thread;
           return (
             <ThreadListRow
+              projectCwd={
+                projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId))
+                  ?.workspaceRoot ?? null
+              }
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               variant="sidebar"
               thread={thread}
