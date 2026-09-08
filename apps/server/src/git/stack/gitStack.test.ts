@@ -1,4 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/unstable/process";
+
+import * as GitStackService from "./GitStackService.ts";
+import * as GhStackCli from "./GhStackCli.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 
 import {
   branchesAbove,
@@ -9,6 +17,85 @@ import {
 import { normalizeStackView, parseStackViewJson, stderrTail } from "./GhStackCli.ts";
 
 // Added by this fork. See Patch 16 in PATCHES.md.
+
+describe("stack merge preferences", () => {
+  for (const mergeMethod of ["merge", "squash", "rebase", undefined] as const) {
+    it.effect(`merges a stack with method ${mergeMethod ?? "omitted"}`, () => {
+      let merged = false;
+      const calls: VcsProcess.VcsProcessInput[] = [];
+      const processLayer = Layer.succeed(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.gen(function* () {
+            calls.push(input);
+            expect(input.command).toBe("gh");
+            expect(input.cwd).toBe("/repo");
+            let stdout: string;
+            if (input.args[1] === "view") {
+              expect(input.args).toEqual(["stack", "view", "--json"]);
+              stdout = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                trunk: "main",
+                currentBranch: "feature",
+                branches: [
+                  {
+                    name: "feature",
+                    head: "abc123",
+                    base: "def456",
+                    isCurrent: true,
+                    isMerged: merged,
+                    isQueued: false,
+                    needsRebase: false,
+                    pr: {
+                      number: 42,
+                      url: "https://github.com/o/r/pull/42",
+                      state: merged ? "MERGED" : "OPEN",
+                    },
+                  },
+                ],
+              }).pipe(Effect.orDie);
+            } else {
+              expect(input.args).toEqual([
+                "stack",
+                "merge",
+                "42",
+                "--yes",
+                ...(mergeMethod ? ["--merge-method", mergeMethod] : []),
+              ]);
+              expect(input.allowNonZeroExit).toBe(true);
+              merged = true;
+              stdout = "Merged pull request #42.";
+            }
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      });
+      const serviceLayer = GitStackService.layer.pipe(
+        Layer.provide(GhStackCli.layer),
+        Layer.provide(processLayer),
+      );
+      return Effect.gen(function* () {
+        const service = yield* GitStackService.GitStackService;
+        const before = yield* service.view({ cwd: "/repo" });
+        expect(before?.branches[0]?.pr?.state).toBe("open");
+        const result = yield* service.runAction({
+          cwd: "/repo",
+          action: "merge",
+          prNumber: 42,
+          ...(mergeMethod ? { mergeMethod } : {}),
+        });
+        expect(result.action).toBe("merge");
+        expect(result.summary).toBe("Merged pull request #42.");
+        expect(result.view.branches[0]?.pr?.state).toBe("merged");
+        expect(calls.filter((call) => call.args[1] === "merge")).toHaveLength(1);
+        expect(calls.filter((call) => call.args[1] === "view")).toHaveLength(2);
+      }).pipe(Effect.provide(serviceLayer));
+    });
+  }
+});
 
 const capturedView = `{
   "trunk": "main",

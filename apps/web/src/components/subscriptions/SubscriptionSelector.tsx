@@ -28,9 +28,10 @@ import {
 } from "@t3tools/shared/subscriptionUsage";
 import { CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon, SettingsIcon } from "lucide-react";
 import type * as React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { ProviderInstanceIcon } from "~/components/chat/ProviderInstanceIcon";
+import { RedactedSensitiveText } from "~/components/settings/RedactedSensitiveText";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
@@ -145,6 +146,7 @@ function SubscriptionRow({
   onManage: (instanceId: ProviderInstanceId) => void;
 }) {
   const { subscription } = row;
+  const labelId = useId();
   const isDisabled = !subscription.enabled;
   const handleClick = useCallback(() => {
     if (isDisabled) {
@@ -155,24 +157,39 @@ function SubscriptionRow({
   }, [isDisabled, onManage, onSelect, subscription.instanceId]);
 
   return (
-    <button
-      type="button"
-      aria-pressed={row.isActive}
-      data-testid={`subscription-row-${subscription.instanceId}`}
-      data-enabled={subscription.enabled}
-      onClick={handleClick}
-      className="hover:bg-accent flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left"
-    >
+    <div className="hover:bg-accent relative flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left">
+      <button
+        type="button"
+        aria-pressed={row.isActive}
+        aria-labelledby={labelId}
+        data-testid={`subscription-row-${subscription.instanceId}`}
+        data-enabled={subscription.enabled}
+        onClick={handleClick}
+        className="absolute inset-0 rounded-md"
+      />
       <ProviderInstanceIcon
         driverKind={subscription.driver}
         displayName={subscription.displayName}
         accentColor={subscription.accentColor ?? undefined}
-        className={cn("mt-0.5 size-5", isDisabled && "opacity-40")}
+        className={cn("pointer-events-none mt-0.5 size-5", isDisabled && "opacity-40")}
         iconClassName="size-5"
       />
-      <span className={cn("min-w-0 flex-1", isDisabled && "opacity-60")}>
+      <span className={cn("pointer-events-none min-w-0 flex-1", isDisabled && "opacity-60")}>
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-sm">{subscription.displayName}</span>
+          <span id={labelId} className="min-w-0 truncate text-sm">
+            {subscription.displayName.includes("@") ? (
+              <RedactedSensitiveText
+                key={subscription.displayName}
+                value={subscription.displayName}
+                ariaLabel="Toggle account label visibility"
+                revealTooltip="Click to reveal account"
+                hideTooltip="Click to hide account"
+                className="pointer-events-auto relative max-w-full truncate font-sans text-sm leading-normal"
+              />
+            ) : (
+              subscription.displayName
+            )}
+          </span>
           {row.isActive ? <CheckIcon aria-label="In use" className="size-3.5 shrink-0" /> : null}
           {isDisabled ? (
             <SettingsIcon
@@ -196,7 +213,7 @@ function SubscriptionRow({
           </span>
         )}
       </span>
-    </button>
+    </div>
   );
 }
 
