@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -148,6 +149,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   let uuid = 0;
   const dependencies = Layer.mergeAll(
+    Path.layer,
     Layer.mock(ProjectionSnapshotQuery)({
       getShellSnapshot: () =>
         Ref.get(snapshots).pipe(Effect.tap(() => Queue.offer(reads, undefined))),
@@ -239,6 +241,41 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
 });
 
 describe("ThreadPullRequestReactor", () => {
+  it.effect("refreshes only the requested workspace, including settled threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const detected = yield* Ref.make<GitBranchPullRequest | null>(null);
+        const fixture = yield* makeHarness({
+          threads: [
+            thread("active", { worktreePath: "/workspace/selected" }),
+            thread("settled", { worktreePath: "/workspace/selected", settledOverride: "settled" }),
+            thread("other", { worktreePath: "/workspace/other" }),
+            thread("archived", { worktreePath: "/workspace/selected", archivedAt: NOW }),
+          ],
+          existingWorktrees: ["/workspace/selected", "/workspace/other"],
+          branchPullRequest: () => Ref.get(detected),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* fixture.start();
+          yield* Ref.set(fixture.branchCalls, []);
+          yield* Ref.set(detected, branchPullRequest());
+          yield* reactor.refreshWorkspace("/workspace/selected/.");
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([
+            { cwd: "/workspace/selected", branch: "feature", refresh: true },
+            { cwd: "/workspace/selected", branch: "feature", refresh: false },
+          ]);
+          const snapshot = yield* Ref.get(fixture.snapshots);
+          expect(snapshot.threads.map((entry) => entry.branchPullRequest ?? null)).toEqual([
+            reference(42),
+            reference(42),
+            null,
+            null,
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("discovers saved branch PRs without a client and shares branch lookups", () =>
     Effect.scoped(
       Effect.gen(function* () {

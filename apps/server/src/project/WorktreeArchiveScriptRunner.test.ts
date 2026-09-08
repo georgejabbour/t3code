@@ -69,6 +69,7 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
     getThreadDetailSnapshot: () => Effect.die("unused"),
     searchThreads: () => Effect.succeed({ matches: [] }),
     getUserInputActivity: () => Effect.die("unused"),
+    getTurnStartMessage: () => Effect.die("unused"),
   });
 };
 
