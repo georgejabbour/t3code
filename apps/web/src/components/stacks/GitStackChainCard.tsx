@@ -3,6 +3,7 @@ import type {
   GitStackBranch,
   GitStackView,
   PullRequestRef,
+  PullRequestMergeMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { GitBranchIcon, GitPullRequestIcon, LayersIcon } from "lucide-react";
@@ -123,6 +124,7 @@ export function GitStackChainCard({
   threadRef,
   threadCwd,
   mergePrNumber = null,
+  mergeMethod,
 }: {
   environmentId: EnvironmentId;
   /** The repository checkout the stack lives in. */
@@ -153,6 +155,7 @@ export function GitStackChainCard({
   threadCwd?: string | null | undefined;
   /** When set, offers to merge this pull request plus every open one below it. */
   mergePrNumber?: number | null;
+  mergeMethod?: PullRequestMergeMethod | undefined;
 }) {
   const { view, refresh } = useGitStack({
     environmentId,
@@ -169,6 +172,7 @@ export function GitStackChainCard({
       threadBranch={threadBranch ?? null}
       viewingBranch={viewingBranch ?? null}
       mergePrNumber={mergePrNumber}
+      mergeMethod={mergeMethod}
       reference={reference ?? null}
       threadRef={threadRef ?? null}
       threadCwd={threadCwd ?? null}
@@ -303,6 +307,7 @@ function ChainCardInner({
   threadBranch,
   viewingBranch,
   mergePrNumber,
+  mergeMethod,
   reference,
   threadRef,
   threadCwd,
@@ -315,6 +320,7 @@ function ChainCardInner({
   threadBranch: string | null;
   viewingBranch: string | null;
   mergePrNumber: number | null;
+  mergeMethod: PullRequestMergeMethod | undefined;
   reference: PullRequestRef | null;
   threadRef: ScopedThreadRef | null;
   threadCwd: string | null;
@@ -377,7 +383,7 @@ function ChainCardInner({
       // The chain can be tracked in a worktree rather than at `cwd`, so the
       // server needs the branch to find the checkout that can run the command.
       ...(branch ? { branch } : {}),
-      ...(action === "merge" && prNumber !== undefined ? { prNumber } : {}),
+      ...(action === "merge" && prNumber !== undefined ? { prNumber, mergeMethod } : {}),
     });
     setRunning(null);
     if (!outcome.ok) {
@@ -449,7 +455,8 @@ function ChainCardInner({
         <AlertDialogPopup>
           <AlertDialogTitle>Merge this stack?</AlertDialogTitle>
           <AlertDialogDescription>
-            Merging lands these pull requests together, bottom first, all-or-nothing:
+            {mergeMethod ? `Use ${mergeMethod} to merge` : "Merge"} these pull requests together,
+            starting with the base branch:
           </AlertDialogDescription>
           <ul className="mt-2 space-y-1 text-sm">
             {mergeTargets.map(({ branch: member, number }) => (
