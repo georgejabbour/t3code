@@ -4,15 +4,22 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { afterAll, assert, describe } from "vite-plus/test";
+import { afterAll, assert, describe, vi } from "vite-plus/test";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { readWorkflowScript } from "./workflowScriptQuery.ts";
 
-const root = NodePath.join(NodeOS.homedir(), ".claude", "projects", "__wf_script_test__");
+vi.mock("node:os", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:os")>()),
+  homedir: vi.fn(),
+}));
+
+const testHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "wf-query-"));
+vi.mocked(NodeOS.homedir).mockReturnValue(testHome);
+const root = NodePath.join(testHome, ".claude", "projects", "__wf_script_test__");
 NodeFS.mkdirSync(root, { recursive: true });
 const scriptPath = NodePath.join(root, "run.js");
 NodeFS.writeFileSync(scriptPath, "export const meta = {};\n");
-const outside = NodePath.join(NodeOS.tmpdir(), "wf-outside.js");
+const outside = NodePath.join(testHome, "outside.js");
 NodeFS.writeFileSync(outside, "evil\n");
 const link = NodePath.join(root, "sneaky.js");
 // Planted only where the host allows it; the escape test is skipped
@@ -26,8 +33,7 @@ if (symlinksSupported) {
 }
 
 afterAll(() => {
-  NodeFS.rmSync(root, { recursive: true, force: true });
-  NodeFS.rmSync(outside, { force: true });
+  NodeFS.rmSync(testHome, { recursive: true, force: true });
 });
 
 describe("readWorkflowScript containment", () => {
