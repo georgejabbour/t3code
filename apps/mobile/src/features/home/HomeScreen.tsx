@@ -1001,6 +1001,10 @@ export function HomeScreen(props: HomeScreenProps) {
           const thread = item.thread;
           return (
             <ThreadListRow
+              projectCwd={
+                projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId))
+                  ?.workspaceRoot ?? null
+              }
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               variant="compact"
               thread={thread}

@@ -16,6 +16,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -32,6 +33,7 @@ export class ThreadPullRequestReactor extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
+    readonly refreshWorkspace: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/orchestration/ThreadPullRequestReactor") {}
 
@@ -55,6 +57,7 @@ interface RefreshRequest {
   readonly threadId: ThreadId | null;
   readonly refresh: boolean;
   readonly backfill?: boolean;
+  readonly cwd?: string;
 }
 
 export function pullRequestMatchesProject(
@@ -78,6 +81,7 @@ export const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   // Settled threads get one link discovery at startup. Failed lookups retry on
   // the periodic pass a few times, then stop until the thread changes or the
   // server restarts, so a missing or logged-out CLI cannot loop forever.
@@ -93,6 +97,9 @@ export const make = Effect.gen(function* () {
       else pendingBackfill.set(thread.id, remaining - 1);
     }
   };
+
+  const canonicalPath = (cwd: string) =>
+    fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
 
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
@@ -113,12 +120,24 @@ export const make = Effect.gen(function* () {
     for (const threadId of pendingBackfill.keys()) {
       if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
+    const requestedCwd = request.cwd === undefined ? undefined : yield* canonicalPath(request.cwd);
+    const workspaceThreadIds = new Set<ThreadId>();
+    if (requestedCwd !== undefined) {
+      for (const thread of snapshot.threads) {
+        const cwd = thread.worktreePath ?? projects.get(thread.projectId)?.workspaceRoot;
+        if (cwd !== undefined && (yield* canonicalPath(cwd)) === requestedCwd) {
+          workspaceThreadIds.add(thread.id);
+        }
+      }
+    }
     const threads = snapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        (requestedCwd === undefined || workspaceThreadIds.has(thread.id)) &&
         (request.threadId === null || thread.id === request.threadId) &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
+          requestedCwd !== undefined ||
           pendingBackfill.has(thread.id)) &&
         (thread.branch !== null || thread.branchPullRequest != null),
     );
@@ -364,7 +383,14 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, drain: worker.drain } satisfies ThreadPullRequestReactor["Service"];
+  const refreshWorkspace = (cwd: string) =>
+    worker.enqueue({ threadId: null, refresh: true, cwd }).pipe(Effect.andThen(worker.drain));
+
+  return {
+    start,
+    drain: worker.drain,
+    refreshWorkspace,
+  } satisfies ThreadPullRequestReactor["Service"];
 });
 
 export const layer = Layer.effect(ThreadPullRequestReactor, make);

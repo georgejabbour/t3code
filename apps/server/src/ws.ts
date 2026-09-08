@@ -125,6 +125,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -541,6 +542,7 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const threadPullRequests = yield* ThreadPullRequestReactor.ThreadPullRequestReactor;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -2580,7 +2582,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            vcsStatusBroadcaster
+              .refreshStatus(input.cwd)
+              .pipe(Effect.tap(() => threadPullRequests.refreshWorkspace(input.cwd))),
             {
               "rpc.aggregate": "vcs",
             },

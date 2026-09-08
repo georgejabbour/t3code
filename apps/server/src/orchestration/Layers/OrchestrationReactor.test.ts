@@ -74,6 +74,7 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+            refreshWorkspace: () => Effect.void,
           }),
         ),
         Layer.provideMerge(

@@ -908,7 +908,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {pr ? (
           <GitStackPositionMarker
             environmentId={thread.environmentId}
-            cwd={thread.worktreePath ?? props.projectCwd ?? props.project?.workspaceRoot ?? null}
+            cwd={thread.worktreePath ?? props.project?.workspaceRoot ?? null}
             branchName={thread.branch}
             className={cn(
               "text-xs",

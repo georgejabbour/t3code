@@ -442,6 +442,7 @@ const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
+  readonly projectCwd: string | null;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
   /** A message for this thread is waiting in the outbox. */

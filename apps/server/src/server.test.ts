@@ -1,3 +1,4 @@
+import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -526,6 +527,7 @@ const buildAppUnderTest = (options?: {
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
     reviewService?: Partial<ReviewService.ReviewService["Service"]>;
+    threadPullRequests?: Partial<ThreadPullRequestReactor.ThreadPullRequestReactor["Service"]>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
@@ -918,6 +920,12 @@ const buildAppUnderTest = (options?: {
       // overload limit, and a 21st entry fails to typecheck.
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ThreadPullRequestReactor.ThreadPullRequestReactor, {
+            start: () => Effect.void,
+            drain: Effect.void,
+            refreshWorkspace: () => Effect.void,
+            ...options?.layers?.threadPullRequests,
+          }),
           Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
             runForThread: () => Effect.succeed({ status: "no-script" as const }),
             ...options?.layers?.projectSetupScriptRunner,
@@ -7437,11 +7445,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc git methods", () =>
     Effect.gen(function* () {
+      const refreshedWorkspaces: string[] = [];
       yield* buildAppUnderTest({
         config: {
           cwd: "/tmp/repo",
         },
         layers: {
+          threadPullRequests: {
+            refreshWorkspace: (cwd) =>
+              Effect.sync(() => {
+                refreshedWorkspaces.push(cwd);
+              }),
+          },
           vcsDriver: {
             isInsideWorkTree: () => Effect.succeed(true),
           },
@@ -7647,6 +7662,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(refreshedStatus.isRepo, true);
+      assert.deepEqual(refreshedWorkspaces, ["/tmp/repo"]);
 
       const stackedEvents = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
