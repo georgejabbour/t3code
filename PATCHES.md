@@ -153,33 +153,40 @@ was rejected for Patch 5 for that reason, and the operation string and the stora
 key were chosen instead. A bundler renames variables, so a marker must be a string
 literal, a storage key, or an attribute name.
 
-## Compatibility with `v0.0.41-nightly.20260908.1377`
+## Compatibility with `v0.0.41-nightly.20260908.1400`
 
-The series retains all 75 commits from the previous fork and adds one compatibility
-commit. Upstream now supplies
-the rule that adopts a real checkout over a saved placeholder branch. The patch
-`test(server): cover real checkout adoption from placeholder records` retains
-its status-change test and explanation. No complete patch is removed.
+The series retains all 76 commits from the previous fork. Four commits need
+conflict resolutions in four files. No complete patch is removed. Upstream's
+new error declarations remain in place beside the fork's archive-script handling,
+shared teardown messages, and ignored-file limit.
 
-The command decider uses upstream's pending-request map and the fork's direct
-error syntax. Claude retains upstream's authentication and rate-limit outcomes,
-plus the fork's session shutdown after a dead-credential result.
+Upstream now starts the idle window from the later of the session update and
+binding update. The fork retains its configurable timeout, including zero to keep
+sessions alive. The tests retain upstream's completed-turn cases and the fork's
+one-second test setting. The updater's 600-second idle rule does not change.
 
-Mobile task creation uses upstream's outbox path. That path retains the project
-branch prefix. The deleted direct-start hook remains deleted. Native thread rows
-retain upstream's provider instance icons and the fork's stack position marker.
+The compatibility commit changes the three stack error classes to use Effect's
+new `Schema.TaggedError` declaration. It removes an unused test import.
+Stack merges use the selected merge method from the pull request panel.
+The subscription selector masks email labels and provides a separate reveal control.
+Desktop cookie and update tests use their existing domain types where the new
+TypeScript compiler cannot infer a portable result type.
+Two server callbacks return `void` on both paths for the new Effect types.
+Tests use an isolated home directory and an idle timestamp before the test clock.
+The pull request panel retains detail and merge choices without extra state-update effects.
+Check rows retain their identity when their order changes.
 
-Checkpoint capture retains upstream's separate status-refresh worker and the
-fork's branch-change subscription. The tests cover both paths. Pull request panels
-use upstream's automatic status discovery and one thread reference. Stack actions
-retain the thread directory and branch. Image compression retains upstream's
-image dimensions and the fork's separate HEIC decoder load.
+The Vite 0.3.0 dependency patch passes the configured file-watcher options to
+bundled compilation. The native watcher does not report source changes in the
+restricted test environment. The Tailwind test uses polling, changes a real source
+file, and waits for the compiled update over the WebSocket connection.
+Upstream's sidebar project records and stable row order remain intact. The fork's
+stack marker uses the shared project-directory fallback. Upstream's question
+attachments and image galleries remain intact.
 
-Manual Git refresh now updates upstream's saved thread pull request links before
-it returns. Its test includes settled threads and excludes other workspaces.
-Native stack markers receive the project directory in both legacy views. The
-newer view uses its existing project property. The archive runner test supplies
-upstream's new `getTurnStartMessage` query.
+The earlier partial absorption of real-checkout adoption remains recorded under
+Patch 8. Its remaining patch contains a status-change test and explanation.
+This target absorbs no additional complete patch or functional patch fragment.
 
 After a rebase, install source dependencies with `pnpm install --frozen-lockfile`.
 Use the Node version from `.node-version`. Run the focused patch tests and these

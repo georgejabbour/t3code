@@ -571,13 +571,11 @@ export function PullRequestDetailPanel({
   // A previously visited Code tab must not fetch diffs for every later PR while hidden.
   const mountedTabs =
     tabMountState.key === tabScopeKey ? tabMountState.tabs : new Set<DetailTab>([tab]);
-  useEffect(() => {
-    setTabMountState((previous) => {
-      if (previous.key !== tabScopeKey) return { key: tabScopeKey, tabs: new Set([tab]) };
-      if (previous.tabs.has(tab)) return previous;
-      return { key: tabScopeKey, tabs: new Set(previous.tabs).add(tab) };
-    });
-  }, [tab, tabScopeKey]);
+  if (tabMountState.key !== tabScopeKey) {
+    setTabMountState({ key: tabScopeKey, tabs: new Set([tab]) });
+  } else if (!tabMountState.tabs.has(tab)) {
+    setTabMountState({ key: tabScopeKey, tabs: new Set(tabMountState.tabs).add(tab) });
+  }
   const [chromeCondensed, setChromeCondensed] = useState(false);
   // Each mounted tab remembers its own scroll chrome; short tabs cannot scroll to reopen it.
   const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
@@ -591,7 +589,7 @@ export function PullRequestDetailPanel({
   // Refund after the fold commits so the content under the reader does not jump with its height.
   const compensationRef = useRef<number | null>(null);
   useLayoutEffect(() => {
-    if (compensationRef.current === null) return;
+    if (!condensed || compensationRef.current === null) return;
     const scroller = scrollerRef.current;
     const delta = compensationRef.current;
     compensationRef.current = null;
@@ -603,13 +601,6 @@ export function PullRequestDetailPanel({
     (settings) => settings.pullRequestMergeMethodOverrides,
   );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const [mergeMethodSelection, setMergeMethodSelection] = useState<{
-    readonly pullRequestKey: string;
-    readonly method: PullRequestMergeMethod;
-  } | null>(null);
-  const setMergeMethod = (method: PullRequestMergeMethod) => {
-    setMergeMethodSelection({ pullRequestKey, method });
-  };
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
     readonly action: "merge" | "close" | "enable-auto-merge" | "revert" | "approve-workflows";
@@ -625,39 +616,39 @@ export function PullRequestDetailPanel({
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
-  const [cachedDetail, setCachedDetail] = useState(() =>
-    readPullRequestDetailSnapshot(
+  const liveDetail = detailQuery.data;
+  const [detailCache, setDetailCache] = useState(() => ({
+    key: tabScopeKey,
+    detail: readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
       environmentId,
       reference,
     ),
-  );
-  useEffect(() => {
-    setCachedDetail(
+  }));
+  let cachedDetail = detailCache.detail;
+  if (detailCache.key !== tabScopeKey) {
+    cachedDetail =
+      liveDetail ??
       readPullRequestDetailSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
         environmentId,
         reference,
-      ),
-    );
-  }, [environmentId, pullRequestKey, reference.projectId, reference.repository, reference.number]);
+      );
+    setDetailCache({ key: tabScopeKey, detail: cachedDetail });
+  } else if (liveDetail !== null && liveDetail !== detailCache.detail) {
+    cachedDetail = liveDetail;
+    setDetailCache({ key: tabScopeKey, detail: liveDetail });
+  }
+  const { projectId, repository, number } = reference;
   useEffect(() => {
-    if (detailQuery.data === null) return;
+    if (liveDetail === null) return;
     writePullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
       environmentId,
-      reference,
-      detailQuery.data,
+      { projectId, repository, number },
+      liveDetail,
     );
-    setCachedDetail(detailQuery.data);
-  }, [
-    detailQuery.data,
-    environmentId,
-    pullRequestKey,
-    reference.projectId,
-    reference.repository,
-    reference.number,
-  ]);
+  }, [liveDetail, environmentId, projectId, repository, number]);
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: detailQuery.data,
     cached: cachedDetail,
@@ -708,9 +699,31 @@ export function PullRequestDetailPanel({
           },
     [activity, coreDetail],
   );
-  useEffect(() => {
-    if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
-  }, [detail?.autoMergeMethod, pullRequestKey]);
+  const hostMergeMethod = detail?.autoMergeMethod;
+  const [mergeMethodSelection, setMergeMethodSelection] = useState<{
+    readonly key: string;
+    readonly method: PullRequestMergeMethod | null;
+    readonly hostMethod: PullRequestMergeMethod | undefined;
+  }>(() => ({ key: tabScopeKey, method: hostMergeMethod ?? null, hostMethod: hostMergeMethod }));
+  let currentMergeMethod = mergeMethodSelection.method;
+  if (mergeMethodSelection.key !== tabScopeKey) {
+    currentMergeMethod = hostMergeMethod ?? null;
+    setMergeMethodSelection({
+      key: tabScopeKey,
+      method: currentMergeMethod,
+      hostMethod: hostMergeMethod,
+    });
+  } else if (mergeMethodSelection.hostMethod !== hostMergeMethod) {
+    currentMergeMethod = hostMergeMethod ?? mergeMethodSelection.method;
+    setMergeMethodSelection({
+      key: tabScopeKey,
+      method: currentMergeMethod,
+      hostMethod: hostMergeMethod,
+    });
+  }
+  const setMergeMethod = (method: PullRequestMergeMethod) => {
+    setMergeMethodSelection({ key: tabScopeKey, method, hostMethod: hostMergeMethod });
+  };
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const markdownContext = useMemo(
     () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
@@ -772,11 +785,14 @@ export function PullRequestDetailPanel({
   });
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
+  const { refresh: refreshCoreDetail } = detailQuery;
+  const { refresh: refreshActivity } = activityQuery;
+  const { refresh: refreshNativeStack } = nativeStackQuery;
   const refreshDetail = useCallback(() => {
-    detailQuery.refresh();
-    activityQuery.refresh();
-    nativeStackQuery.refresh();
-  }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
+    refreshCoreDetail();
+    refreshActivity();
+    refreshNativeStack();
+  }, [refreshActivity, refreshCoreDetail, refreshNativeStack]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
@@ -786,11 +802,11 @@ export function PullRequestDetailPanel({
     if (!coreDetail) return;
     const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
     if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
-      activityQuery.refresh();
+      refreshActivity();
       setRefreshToken((token) => token + 1);
     }
     activityRevision.current = next;
-  }, [activityQuery.refresh, coreDetail, tabScopeKey]);
+  }, [refreshActivity, coreDetail, tabScopeKey]);
   // Reuse activity and diff until core detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
@@ -806,7 +822,7 @@ export function PullRequestDetailPanel({
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [isInvalidating, setIsInvalidating] = useState(false);
-  const refreshFromHost = useCallback(async () => {
+  const refreshFromHost = async () => {
     setIsInvalidating(true);
     try {
       await invalidate({ environmentId, input: { reference } });
@@ -815,7 +831,7 @@ export function PullRequestDetailPanel({
     } finally {
       setIsInvalidating(false);
     }
-  }, [environmentId, invalidate, reference, refreshDetail]);
+  };
   // A refresh asked for by the page: the detail, and through the token below, the diff with it.
   const appliedForcedToken = useRef(forcedRefreshToken);
   useEffect(() => {
@@ -1336,8 +1352,6 @@ export function PullRequestDetailPanel({
   const allowedMergeMethods = detail
     ? detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method])
     : [];
-  const currentMergeMethod =
-    mergeMethodSelection?.pullRequestKey === pullRequestKey ? mergeMethodSelection.method : null;
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedMergeMethods,
     currentMergeMethod,
@@ -1367,9 +1381,7 @@ export function PullRequestDetailPanel({
   // The Code tab can be opened while the detail is still on its way, and the detail may then say
   // this host has no patch to show. The tab goes, so whoever was standing on it is moved back to
   // the summary rather than left looking at a panel that is no longer reachable.
-  useEffect(() => {
-    if (!visibleTabs.some((item) => item.value === tab)) setTab("summary");
-  }, [tab, visibleTabs]);
+  if (!visibleTabs.some((item) => item.value === tab)) setTab("summary");
   // Two questions, both of which have to say yes: whether this host can do it at all, and
   // whether this account may. A reader with read access on someone else's project sees the pull
   // request and none of the buttons that would only ever be refused.
@@ -2571,6 +2583,7 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
+                  mergeMethod={selectedMergeMethod}
                   environmentId={environmentId}
                   threadRef={threadRef}
                   reference={reference}

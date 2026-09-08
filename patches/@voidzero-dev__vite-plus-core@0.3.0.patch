@@ -1,0 +1,7 @@
+diff --git a/dist/vite/node/chunks/node.js b/dist/vite/node/chunks/node.js
+index 7bd2781c7bcb6a598930865db3f764dc1e4e4660..27bf38d9c2604c2d7c46baac8308043ac6490bc2 100644
+--- a/dist/vite/node/chunks/node.js
++++ b/dist/vite/node/chunks/node.js
+@@ -40580 +40580 @@
+-			watch: { skipWrite: true }
++			watch: { skipWrite: true, ...convertToWatcherOptions(this.environment.config.server.watch) }

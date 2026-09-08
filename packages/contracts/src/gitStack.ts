@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 /**
  * GitHub stacked pull requests, read through the `gh stack` extension
@@ -98,6 +99,8 @@ export const GitStackRunActionInput = Schema.Struct({
    */
   cwd: TrimmedNonEmptyString,
   action: GitStackActionKind,
+  /** The selected merge method. Older clients can omit it. */
+  mergeMethod: Schema.optional(PullRequestMergeMethod),
   /** Required by `merge` and by `checkout`, refused by every other action. */
   prNumber: Schema.optional(PositiveInt),
   /**
