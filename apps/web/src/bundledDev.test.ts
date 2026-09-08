@@ -175,7 +175,8 @@ it("hot updates Tailwind classes when a source file changes in bundled dev", asy
           },
         },
       ],
-      server: { host: "127.0.0.1", port: 0 },
+      // Poll the fixture so file-change delivery works in restricted environments.
+      server: { host: "127.0.0.1", port: 0, watch: { usePolling: true, interval: 100 } },
     });
     await server.listen();
     const address = server.httpServer?.address();

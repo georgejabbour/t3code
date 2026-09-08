@@ -20,7 +20,7 @@ import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
 
-const NOW = "2026-01-01T00:00:00.000Z";
+const STALE_AT = "1969-12-31T00:00:00.000Z";
 const THREAD_ID = ThreadId.make("thread-reaper-policy");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 
@@ -37,8 +37,8 @@ const threadShell = (backgroundLiveness: "working" | "monitoring" | null) => ({
   branch: null,
   worktreePath: null,
   latestTurn: null,
-  createdAt: NOW,
-  updatedAt: NOW,
+  createdAt: STALE_AT,
+  updatedAt: STALE_AT,
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
@@ -52,7 +52,7 @@ const threadShell = (backgroundLiveness: "working" | "monitoring" | null) => ({
     // The turn is over. Only `backgroundLiveness` can still say work is alive.
     activeTurnId: null,
     lastError: null,
-    updatedAt: NOW,
+    updatedAt: STALE_AT,
   },
   latestUserMessageAt: null,
   hasPendingApprovals: false,

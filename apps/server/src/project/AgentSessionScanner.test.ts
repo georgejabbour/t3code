@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   type OrchestrationProjectShell,
   ProjectId,
@@ -22,6 +23,11 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
 
 const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => ({
   id: ProjectId.make("project-1"),
@@ -869,10 +875,15 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        // The exclusions key off the real home directory, so these fixtures
-        // must live there. Each run owns a uniquely named subtree and removes
-        // only that subtree, never the shared Codex or Downloads parents.
-        const home = NodeOS.homedir();
+        // Use an isolated home directory for the same path-exclusion checks.
+        const previousHome = NodeOS.homedir();
+        const home = yield* makeTempDir("t3code-scanner-home-");
+        vi.mocked(NodeOS.homedir).mockReturnValue(home);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            vi.mocked(NodeOS.homedir).mockReturnValue(previousHome);
+          }),
+        );
         // Borrow a unique suffix from a scoped temp dir instead of reaching for
         // Date.now or Math.random, which the Effect lint rejects.
         const runId = path.basename(yield* makeTempDir("t3code-scanner-test-"));

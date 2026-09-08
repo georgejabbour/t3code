@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 /**
  * GitHub stacked pull requests, read through the `gh stack` extension
@@ -98,6 +99,8 @@ export const GitStackRunActionInput = Schema.Struct({
    */
   cwd: TrimmedNonEmptyString,
   action: GitStackActionKind,
+  /** The selected merge method. Older clients can omit it. */
+  mergeMethod: Schema.optional(PullRequestMergeMethod),
   /** Required by `merge` and by `checkout`, refused by every other action. */
   prNumber: Schema.optional(PositiveInt),
   /**
@@ -124,7 +127,7 @@ export type GitStackActionResult = typeof GitStackActionResult.Type;
  * and the checkout that blocks it, because a message without those two names
  * sends the reader hunting through worktrees by hand.
  */
-export class GitStackPreflightError extends Schema.TaggedErrorClass<GitStackPreflightError>()(
+export class GitStackPreflightError extends Schema.TaggedError<GitStackPreflightError>()(
   "GitStackPreflightError",
   {
     cwd: TrimmedNonEmptyString,
@@ -147,7 +150,7 @@ export class GitStackPreflightError extends Schema.TaggedErrorClass<GitStackPref
  * The branches are left half-rebased on disk, so the recovery commands are part
  * of the answer rather than an aside.
  */
-export class GitStackConflictError extends Schema.TaggedErrorClass<GitStackConflictError>()(
+export class GitStackConflictError extends Schema.TaggedError<GitStackConflictError>()(
   "GitStackConflictError",
   {
     cwd: TrimmedNonEmptyString,
@@ -164,7 +167,7 @@ export class GitStackConflictError extends Schema.TaggedErrorClass<GitStackConfl
 }
 
 /** Any other `gh stack` failure, carrying what the command printed. */
-export class GitStackCommandError extends Schema.TaggedErrorClass<GitStackCommandError>()(
+export class GitStackCommandError extends Schema.TaggedError<GitStackCommandError>()(
   "GitStackCommandError",
   {
     cwd: TrimmedNonEmptyString,
