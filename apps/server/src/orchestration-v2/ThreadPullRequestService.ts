@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -29,11 +30,12 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
-class ThreadPullRequestServiceV2 extends Context.Service<
+export class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
+    readonly refreshWorkspace: (cwd: string) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadPullRequestService/ThreadPullRequestServiceV2") {}
 
@@ -95,6 +97,7 @@ interface RefreshRequest {
   readonly threadId: ThreadId | null;
   readonly refresh: boolean;
   readonly backfill?: boolean;
+  readonly cwd?: string;
 }
 
 export const make = Effect.gen(function* () {
@@ -105,6 +108,9 @@ export const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonicalPath = (cwd: string) =>
+    fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
   const pendingBackfill = new Map<ThreadId, number>();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
@@ -125,11 +131,11 @@ export const make = Effect.gen(function* () {
    * threads reads only active, unsettled ones, since discovery skips the rest;
    * backfill looks up settled threads, so its passes read every active thread.
    */
-  const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
+  const readThreadSnapshot = ({ threadId, backfill, cwd }: RefreshRequest) =>
     threadId === null
       ? orchestrator.getShellSnapshot({
           location: "active",
-          unsettledOnly: !(backfill || pendingBackfill.size > 0),
+          unsettledOnly: !(backfill || cwd !== undefined || pendingBackfill.size > 0),
         })
       : Effect.gen(function* () {
           // Read the sequence first. The thread is then at least this new, so a
@@ -167,11 +173,24 @@ export const make = Effect.gen(function* () {
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
+    const requestedCwd = request.cwd === undefined ? undefined : yield* canonicalPath(request.cwd);
+    const workspaceThreadIds = new Set<ThreadId>();
+    if (requestedCwd !== undefined) {
+      for (const thread of threadSnapshot.threads) {
+        const cwd = thread.worktreePath ?? projects.get(thread.projectId)?.workspaceRoot;
+        if (cwd !== undefined && (yield* canonicalPath(cwd)) === requestedCwd) {
+          workspaceThreadIds.add(thread.id);
+        }
+      }
+    }
     const threads = threadSnapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        (requestedCwd === undefined || workspaceThreadIds.has(thread.id)) &&
+        (request.threadId === null || thread.id === request.threadId) &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
+          requestedCwd !== undefined ||
           pendingBackfill.has(thread.id)) &&
         (thread.branch !== null || thread.branchPullRequest != null),
     );
@@ -402,7 +421,9 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, drain: worker.drain } satisfies ThreadPullRequestServiceV2["Service"];
+  const refreshWorkspace = (cwd: string) =>
+    worker.enqueue({ threadId: null, refresh: true, cwd }).pipe(Effect.andThen(worker.drain));
+  return { start, drain: worker.drain, refreshWorkspace } satisfies ThreadPullRequestServiceV2["Service"];
 });
 
-const layer = Layer.effect(ThreadPullRequestServiceV2, make);
+export const layer = Layer.effect(ThreadPullRequestServiceV2, make);
