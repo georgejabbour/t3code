@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -110,7 +111,6 @@ const capturedView = `{
     {
       "name": "auth",
       "base": "ddd4444",
-      "base": "ddd4444",
       "isCurrent": false,
       "isMerged": false,
       "isQueued": false,
@@ -205,11 +205,10 @@ describe("stack discovery", () => {
           }),
       });
       const service = yield* GitStackService.make.pipe(
-        Effect.provide(GhStackCli.layer.pipe(Layer.provide(processLayer))),
-        Effect.provide(processLayer),
+        Effect.provide(GhStackCli.layer.pipe(Layer.provideMerge(processLayer))),
       );
       const view = yield* service.view({ cwd, branch: "frontend" });
-      expect(view).toEqual(normalizeStackView(JSON.parse(capturedView)));
+      expect(view).toEqual(Result.getOrThrow(parseStackViewJson(capturedView)));
       expect(probedPaths).toEqual([cwd, trackingPath]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
