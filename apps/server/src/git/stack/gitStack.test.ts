@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -18,6 +21,8 @@ import { normalizeStackView, parseStackViewJson, stderrTail } from "./GhStackCli
 
 // Added by this fork. See Patch 16 in PATCHES.md.
 
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 describe("stack merge preferences", () => {
   for (const mergeMethod of ["merge", "squash", "rebase", undefined] as const) {
     it.effect(`merges a stack with method ${mergeMethod ?? "omitted"}`, () => {
@@ -32,7 +37,7 @@ describe("stack merge preferences", () => {
             let stdout: string;
             if (input.args[1] === "view") {
               expect(input.args).toEqual(["stack", "view", "--json"]);
-              stdout = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+              stdout = yield* encodeUnknownJson({
                 trunk: "main",
                 currentBranch: "feature",
                 branches: [
@@ -76,6 +81,7 @@ describe("stack merge preferences", () => {
       const serviceLayer = GitStackService.layer.pipe(
         Layer.provide(GhStackCli.layer),
         Layer.provide(processLayer),
+        Layer.provideMerge(NodeServices.layer),
       );
       return Effect.gen(function* () {
         const service = yield* GitStackService.GitStackService;
@@ -132,6 +138,82 @@ const capturedView = `{
     }
   ]
 }`;
+
+describe("stack discovery", () => {
+  it.effect("finds saved stack state beyond the first eight worktrees", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const scratch = path.resolve(".scratch");
+      yield* fileSystem.makeDirectory(scratch, { recursive: true });
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        directory: scratch,
+        prefix: "git-stack-",
+      });
+      const trackingPath = path.join(cwd, "tracking");
+      const gitDirectory = path.join(cwd, ".git", "worktrees", "tracking");
+      yield* fileSystem.makeDirectory(trackingPath);
+      yield* fileSystem.makeDirectory(gitDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(trackingPath, ".git"),
+        "gitdir: ../.git/worktrees/tracking\n",
+      );
+      yield* fileSystem.writeFileString(
+        path.join(gitDirectory, "gh-stack"),
+        yield* encodeUnknownJson({
+          stacks: [{ branches: [{ branch: "api" }, { branch: "frontend" }] }],
+        }),
+      );
+      const checkouts = [
+        ...Array.from({ length: 8 }, (_, index) => ({
+          path: path.join(cwd, `other-${index}`),
+          branch: `other-${index}`,
+          prunable: false,
+        })),
+        { path: trackingPath, branch: "api", prunable: false },
+      ];
+      expect(stackProbeOrder(checkouts, cwd, "frontend")).not.toContain(trackingPath);
+      const probedPaths: string[] = [];
+      const processLayer = Layer.succeed(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.sync(() => {
+            let stdout = "";
+            let exitCode = 0;
+            if (input.command === "git") {
+              expect(input.args).toEqual(["worktree", "list", "--porcelain"]);
+              stdout = checkouts
+                .map((checkout) =>
+                  [`worktree ${checkout.path}`, `branch refs/heads/${checkout.branch}`, ""].join(
+                    "\n",
+                  ),
+                )
+                .join("\n");
+            } else {
+              expect(input.command).toBe("gh");
+              expect(input.args).toEqual(["stack", "view", "--json"]);
+              probedPaths.push(input.cwd);
+              stdout = input.cwd === trackingPath ? capturedView : "";
+              exitCode = input.cwd === trackingPath ? 0 : 2;
+            }
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(exitCode),
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      });
+      const service = yield* GitStackService.make.pipe(
+        Effect.provide(GhStackCli.layer.pipe(Layer.provide(processLayer))),
+        Effect.provide(processLayer),
+      );
+      const view = yield* service.view({ cwd, branch: "frontend" });
+      expect(view).toEqual(normalizeStackView(JSON.parse(capturedView)));
+      expect(probedPaths).toEqual([cwd, trackingPath]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe("normalizeStackView", () => {
   it("lower-cases pull request states and fills the absent pr with null", () => {
