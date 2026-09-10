@@ -1323,12 +1323,12 @@ an edge case. Three parts of this patch read as broken because of it:
 
 The fixes, in the same order:
 
-1. A read that names a branch now asks this repository's checkouts in turn and
-   takes the first chain that holds that branch. The checkout holding the
-   branch is asked first, prunable and detached checkouts are skipped, and the
-   list is capped at eight so a repository with dozens of worktrees does not
-   turn one panel into dozens of `gh` runs. A named branch that no chain holds
-   reads as no stack, rather than as somebody else's chain.
+1. A read that names a branch now asks selected repository checkouts for the
+   chain. The checkout holding the branch comes first. A checkout whose local
+   `gh-stack` state contains the branch comes next. The server skips prunable
+   and detached checkouts. It caps the probe list at eight entries, so one
+   panel cannot start dozens of `gh` commands. A named branch that no chain
+   holds reads as no stack.
 2. A chain row now runs a new `checkout` action, `gh stack checkout <pr>`, in
    the thread's own worktree. That command moves that working tree onto the
    branch, and when the worktree tracks no stack yet it reads the stack from
