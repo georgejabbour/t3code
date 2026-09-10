@@ -549,14 +549,11 @@ const WsServerGetSubscriptionUsageRpc = Rpc.make(WS_METHODS.serverGetSubscriptio
   error: Schema.Union([EnvironmentAuthorizationError]),
 });
 
-const WsServerRefreshSubscriptionUsageRpc = Rpc.make(
-  WS_METHODS.serverRefreshSubscriptionUsage,
-  {
-    payload: Schema.Struct({}),
-    success: SubscriptionUsageList,
-    error: Schema.Union([EnvironmentAuthorizationError]),
-  },
-);
+const WsServerRefreshSubscriptionUsageRpc = Rpc.make(WS_METHODS.serverRefreshSubscriptionUsage, {
+  payload: Schema.Struct({}),
+  success: SubscriptionUsageList,
+  error: Schema.Union([EnvironmentAuthorizationError]),
+});
 
 const WsServerGetSubscriptionUsageHistoryRpc = Rpc.make(
   WS_METHODS.serverGetSubscriptionUsageHistory,

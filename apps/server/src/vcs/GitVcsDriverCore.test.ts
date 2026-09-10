@@ -1693,7 +1693,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-
     it.effect("uses the given folder name instead of the branch", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1720,8 +1719,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* driver.removeWorktree({ cwd, path: created.worktree.path });
       }),
     );
-
-
 
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
