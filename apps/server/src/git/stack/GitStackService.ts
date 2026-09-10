@@ -2,7 +2,11 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   GitStackCommandError,
@@ -58,6 +62,31 @@ const VIEW_CACHE_CAPACITY = 64;
 const ACTION_SUMMARY_LINES = 6;
 
 const VIEW_CACHE_TTL = Duration.seconds(VIEW_CACHE_TTL_SECONDS);
+
+const PersistedStackState = Schema.Struct({
+  stacks: Schema.Array(
+    Schema.Struct({
+      branches: Schema.Array(Schema.Struct({ branch: Schema.String })),
+    }),
+  ),
+});
+
+const decodePersistedStackState = Schema.decodeUnknownOption(
+  Schema.fromJsonString(PersistedStackState),
+);
+
+function persistedStateTracksBranches(
+  contents: string,
+  currentBranch: string,
+  requestedBranch: string,
+): boolean {
+  return Option.exists(decodePersistedStackState(contents), ({ stacks }) =>
+    stacks.some(({ branches }) => {
+      const names = new Set(branches.map(({ branch }) => branch));
+      return names.has(currentBranch) && names.has(requestedBranch);
+    }),
+  );
+}
 
 export interface WorktreeCheckout {
   readonly path: string;
@@ -142,25 +171,26 @@ const MAX_STACK_PROBES = 8;
 /**
  * The checkouts worth asking about the stack that holds `branch`, best first.
  *
- * The checkout that holds the branch comes first, because it is the one that
- * usually answers. The rest follow in the order git lists them. A checkout git
- * calls prunable has no directory left to run in, and one with no branch cannot
- * answer at all, because the extension reports the chain of the current branch.
- * The list is capped so a repository with dozens of worktrees does not turn one
- * panel into dozens of `gh` runs.
+ * The checkout that holds the branch comes first. A checkout whose stack state
+ * names the branch comes next. The rest follow in the order git lists them. A
+ * prunable checkout has no directory. A detached checkout cannot identify its
+ * current stack. The limit prevents one panel from starting dozens of `gh`
+ * commands.
  */
 export function stackProbeOrder(
   checkouts: ReadonlyArray<WorktreeCheckout>,
   askedCwd: string,
   branch: string,
   limit: number = MAX_STACK_PROBES,
+  trackingPaths: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<string> {
   const usable = checkouts.filter(
     (checkout) => !checkout.prunable && checkout.branch !== null && checkout.path !== askedCwd,
   );
   return [
     ...usable.filter((checkout) => checkout.branch === branch),
-    ...usable.filter((checkout) => checkout.branch !== branch),
+    ...usable.filter((checkout) => checkout.branch !== branch && trackingPaths.has(checkout.path)),
+    ...usable.filter((checkout) => checkout.branch !== branch && !trackingPaths.has(checkout.path)),
   ]
     .slice(0, limit)
     .map((checkout) => checkout.path);
@@ -183,6 +213,33 @@ function viewHoldsBranch(view: GitStackView | null, branch: string): view is Git
 export const make = Effect.gen(function* () {
   const ghStack = yield* GhStackCli.GhStackCli;
   const process = yield* VcsProcess.VcsProcess;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const readFileSafe = (filePath: string) =>
+    fileSystem.readFileString(filePath).pipe(
+      Effect.match({
+        onFailure: () => null,
+        onSuccess: (contents) => contents,
+      }),
+    );
+
+  const checkoutTracksBranch = Effect.fn("GitStackService.checkoutTracksBranch")(function* (
+    checkout: WorktreeCheckout,
+    requestedBranch: string,
+  ) {
+    if (checkout.branch === null || checkout.prunable) return false;
+
+    const dotGitPath = path.join(checkout.path, ".git");
+    const dotGitContents = yield* readFileSafe(dotGitPath);
+    const pointer = dotGitContents
+      ?.trim()
+      .match(/^gitdir:\s*(.+)$/)?.[1]
+      ?.trim();
+    const gitDirectory = pointer ? path.resolve(checkout.path, pointer) : dotGitPath;
+    const state = yield* readFileSafe(path.join(gitDirectory, "gh-stack"));
+    return state !== null && persistedStateTracksBranches(state, checkout.branch, requestedBranch);
+  });
 
   const readStack = Effect.fn("GitStackService.readStack")(function* (
     cwd: string,
@@ -201,7 +258,26 @@ export const make = Effect.gen(function* () {
     // panel names the pull request's own head branch, so the answer is the chain
     // that pull request sits in.
     const checkouts = yield* worktreeCheckouts(cwd);
-    for (const candidate of stackProbeOrder(checkouts, cwd, branch)) {
+    const trackableCheckouts = checkouts.filter(
+      (checkout) => !checkout.prunable && checkout.branch !== null && checkout.path !== cwd,
+    );
+    const trackingPaths = new Set(
+      (yield* Effect.forEach(
+        trackableCheckouts,
+        (checkout) => checkoutTracksBranch(checkout, branch),
+        { concurrency: 8 },
+      )).flatMap((tracksBranch, index) => {
+        const checkout = trackableCheckouts[index];
+        return tracksBranch && checkout ? [checkout.path] : [];
+      }),
+    );
+    for (const candidate of stackProbeOrder(
+      checkouts,
+      cwd,
+      branch,
+      MAX_STACK_PROBES,
+      trackingPaths,
+    )) {
       // A checkout that cannot answer is not a failure of the read: the next
       // one may still hold the chain.
       const view = yield* ghStack.view(candidate).pipe(Effect.orElseSucceed(() => null));
