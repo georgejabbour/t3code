@@ -65,6 +65,7 @@ const makeSnapshot = (threads: ReadonlyArray<ThreadInput>) => ({
     branch: null,
     worktreePath: thread.worktreePath ?? null,
     latestTurn: null,
+    pullRequests: [],
     createdAt: NOW,
     updatedAt: NOW,
     archivedAt: thread.archived === false ? null : NOW,
