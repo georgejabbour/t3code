@@ -153,48 +153,44 @@ was rejected for Patch 5 for that reason, and the operation string and the stora
 key were chosen instead. A bundler renames variables, so a marker must be a string
 literal, a storage key, or an attribute name.
 
-## Compatibility with `v0.0.41-nightly.20260908.1400`
+## Compatibility with `v0.0.41-nightly.20260910.1486`
 
-The series retains all 76 commits from the previous fork. Four commits need
-conflict resolutions in four files. No complete patch is removed. Upstream's
-new error declarations remain in place beside the fork's archive-script handling,
-shared teardown messages, and ignored-file limit.
+The rebase targets commit `d29c56a5c404cb0f58d3b2ac41762fa0d0ac28d4`.
+The old history contains two copies of the fork series. The rebase removes
+repeated copies and retains the fork behavior, including priority for worktrees
+that track the requested stack.
 
-Upstream now starts the idle window from the later of the session update and
-binding update. The fork retains its configurable timeout, including zero to keep
-sessions alive. The tests retain upstream's completed-turn cases and the fork's
-one-second test setting. The updater's 600-second idle rule does not change.
+The sidebar retains upstream's multiple pull request links beside the fork's
+stack position marker. Pull request panels retain upstream navigation and native
+stack refresh, plus the fork's thread directory, branch, and stack actions.
+The dependency lock retains upstream's Effect patch and the fork's Vite watcher patch.
+The three stack error classes use `Schema.TaggedError`, which this target supplies.
+A contract test checks that each error retains its fields after encoding and decoding.
 
-The compatibility commit changes the three stack error classes to use Effect's
-new `Schema.TaggedError` declaration. It removes an unused test import.
-Stack merges use the selected merge method from the pull request panel.
-The subscription selector masks email labels and provides a separate reveal control.
-Desktop cookie and update tests use their existing domain types where the new
-TypeScript compiler cannot infer a portable result type.
-Two server callbacks return `void` on both paths for the new Effect types.
-Tests use an isolated home directory and an idle timestamp before the test clock.
-The pull request panel retains detail and merge choices without extra state-update effects.
-Check rows retain their identity when their order changes.
+Four files need corrections after the rebase:
 
-The Vite 0.3.0 dependency patch passes the configured file-watcher options to
-bundled compilation. The native watcher does not report source changes in the
-restricted test environment. The Tailwind test uses polling, changes a real source
-file, and waits for the compiled update over the WebSocket connection.
-Upstream's sidebar project records and stable row order remain intact. The fork's
-stack marker uses the shared project-directory fallback. Upstream's question
-attachments and image galleries remain intact.
+- `apps/server/src/git/stack/gitStack.test.ts` uses the schema decoder for its
+  expected stack result. The target's type checker rejects `JSON.parse` inside
+  this Effect test. The test supplies its services through one combined layer
+  to remove the service-lifetime warning. Its captured input contains one `base`
+  field per branch.
+- `apps/server/src/orchestration/Layers/ArchivedThreadReaper.test.ts` supplies
+  the new required `pullRequests` field in its saved thread test data.
+- `apps/server/src/vcs/GitVcsDriverCore.test.ts` removes extra blank lines that
+  the rebase retained around the fork's worktree tests.
+- `packages/contracts/src/rpc.ts` uses the required format for the subscription
+  refresh request. Its request fields and behavior remain the same.
 
-The earlier partial absorption of real-checkout adoption remains recorded under
-Patch 8. Its remaining patch contains a status-change test and explanation.
-This target absorbs no additional complete patch or functional patch fragment.
+The last two corrections satisfy the format check. They change no runtime behavior.
+The earlier partial absorption of real-checkout adoption remains under Patch 8.
 
-After a rebase, install source dependencies with `pnpm install --frozen-lockfile`.
-Use the Node version from `.node-version`. Run the focused patch tests and these
-full repository checks as separate commands:
+Use Node `v24.20.0` for the focused tests and these complete checks:
 
 ```sh
-./node_modules/.bin/vp run -r --concurrency-limit 2 typecheck
-./node_modules/.bin/vp run -r --concurrency-limit 1 test
+pnpm run typecheck
+pnpm run lint
+pnpm run fmt:check
+pnpm test
 ```
 
 The updater's `--check --target <tag> --test` path records compatibility for the
