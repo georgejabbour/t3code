@@ -24,6 +24,7 @@ describe("projectScripts helpers", () => {
       command: "./previous.sh",
       icon: "play",
       runOnWorktreeCreate: true,
+      waitForSetup: false,
       runOnWorktreeRemove: true,
       previewUrl: null,
       autoOpenPreview: false,
@@ -33,6 +34,7 @@ describe("projectScripts helpers", () => {
       name: "New archive",
       command: "./archive.sh",
       runOnWorktreeCreate: false,
+      waitForSetup: false,
       runOnWorktreeRemove: true,
       previewUrl: null,
       autoOpenPreview: false,
@@ -93,6 +95,7 @@ describe("projectScripts helpers", () => {
       name: "Setup",
       command: "pnpm i",
       icon: "configure",
+      runOnWorktreeRemove: false,
       previewUrl: null,
       autoOpenPreview: false,
     } as const;

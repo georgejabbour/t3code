@@ -583,13 +583,6 @@ export function PullRequestDetailPanel({
       environmentConfigs.get(environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS,
       reference.projectId,
     ).settings.pullRequestMergeMethod ?? undefined;
-  const [mergeMethodSelection, setMergeMethodSelection] = useState<{
-    readonly pullRequestKey: string;
-    readonly method: PullRequestMergeMethod;
-  } | null>(null);
-  const setMergeMethod = (method: PullRequestMergeMethod) => {
-    setMergeMethodSelection({ pullRequestKey, method });
-  };
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
     readonly action: "merge" | "close" | "enable-auto-merge" | "revert" | "approve-workflows";
