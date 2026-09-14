@@ -177,56 +177,56 @@ describe("project query refresh", () => {
   });
 
   it("refreshes cached entries after a workspace change", async () => {
-      const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
-      const entriesAtom = Atom.make(
-        Effect.promise(() => {
-          const request = deferred<ProjectListEntriesResult>();
-          requests.push(request);
-          return request.promise;
-        }),
-      ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
-      const registry = AtomRegistry.make();
-      const unmount = registry.mount(entriesAtom);
-      projectMocks.listEntries.mockReturnValue(entriesAtom);
-      atomHooks.registry = registry;
-      let renderedPaths: readonly string[] = [];
+    const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
+    const entriesAtom = Atom.make(
+      Effect.promise(() => {
+        const request = deferred<ProjectListEntriesResult>();
+        requests.push(request);
+        return request.promise;
+      }),
+    ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(entriesAtom);
+    projectMocks.listEntries.mockReturnValue(entriesAtom);
+    atomHooks.registry = registry;
+    let renderedPaths: readonly string[] = [];
 
-      const render = (mutationId: string | null) => {
-        reactHooks.beginRender();
-        const query = useProjectEntriesQuery(environmentId, "/repo");
-        renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
-        useWorkspaceMutationRefresh({
-          mutationId,
-          refresh: query.refresh,
-          resourceKey: "files:environment-1:/repo",
-        });
-      };
+    const render = (mutationId: string | null) => {
+      reactHooks.beginRender();
+      const query = useProjectEntriesQuery(environmentId, "/repo");
+      renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
+      useWorkspaceMutationRefresh({
+        mutationId,
+        refresh: query.refresh,
+        resourceKey: "files:environment-1:/repo",
+      });
+    };
 
-      try {
-        await flushEffects();
-        expect(requests).toHaveLength(1);
-        requests[0]!.resolve(projectEntries(["src/old.ts"]));
-        await flushEffects();
+    try {
+      await flushEffects();
+      expect(requests).toHaveLength(1);
+      requests[0]!.resolve(projectEntries(["src/old.ts"]));
+      await flushEffects();
 
-        render("mutation-1");
-        expect(renderedPaths).toEqual(["src/old.ts"]);
-        await flushEffects();
-        expect(requests).toHaveLength(2);
+      render("mutation-1");
+      expect(renderedPaths).toEqual(["src/old.ts"]);
+      await flushEffects();
+      expect(requests).toHaveLength(2);
 
-        requests[1]!.resolve(projectEntries(["src/new.ts"]));
-        await flushEffects();
-        render("mutation-1");
-        expect(renderedPaths).toEqual(["src/new.ts"]);
-        expect(projectMocks.listEntries).toHaveBeenCalledWith({
-          environmentId,
-          input: { cwd: "/repo" },
-        });
-        expect(requests).toHaveLength(2);
-      } finally {
-        unmount();
-        registry.dispose();
-        atomHooks.registry = null;
-      }
+      requests[1]!.resolve(projectEntries(["src/new.ts"]));
+      await flushEffects();
+      render("mutation-1");
+      expect(renderedPaths).toEqual(["src/new.ts"]);
+      expect(projectMocks.listEntries).toHaveBeenCalledWith({
+        environmentId,
+        input: { cwd: "/repo" },
+      });
+      expect(requests).toHaveLength(2);
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
   });
 
   it.each([

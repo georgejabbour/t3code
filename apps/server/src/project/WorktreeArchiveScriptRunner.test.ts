@@ -56,6 +56,7 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.die("unused"),
+    getProjectShells: () => Effect.die("unused"),
     getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
       Effect.succeed(workspaceRoot === WORKSPACE_ROOT ? Option.some(project) : Option.none()),
     getProjectShellById: () => Effect.succeed(Option.none()),
