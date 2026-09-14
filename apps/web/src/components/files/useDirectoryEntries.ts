@@ -7,11 +7,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useShowIgnoredFiles } from "~/showIgnoredFilesPreference";
 
-export function directoryEntriesInput(
-  cwd: string,
-  directoryPath: string,
-  showIgnored: boolean,
-) {
+export function directoryEntriesInput(cwd: string, directoryPath: string, showIgnored: boolean) {
   return { cwd, directoryPath, ...(showIgnored ? { includeIgnored: true as const } : {}) };
 }
 
