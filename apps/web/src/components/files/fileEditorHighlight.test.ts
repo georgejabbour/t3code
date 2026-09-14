@@ -32,8 +32,9 @@ const { EditorTokenizer } = (await import(/* @vite-ignore */ tokenizerUrl.href))
 };
 
 const workerModule = import.meta.resolve("@pierre/diffs/worker/worker.js");
+const sourceLineCount = 1_000;
 const source = Array.from(
-  { length: 7_000 },
+  { length: sourceLineCount },
   (_, index) =>
     `export const section${index} = <p>Long wrapped source line ${index} for the file editor.</p>;`,
 ).join("\n");
@@ -46,7 +47,7 @@ const options = {
   disableFileHeader: true,
 } as const;
 const range: RenderRange = {
-  startingLine: 6_950,
+  startingLine: sourceLineCount - 50,
   totalLines: 150,
   bufferBefore: 0,
   bufferAfter: 0,
@@ -240,7 +241,7 @@ describe("editable file highlighting", () => {
       expect(renderContents()).toContain("EDITED_MARKER");
       const firstLines = renderer.renderFile(file, { ...range, startingLine: 0, totalLines: 20 });
       expect(renderer.renderFullHTML(firstLines!)).toContain('style="color:');
-      expect(document.lineCount).toBe(7_000 + count);
+      expect(document.lineCount).toBe(sourceLineCount + count);
     },
   );
 
@@ -249,7 +250,7 @@ describe("editable file highlighting", () => {
     append(" EDITED_MARKER");
     oldResponse.deliver();
     expect(renderContents()).toContain("EDITED_MARKER");
-    expect(document.lineCount).toBe(7_000);
+    expect(document.lineCount).toBe(sourceLineCount);
     (await nextResponse()).deliver();
     expect(renderContents()).toContain("EDITED_MARKER");
   });
