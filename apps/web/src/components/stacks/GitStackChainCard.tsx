@@ -6,9 +6,10 @@ import type {
   PullRequestMergeMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { GitBranchIcon, GitPullRequestIcon, LayersIcon } from "lucide-react";
+import { GitBranchIcon, LayersIcon } from "lucide-react";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useGitStack, useGitStackAction } from "~/state/gitStacks";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -224,7 +225,9 @@ export function StackChainRows({
               {position}
             </span>
             {pr ? (
-              <GitPullRequestIcon className={cn("size-3.5 shrink-0", prStateClass(member))} />
+              <PullRequestGlyph.pullRequest
+                className={cn("size-3.5 shrink-0", prStateClass(member))}
+              />
             ) : (
               <GitBranchIcon className="text-muted-foreground/50 size-3.5 shrink-0" />
             )}
