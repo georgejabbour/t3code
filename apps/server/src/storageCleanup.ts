@@ -148,6 +148,13 @@ export const make = Effect.gen(function* () {
         );
       });
 
+  const realPathWithoutLeafSymlink = Effect.fn("StorageCleanup.realPathWithoutLeafSymlink")(
+    function* (target: string) {
+      const resolved = path.resolve(target);
+      return path.join(yield* fs.realPath(path.dirname(resolved)), path.basename(resolved));
+    },
+  );
+
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const active = yield* projections.getShellSnapshot();
     const archived = yield* projections.getShellSnapshot({ location: "archive" });
@@ -197,7 +204,9 @@ export const make = Effect.gen(function* () {
         resolveWorktreeCleanup(serverSettings, thread.projectId).worktreeOnDelete,
     );
     const snapshot = yield* readThreads();
-    const root = yield* fs.realPath(config.worktreesDir);
+    const root = path.resolve(config.worktreesDir);
+    const realRoot = yield* fs.realPath(root);
+    if (realRoot !== (yield* realPathWithoutLeafSymlink(root))) return;
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
@@ -223,7 +232,10 @@ export const make = Effect.gen(function* () {
         continue;
       yield* Effect.gen(function* () {
         if (!inside(root, worktreePath) || !(yield* fs.exists(worktreePath))) return;
-        if ((yield* fs.realPath(worktreePath)) !== worktreePath) return;
+        // Compare canonical paths below the configured root. macOS can resolve /var through
+        // /private/var while the worktree path remains below the same directory.
+        const expectedRealPath = path.resolve(realRoot, path.relative(root, worktreePath));
+        if ((yield* fs.realPath(worktreePath)) !== expectedRealPath) return;
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;
@@ -390,14 +402,17 @@ export const make = Effect.gen(function* () {
     rotatedLogs: boolean,
   ) {
     if (days === null || !(yield* fs.exists(root))) return;
-    const realRoot = yield* fs.realPath(root);
-    if (realRoot !== path.resolve(root)) return;
+    const resolvedRoot = path.resolve(root);
+    const realRoot = yield* fs.realPath(resolvedRoot);
+    if (realRoot !== (yield* realPathWithoutLeafSymlink(resolvedRoot))) return;
     const visit = Effect.fn("StorageCleanup.visitFiles")(function* (
       directory: string,
     ): Effect.fn.Return<void, PlatformError | ServerSettingsError> {
       for (const name of yield* fs.readDirectory(directory)) {
         const target = path.join(directory, name);
-        if ((yield* fs.realPath(target)) !== target || !inside(realRoot, target)) continue;
+        const expectedRealPath = path.resolve(realRoot, path.relative(resolvedRoot, target));
+        if (!inside(resolvedRoot, target) || (yield* fs.realPath(target)) !== expectedRealPath)
+          continue;
         const stat = yield* fs.stat(target);
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
@@ -412,7 +427,7 @@ export const make = Effect.gen(function* () {
         }
       }
     });
-    yield* visit(realRoot);
+    yield* visit(resolvedRoot);
   });
 
   const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
