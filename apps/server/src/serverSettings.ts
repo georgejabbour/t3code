@@ -972,47 +972,49 @@ const make = Effect.gen(function* () {
   const updateSettings = (
     patch: ServerSettingsPatch,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    writeSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const current = yield* getSettingsFromCache;
-        const updated = applyServerSettingsPatch(current, patch);
-        const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
-        const next = yield* normalizeServerSettings(persisted.settings);
-        const materialized = yield* Effect.uninterruptibleMask(() =>
-          Effect.gen(function* () {
-            const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
-              persisted.changes,
-            );
-            const materializedExit = yield* Effect.exit(
-              materializeProviderEnvironmentSecrets(next),
-            );
-            if (Exit.isFailure(materializedExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(materializedExit.cause);
-            }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
-            if (Exit.isFailure(writeExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(writeExit.cause);
-            }
-            return materializedExit.value;
-          }),
-        );
-        yield* Cache.set(settingsCache, cacheKey, next);
-        yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
-      }),
-    ).pipe(
-      Effect.tapError((error: ServerSettingsError) =>
-        Effect.logError("failed to update settings, no setting was saved", {
-          path: error.settingsPath,
-          operation: error.operation,
-          providerInstanceId: error.providerInstanceId,
-          environmentVariable: error.environmentVariable,
-          cause: error.cause,
+    writeSemaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache;
+          const updated = applyServerSettingsPatch(current, patch);
+          const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
+          const next = yield* normalizeServerSettings(persisted.settings);
+          const materialized = yield* Effect.uninterruptibleMask(() =>
+            Effect.gen(function* () {
+              const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
+                persisted.changes,
+              );
+              const materializedExit = yield* Effect.exit(
+                materializeProviderEnvironmentSecrets(next),
+              );
+              if (Exit.isFailure(materializedExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(materializedExit.cause);
+              }
+              const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+              if (Exit.isFailure(writeExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(writeExit.cause);
+              }
+              return materializedExit.value;
+            }),
+          );
+          yield* Cache.set(settingsCache, cacheKey, next);
+          yield* emitChange(next);
+          return resolveTextGenerationProvider(materialized);
         }),
-      ),
-    );
+      )
+      .pipe(
+        Effect.tapError((error: ServerSettingsError) =>
+          Effect.logError("failed to update settings, no setting was saved", {
+            path: error.settingsPath,
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
+            cause: error.cause,
+          }),
+        ),
+      );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
