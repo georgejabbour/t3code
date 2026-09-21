@@ -6,6 +6,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import type { T3ProjectFile } from "@t3tools/contracts";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -89,7 +90,7 @@ const DIRECTORY_INFO: FileSystem.File.Info = {
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.bytes(0),
   blksize: Option.none(),
   blocks: Option.none(),
 };
