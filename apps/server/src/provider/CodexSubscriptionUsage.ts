@@ -295,7 +295,7 @@ export const probeCodexSubscriptionUsage = (
 
     // A plan that reports no limits is a real answer, not a failure, so the
     // account above still names the row when this request comes back empty.
-    const rateLimits = yield* client.request("account/rateLimits/read", undefined).pipe(
+    const rateLimits = yield* client.request("account/rateLimits/read", null).pipe(
       Effect.map((response) => response.rateLimits),
       Effect.orElseSucceed(() => undefined),
     );
