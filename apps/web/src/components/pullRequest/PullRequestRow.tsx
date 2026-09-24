@@ -241,7 +241,7 @@ function PullRequestRowImpl({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px] tabular-nums" />
+                    <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-3xs tabular-nums" />
                   }
                 >
                   {stackLabel}
