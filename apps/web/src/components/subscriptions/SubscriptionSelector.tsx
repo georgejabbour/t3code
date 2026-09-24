@@ -283,7 +283,7 @@ export function SubscriptionSelector({
               {summary.totalRemainingPercent}%
             </span>
             {freshness.label === null ? null : (
-              <span className="text-muted-foreground text-[10px]">{freshness.label}</span>
+              <span className="text-muted-foreground text-3xs">{freshness.label}</span>
             )}
           </span>
         )}

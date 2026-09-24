@@ -242,7 +242,7 @@ export function StackChainRows({
             {isHere ? (
               <span
                 data-testid="git-stack-chain-here"
-                className="text-muted-foreground/60 shrink-0 text-[10px] uppercase"
+                className="text-muted-foreground/60 shrink-0 text-3xs uppercase"
               >
                 here
               </span>
@@ -250,9 +250,7 @@ export function StackChainRows({
             {member.needsRebase ? (
               <Tooltip>
                 <TooltipTrigger
-                  render={
-                    <span className="shrink-0 text-[10px] text-amber-600 dark:text-amber-300/90" />
-                  }
+                  render={<span className="shrink-0 text-3xs text-warning-foreground" />}
                 >
                   needs rebase
                 </TooltipTrigger>

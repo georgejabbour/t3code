@@ -31,7 +31,7 @@ export function GitStackPositionMarker({
         render={
           <span
             data-testid="git-stack-position-marker"
-            className="text-muted-foreground/70 ml-1 text-[10px] tabular-nums"
+            className="text-muted-foreground/70 ml-1 text-3xs tabular-nums"
           />
         }
       >
