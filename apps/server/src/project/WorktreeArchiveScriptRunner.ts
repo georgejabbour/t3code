@@ -13,7 +13,7 @@ import {
   worktreeRemoveScript,
 } from "@t3tools/shared/projectScripts";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectService from "./ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
@@ -60,7 +60,7 @@ export class WorktreeArchiveScriptRunner extends Context.Service<
 export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projectService = yield* ProjectService.ProjectService;
   const fileSystem = yield* FileSystem.FileSystem;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
 
@@ -101,8 +101,8 @@ export const make = Effect.gen(function* () {
     const script =
       fileScript ??
       (yield* Effect.gen(function* () {
-        const project = yield* projectionSnapshotQuery
-          .getActiveProjectByWorkspaceRoot(input.workspaceRoot)
+        const project = yield* projectService
+          .getByWorkspaceRoot(input.workspaceRoot)
           .pipe(Effect.orElseSucceed(() => Option.none()));
         if (Option.isSome(project)) {
           const settings = yield* serverSettings.getSettings.pipe(

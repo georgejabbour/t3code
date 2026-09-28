@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -213,6 +214,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
           ),
           FileSystem.layerNoop({}),
+          Path.layer,
         );
 
         yield* Effect.gen(function* () {
@@ -302,6 +304,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
           ),
           FileSystem.layerNoop({}),
+          Path.layer,
         );
 
         yield* Effect.gen(function* () {

@@ -423,7 +423,11 @@ export const make = Effect.gen(function* () {
 
   const refreshWorkspace = (cwd: string) =>
     worker.enqueue({ threadId: null, refresh: true, cwd }).pipe(Effect.andThen(worker.drain));
-  return { start, drain: worker.drain, refreshWorkspace } satisfies ThreadPullRequestServiceV2["Service"];
+  return {
+    start,
+    drain: worker.drain,
+    refreshWorkspace,
+  } satisfies ThreadPullRequestServiceV2["Service"];
 });
 
 export const layer = Layer.effect(ThreadPullRequestServiceV2, make);
