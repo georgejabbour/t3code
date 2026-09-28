@@ -54,6 +54,7 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
     getEventReplayStats: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
+    listThreadsWithPullRequests: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.die("unused"),
