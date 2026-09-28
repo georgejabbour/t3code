@@ -1,5 +1,10 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { hasUnseenCompletion, resolveSidebarThreadStatus } from "./components/Sidebar.logic";
+import {
+  hasUnseenCompletion,
+  resolveSidebarThreadStatus,
+  resolveThreadLastVisitedAt,
+} from "./components/Sidebar.logic";
+import { isLatestRunSettled } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
 export function getDocumentTitle(
@@ -9,16 +14,29 @@ export function getDocumentTitle(
 ): string {
   let count = 0;
   for (const thread of threads) {
-    if (
-      thread.archivedAt !== null ||
-      thread.settledOverride === "settled" ||
-      thread.latestTurn?.state !== "completed" ||
-      resolveSidebarThreadStatus(thread) !== "ready"
-    ) {
+    if (thread.archivedAt !== null || thread.settledOverride === "settled") {
       continue;
     }
+    const status = resolveSidebarThreadStatus(thread);
+    if (
+      status === "input" ||
+      status === "approval" ||
+      (thread.interactionMode === "plan" &&
+        thread.hasActionableProposedPlan &&
+        isLatestRunSettled(thread.latestRun, thread.runtime))
+    ) {
+      count += 1;
+      continue;
+    }
+    if (
+      thread.latestRun?.status !== "completed" ||
+      status !== "ready" ||
+      thread.pendingBackgroundTasks.length > 0
+    )
+      continue;
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    if (hasUnseenCompletion({ ...thread, lastVisitedAt: lastVisitedAtById[key] })) count += 1;
+    const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, lastVisitedAtById[key]);
+    if (hasUnseenCompletion({ ...thread, lastVisitedAt })) count += 1;
   }
   return count > 0 ? `(${count}) ${displayName}` : displayName;
 }

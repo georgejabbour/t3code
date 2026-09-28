@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
-  type OrchestrationProject,
+  type Project,
   type ProjectScript,
   ProjectId,
   ServerSettingsError,
@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectService from "./ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
@@ -38,7 +38,7 @@ const makeProcessRunnerLayer = (run: ProcessRunner.ProcessRunner["Service"]["run
   Layer.succeed(ProcessRunner.ProcessRunner, { run });
 
 /** The project's imported scripts — what the scripts dialog's toggle writes. */
-const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => {
+const makeProjectServiceLayer = (scripts: readonly ProjectScript[]) => {
   const project = {
     id: ProjectId.make("project-1"),
     title: "Project",
@@ -48,33 +48,10 @@ const makeProjectionSnapshotQueryLayer = (scripts: readonly ProjectScript[]) => 
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     deletedAt: null,
-  } satisfies OrchestrationProject;
-  return Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-    getCommandReadModel: () => Effect.die("unused"),
-    getEventReplayStats: () => Effect.die("unused"),
-    getSnapshot: () => Effect.die("unused"),
-    getShellSnapshot: () => Effect.die("unused"),
-    listThreadsWithPullRequests: () => Effect.die("unused"),
-    getArchivedShellSnapshot: () => Effect.die("unused"),
-    getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
-    getCounts: () => Effect.die("unused"),
-    getProjectShells: () => Effect.die("unused"),
-    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+  } satisfies Project;
+  return Layer.mock(ProjectService.ProjectService)({
+    getByWorkspaceRoot: (workspaceRoot) =>
       Effect.succeed(workspaceRoot === WORKSPACE_ROOT ? Option.some(project) : Option.none()),
-    getProjectShellById: () => Effect.succeed(Option.none()),
-    getDeletedWorktreeThreads: () => Effect.die("unused"),
-    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-    getImportedAgentSessionSources: () => Effect.die("unused"),
-    getThreadRuntimeContext: () => Effect.die("unused"),
-    getThreadCheckpointContext: () => Effect.die("unused"),
-    getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadShellById: () => Effect.die("unused"),
-    getThreadDetailById: () => Effect.die("unused"),
-    getThreadDetailSnapshot: () => Effect.die("unused"),
-    searchThreads: () => Effect.succeed({ matches: [] }),
-    getUserInputActivity: () => Effect.die("unused"),
-    listActivitiesByKind: () => Effect.die("unused"),
-    getTurnStartMessage: () => Effect.die("unused"),
   });
 };
 
@@ -117,7 +94,7 @@ const testLayer = (
   WorktreeArchiveScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectFileLoaderLayer(files)),
     Layer.provideMerge(makeProcessRunnerLayer(run)),
-    Layer.provideMerge(makeProjectionSnapshotQueryLayer(importedScripts)),
+    Layer.provideMerge(makeProjectServiceLayer(importedScripts)),
     Layer.provideMerge(fileSystem),
     Layer.provideMerge(settingsLayer),
   );

@@ -33,8 +33,8 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import {
   ArchivedThreadReaper,
   type ArchivedThreadReaperShape,
@@ -57,8 +57,8 @@ export interface ArchivedThreadReaperLiveOptions {
 
 const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
   Effect.gen(function* () {
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const orchestrationEngine = yield* OrchestrationEngineService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const serverSettings = yield* ServerSettingsService;
     const gitWorkflow = yield* GitWorkflowService;
     const archiveScriptRunner = yield* WorktreeArchiveScriptRunner;
@@ -161,15 +161,16 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
         return;
       }
 
-      const snapshot = yield* projectionSnapshotQuery.getArchivedShellSnapshot();
+      const snapshot = yield* orchestrator.getShellSnapshot({ location: "archive" });
+      const projects = yield* projectStore.listShells();
       const workspaceRoots = new Map<ProjectId, string>(
-        snapshot.projects.map((project) => [project.id, project.workspaceRoot]),
+        projects.map((project) => [project.id, project.workspaceRoot]),
       );
 
       let deletedCount = 0;
       let skippedCount = 0;
 
-      for (const thread of snapshot.threads) {
+      for (const thread of snapshot.archivedThreads) {
         if (thread.archivedAt === null) {
           continue;
         }
@@ -177,11 +178,10 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
         // Archiving does not stop the agent, so an archived thread can still
         // have one running. An unattended sweep must not delete the thread out
         // from under live work.
-        const sessionStatus = thread.session?.status;
-        if (sessionStatus === "running" || sessionStatus === "starting") {
+        if (thread.activeRunId !== null || (thread.pendingBackgroundTasks?.length ?? 0) > 0) {
           yield* Effect.logInfo("orchestration.archived-thread.reaper.skipped-live-session", {
             threadId: thread.id,
-            sessionStatus,
+            status: thread.activityRunStatus ?? thread.status,
           });
           skippedCount += 1;
           continue;
@@ -211,7 +211,7 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
 
         const deleted = yield* commandId.pipe(
           Effect.flatMap((id) =>
-            orchestrationEngine.dispatch({
+            orchestrator.dispatch({
               type: "thread.delete",
               commandId: id,
               threadId: thread.id,
@@ -237,7 +237,7 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
       // a sweep that never ran look identical without it.
       yield* Ref.set(lastSweptAt, now);
       yield* Effect.logInfo("orchestration.archived-thread.reaper.sweep-complete", {
-        archivedCount: snapshot.threads.length,
+        archivedCount: snapshot.archivedThreads.length,
         deletedCount,
         skippedCount,
       });

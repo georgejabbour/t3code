@@ -25,7 +25,8 @@ export const layer = Layer.effectDiscard(
           Effect.gen(function* () {
             if (change.event._tag === "remoteUpdated") return;
             const branch = change.event.local.refName;
-            if (lastBranchByCwd.has(change.cwd) && lastBranchByCwd.get(change.cwd) === branch) return;
+            if (lastBranchByCwd.has(change.cwd) && lastBranchByCwd.get(change.cwd) === branch)
+              return;
             lastBranchByCwd.set(change.cwd, branch);
             if (branch === null) return;
             const prefix = yield* resolveBranchPrefixForWorkspace(loader, change.cwd);
@@ -49,7 +50,10 @@ export const layer = Layer.effectDiscard(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.failCause(cause)
-                : Effect.logWarning("Could not follow the worktree branch change.", { cwd: change.cwd, cause }),
+                : Effect.logWarning("Could not follow the worktree branch change.", {
+                    cwd: change.cwd,
+                    cause,
+                  }),
             ),
           ),
         ),

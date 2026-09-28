@@ -8,9 +8,13 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  RunId,
+  type OrchestrationProjectShell,
+  type OrchestrationV2ThreadShellSnapshot,
   WorktreeArchiveScriptError,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,8 +25,8 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { ArchivedThreadReaper } from "../Services/ArchivedThreadReaper.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import { makeArchivedThreadReaperLive } from "./ArchivedThreadReaper.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -41,54 +45,59 @@ type ThreadInput = {
   readonly sessionStatus?: "starting" | "running" | "ready" | "stopped" | "error";
 };
 
-const makeSnapshot = (threads: ReadonlyArray<ThreadInput>) => ({
-  snapshotSequence: 0,
+const project: OrchestrationProjectShell = {
+  id: PROJECT_ID,
+  title: "Archived Reaper Project",
+  workspaceRoot: WORKSPACE_ROOT,
+  defaultModelSelection: modelSelection,
+  scripts: [],
+  createdAt: NOW,
   updatedAt: NOW,
-  projects: [
-    {
-      id: PROJECT_ID,
-      title: "Archived Reaper Project",
-      workspaceRoot: WORKSPACE_ROOT,
-      defaultModelSelection: modelSelection,
-      scripts: [],
-      createdAt: NOW,
-      updatedAt: NOW,
-    },
-  ],
-  threads: threads.map((thread) => ({
-    id: ThreadId.make(thread.id),
-    projectId: PROJECT_ID,
-    title: `Thread ${thread.id}`,
-    modelSelection,
-    runtimeMode: "full-access" as const,
-    interactionMode: "default" as const,
-    branch: null,
-    worktreePath: thread.worktreePath ?? null,
-    latestTurn: null,
-    pullRequests: [],
-    createdAt: NOW,
-    updatedAt: NOW,
-    archivedAt: thread.archived === false ? null : NOW,
-    settledOverride: null,
-    settledAt: null,
-    session:
-      thread.sessionStatus === undefined
-        ? null
-        : {
-            threadId: ThreadId.make(thread.id),
-            status: thread.sessionStatus,
-            providerName: "claudeAgent" as const,
-            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-            runtimeMode: "full-access" as const,
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: NOW,
-          },
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-  })),
+};
+
+const makeSnapshot = (threads: ReadonlyArray<ThreadInput>): OrchestrationV2ThreadShellSnapshot => ({
+  schemaVersion: 2,
+  snapshotSequence: 0,
+  threads: [],
+  archivedThreads: threads.map((thread) => {
+    const id = ThreadId.make(thread.id);
+    const status =
+      thread.sessionStatus === "starting" || thread.sessionStatus === "running"
+        ? thread.sessionStatus
+        : "idle";
+    const now = DateTime.makeUnsafe(NOW);
+    return {
+      id,
+      projectId: PROJECT_ID,
+      title: `Thread ${thread.id}`,
+      providerInstanceId: modelSelection.instanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: thread.worktreePath ?? null,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: id, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdBy: "user",
+      creationSource: "web",
+      latestRunId: null,
+      activeRunId: status === "idle" ? null : RunId.make(`run:${id}`),
+      status,
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: thread.archived === false ? null : now,
+      settledOverride: null,
+      settledAt: null,
+      deletedAt: null,
+    };
+  }),
 });
 
 describe("ArchivedThreadReaper", () => {
@@ -139,11 +148,11 @@ describe("ArchivedThreadReaper", () => {
     const removedWorktreePaths: string[] = [];
     const scriptedWorktreePaths: string[] = [];
 
-    const dispatch = (command: { readonly type: string; readonly threadId?: ThreadId }) => {
+    const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
       if (command.type === "thread.delete" && command.threadId) {
         deletedThreadIds.push(String(command.threadId));
       }
-      return Effect.succeed({ sequence: deletedThreadIds.length });
+      return Effect.succeed({ sequence: deletedThreadIds.length, storedEvents: [] });
     };
 
     const layer = makeArchivedThreadReaperLive({
@@ -152,13 +161,14 @@ describe("ArchivedThreadReaper", () => {
       tickInterval: Duration.minutes(10),
     }).pipe(
       Layer.provideMerge(
-        Layer.mock(ProjectionSnapshotQuery)({
-          getArchivedShellSnapshot: () => Effect.succeed(makeSnapshot(input.threads)),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          listShells: () => Effect.succeed([project]),
         }),
       ),
       Layer.provideMerge(
-        Layer.mock(OrchestrationEngineService)({
-          dispatch: dispatch as never,
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getShellSnapshot: () => Effect.succeed(makeSnapshot(input.threads)),
+          dispatch,
         }),
       ),
       Layer.provideMerge(
@@ -166,7 +176,7 @@ describe("ArchivedThreadReaper", () => {
           removeWorktree: (removeInput: { readonly path: string }) =>
             Effect.sync(() => {
               removedWorktreePaths.push(removeInput.path);
-            }) as never,
+            }),
         }),
       ),
       Layer.provideMerge(

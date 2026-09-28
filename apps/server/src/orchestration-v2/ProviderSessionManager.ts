@@ -1062,7 +1062,9 @@ export const layerWithOptions = (
               // Re-check on this fiber after another idle window. Do not call
               // scheduleIdleReleaseInternal: that cancels entry.idleFiber, which
               // is this fiber, and can self-deadlock on Fiber.interrupt.
-              yield* Effect.sleep(Duration.millis(Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs)));
+              yield* Effect.sleep(
+                Duration.millis(Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs)),
+              );
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
@@ -1700,16 +1702,25 @@ export const layerWithOptions = (
 
       const restoreMissingWorktree = Effect.fn("ProviderSessionManagerV2.restoreMissingWorktree")(
         function* (threadId: ThreadId, cwd: string) {
-          if (Option.isNone(projectService) || Option.isNone(gitWorkflow) || Option.isNone(serverConfig)) return;
+          if (
+            Option.isNone(projectService) ||
+            Option.isNone(gitWorkflow) ||
+            Option.isNone(serverConfig)
+          )
+            return;
           if (!isManagedWorktree(canonicalPath(serverConfig.value.worktreesDir), cwd)) return;
           if (yield* fileSystem.exists(cwd)) return;
           const thread = yield* projectionStore.getThread(threadId);
-          if (thread.deletedAt !== null || thread.worktreePath !== cwd || thread.branch === null) return;
+          if (thread.deletedAt !== null || thread.worktreePath !== cwd || thread.branch === null)
+            return;
           const project = yield* projectService.value.getById(thread.projectId);
           if (Option.isNone(project)) return;
           const submodules = Option.isSome(serverSettings)
             ? yield* serverSettings.value.getSettings.pipe(
-                Effect.map((settings) => resolveProjectSettings(settings, thread.projectId).settings.worktreeSubmodules),
+                Effect.map(
+                  (settings) =>
+                    resolveProjectSettings(settings, thread.projectId).settings.worktreeSubmodules,
+                ),
                 Effect.orElseSucceed(() => null),
               )
             : null;
@@ -1721,30 +1732,32 @@ export const layerWithOptions = (
           const now = yield* DateTime.now;
           const eventId = yield* idAllocator.allocate.event({ threadId });
           yield* eventSink.write({
-            events: [{
-              id: eventId,
-              type: "turn-item.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: TurnItemId.make(`system:worktree-restored:${eventId}`),
+            events: [
+              {
+                id: eventId,
+                type: "turn-item.updated",
                 threadId,
-                runId: null,
-                nodeId: null,
-                providerThreadId: null,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: yield* projectionStore.getNextTurnItemOrdinal(threadId),
-                type: "system_notice",
-                status: "completed",
-                title: "Rebuilt this thread's worktree",
-                message: `The folder ${cwd} was missing. T3 Code checks out ${thread.branch} there again. This folder excludes uncommitted work.`,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`system:worktree-restored:${eventId}`),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: yield* projectionStore.getNextTurnItemOrdinal(threadId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: "Rebuilt this thread's worktree",
+                  message: `The folder ${cwd} was missing. T3 Code checks out ${thread.branch} there again. This folder excludes uncommitted work.`,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
               },
-            }],
+            ],
           });
         },
         Effect.catchCause((cause) =>
