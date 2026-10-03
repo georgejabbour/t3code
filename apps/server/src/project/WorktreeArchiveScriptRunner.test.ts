@@ -138,7 +138,7 @@ const archiveScript = {
 };
 
 describe("WorktreeArchiveScriptRunner", () => {
-  for (const scenario of [
+  it.effect.each([
     {
       name: "runs the project override",
       override: IMPORTED_SCRIPTS,
@@ -160,101 +160,97 @@ describe("WorktreeArchiveScriptRunner", () => {
       imported: [],
       command: "./imported.sh",
     },
-  ]) {
-    it.effect(scenario.name, () => {
-      const run = vi.fn(() => Effect.succeed(processOutput()));
-      return Effect.gen(function* () {
-        const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
-        const result = yield* runner.run({
-          workspaceRoot: WORKSPACE_ROOT,
-          worktreePath: WORKTREE_PATH,
-        });
-        if (scenario.command === null) {
-          expect(result).toEqual({ status: "no-script" });
-          expect(run).not.toHaveBeenCalled();
-        } else {
-          expect(result).toEqual({ status: "ok", scriptName: "Imported archive" });
-          expect(run).toHaveBeenCalledWith(
-            expect.objectContaining({ args: ["-c", scenario.command], cwd: WORKTREE_PATH }),
-          );
-        }
-      }).pipe(
-        Effect.provide(
-          testLayer(
-            {},
-            run,
-            scenario.imported,
-            PresentWorktreeFileSystem,
-            ServerSettings.layerTest({
-              projectSettingsOverrides:
-                scenario.override === null
-                  ? {}
-                  : {
-                      [ProjectId.make("project-1")]: {
-                        defaultProjectScripts: scenario.override,
-                      },
+  ])("$name", (scenario) => {
+    const run = vi.fn(() => Effect.succeed(processOutput()));
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const result = yield* runner.run({
+        workspaceRoot: WORKSPACE_ROOT,
+        worktreePath: WORKTREE_PATH,
+      });
+      if (scenario.command === null) {
+        expect(result).toEqual({ status: "no-script" });
+        expect(run).not.toHaveBeenCalled();
+      } else {
+        expect(result).toEqual({ status: "ok", scriptName: "Imported archive" });
+        expect(run).toHaveBeenCalledWith(
+          expect.objectContaining({ args: ["-c", scenario.command], cwd: WORKTREE_PATH }),
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        testLayer(
+          {},
+          run,
+          scenario.imported,
+          PresentWorktreeFileSystem,
+          ServerSettings.layerTest({
+            projectSettingsOverrides:
+              scenario.override === null
+                ? {}
+                : {
+                    [ProjectId.make("project-1")]: {
+                      defaultProjectScripts: scenario.override,
                     },
-              projectSettingsFolded: true,
-              defaultProjectScripts: scenario.defaults,
-            }),
-          ),
+                  },
+            projectSettingsFolded: true,
+            defaultProjectScripts: scenario.defaults,
+          }),
         ),
-      );
-    });
-  }
+      ),
+    );
+  });
 
-  for (const { hasFileScript, name } of [
+  it.effect.each([
     { hasFileScript: true, name: "uses the file script when settings are unavailable" },
     {
       hasFileScript: false,
       name: "reports unavailable settings when no file script exists",
     },
-  ]) {
-    it.effect(name, () => {
-      const run = vi.fn(() => Effect.succeed(processOutput()));
-      const settingsLayer = Layer.effect(
-        ServerSettings.ServerSettingsService,
-        Effect.gen(function* () {
-          const service = yield* ServerSettings.ServerSettingsService;
-          return {
-            ...service,
-            getSettings: Effect.fail(
-              new ServerSettingsError({
-                settingsPath: "/repo/settings.json",
-                operation: "read-file",
-                cause: new Error("Settings unavailable"),
-              }),
-            ),
-          };
-        }),
-      ).pipe(Layer.provide(ServerSettings.layerTest()));
-      return Effect.gen(function* () {
-        const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
-        const action = runner.run({ workspaceRoot: WORKSPACE_ROOT, worktreePath: WORKTREE_PATH });
-        if (hasFileScript) {
-          expect(yield* action).toEqual({ status: "ok", scriptName: archiveScript.name });
-          expect(run).toHaveBeenCalledWith(
-            expect.objectContaining({ args: ["-c", archiveScript.command] }),
-          );
-        } else {
-          const error = yield* Effect.flip(action);
-          expect(error._tag).toBe("WorktreeArchiveScriptError");
-          expect(error.stderr).toContain("Cannot read project actions");
-          expect(run).not.toHaveBeenCalled();
-        }
-      }).pipe(
-        Effect.provide(
-          testLayer(
-            hasFileScript ? { worktree: { scripts: [archiveScript] } } : {},
-            run,
-            [],
-            PresentWorktreeFileSystem,
-            settingsLayer,
+  ])("$name", ({ hasFileScript }) => {
+    const run = vi.fn(() => Effect.succeed(processOutput()));
+    const settingsLayer = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const service = yield* ServerSettings.ServerSettingsService;
+        return {
+          ...service,
+          getSettings: Effect.fail(
+            new ServerSettingsError({
+              settingsPath: "/repo/settings.json",
+              operation: "read-file",
+              cause: new Error("Settings unavailable"),
+            }),
           ),
+        };
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest()));
+    return Effect.gen(function* () {
+      const runner = yield* WorktreeArchiveScriptRunner.WorktreeArchiveScriptRunner;
+      const action = runner.run({ workspaceRoot: WORKSPACE_ROOT, worktreePath: WORKTREE_PATH });
+      if (hasFileScript) {
+        expect(yield* action).toEqual({ status: "ok", scriptName: archiveScript.name });
+        expect(run).toHaveBeenCalledWith(
+          expect.objectContaining({ args: ["-c", archiveScript.command] }),
+        );
+      } else {
+        const error = yield* Effect.flip(action);
+        expect(error._tag).toBe("WorktreeArchiveScriptError");
+        expect(error.stderr).toContain("Cannot read project actions");
+        expect(run).not.toHaveBeenCalled();
+      }
+    }).pipe(
+      Effect.provide(
+        testLayer(
+          hasFileScript ? { worktree: { scripts: [archiveScript] } } : {},
+          run,
+          [],
+          PresentWorktreeFileSystem,
+          settingsLayer,
         ),
-      );
-    });
-  }
+      ),
+    );
+  });
 
   it.effect("returns no-script when the repository has no t3.json", () => {
     const run = vi.fn(() => Effect.die("unexpected run"));

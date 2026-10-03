@@ -25,8 +25,9 @@ import { normalizeStackView, parseStackViewJson, stderrTail } from "./GhStackCli
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("stack merge preferences", () => {
-  for (const mergeMethod of ["merge", "squash", "rebase", undefined] as const) {
-    it.effect(`merges a stack with method ${mergeMethod ?? "omitted"}`, () => {
+  it.effect.each(["merge", "squash", "rebase", undefined] as const)(
+    "merges a stack with method %s",
+    (mergeMethod) => {
       let merged = false;
       const calls: VcsProcess.VcsProcessInput[] = [];
       const processLayer = Layer.succeed(VcsProcess.VcsProcess, {
@@ -100,8 +101,8 @@ describe("stack merge preferences", () => {
         expect(calls.filter((call) => call.args[1] === "merge")).toHaveLength(1);
         expect(calls.filter((call) => call.args[1] === "view")).toHaveLength(2);
       }).pipe(Effect.provide(serviceLayer));
-    });
-  }
+    },
+  );
 });
 
 const capturedView = `{
