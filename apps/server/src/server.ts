@@ -493,10 +493,7 @@ const ThreadSettlementWorkerLive = Layer.effectDiscard(
 
 const ThreadPullRequestWorkerLive = Layer.effectDiscard(
   Effect.flatMap(ThreadPullRequestService.ThreadPullRequestServiceV2, (service) => service.start()),
-).pipe(
-  Layer.provideMerge(ThreadPullRequestService.layer),
-  Layer.provide(PullRequestServiceLive),
-);
+).pipe(Layer.provideMerge(ThreadPullRequestService.layer), Layer.provide(PullRequestServiceLive));
 
 const ProviderInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
