@@ -1762,7 +1762,7 @@ export const layerWithOptions = (
         },
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
+            ? Effect.interrupt
             : Effect.logWarning("Could not rebuild the missing thread worktree.", { cause }),
         ),
       );

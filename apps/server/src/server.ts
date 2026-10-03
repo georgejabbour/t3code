@@ -623,13 +623,13 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(
     OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layer)),
   ),
+  Layer.provideMerge(WorktreeArchiveScriptRunnerLayerLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       NativeAppIconResolver.layer,
       ProjectFaviconResolverLayerLive,
-      WorktreeArchiveScriptRunnerLayerLive,
       ProjectPromptsService.layer,
       SubscriptionUsageService.layer.pipe(Layer.provideMerge(SubscriptionUsageHistoryStore.layer)),
     ),
