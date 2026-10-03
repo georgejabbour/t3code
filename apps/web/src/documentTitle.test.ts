@@ -121,10 +121,14 @@ describe("getDocumentTitle", () => {
     expect(
       getDocumentTitle(
         "T3 Code",
-        [{
-          ...plan,
-          pendingBackgroundTasks: [{ taskId: "background", description: "Work", kind: "command" }],
-        }],
+        [
+          {
+            ...plan,
+            pendingBackgroundTasks: [
+              { taskId: "background", description: "Work", kind: "command" },
+            ],
+          },
+        ],
         read,
       ),
     ).toBe("(1) T3 Code");
