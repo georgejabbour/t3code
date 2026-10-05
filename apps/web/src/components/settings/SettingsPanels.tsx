@@ -6,7 +6,7 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
@@ -117,6 +117,7 @@ import {
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import {
+  BUNDLED_FONT_FAMILIES,
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
   isFontFamilyAvailable,
@@ -1882,6 +1883,7 @@ function FontFamilySettingsRow({
     onChange: (v: number) => void;
   };
 }) {
+  const suggestionsId = useId();
   const trimmed = value.trim();
   // The fallback input edits a draft; the preference only commits once typing
   // pauses and the text probes as an available font (or is an explicit
@@ -1964,6 +1966,7 @@ function FontFamilySettingsRow({
         autoCapitalize="off"
         autoComplete="off"
         className="min-w-0 flex-1"
+        list={requireMonospace ? undefined : suggestionsId}
         maxLength={200}
         onFocus={() => {
           inputFocusedRef.current = true;
@@ -2008,6 +2011,13 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
+      {!requireMonospace && (
+        <datalist id={suggestionsId}>
+          {BUNDLED_FONT_FAMILIES.map((family) => (
+            <option key={family} value={family} />
+          ))}
+        </datalist>
+      )}
       <Select
         value={String(size.value)}
         onValueChange={(next) => {

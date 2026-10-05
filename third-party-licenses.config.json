@@ -109,6 +109,14 @@
       "sourceUrl": "https://github.com/ryanoasis/nerd-fonts"
     },
     {
+      "bundles": ["assets", "web"],
+      "license": "OFL-1.1",
+      "name": "iA Writer Duo and Quattro",
+      "noticeFile": "apps/web/src/fonts/ia-writer/LICENSE.md",
+      "sourceUrl": "https://github.com/iaolo/iA-Fonts",
+      "version": "f32c04c3058a75d7ce28919ce70fe8800817491b"
+    },
+    {
       "bundles": ["ios", "mobile"],
       "license": "MIT",
       "name": "GhosttyKit",
