@@ -1317,6 +1317,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.notProperty(error, "reason");
         assert.notInclude(error.message, "(authentication_failed)");
+        const pushError = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(pushError.message, "A pre-push hook may have rejected it.");
+        assert.notProperty(pushError, "reason");
+        assert.notInclude(pushError.message, "authentication failed");
       }),
     );
 

@@ -42,6 +42,20 @@ const key = (value: SidebarThreadSummary) =>
 const visits = { [key(thread)]: before };
 
 describe("getDocumentTitle", () => {
+  it.each([
+    { serverVisit: after, localVisit: before, expected: "T3 Code" },
+    { serverVisit: before, localVisit: after, expected: "(1) T3 Code" },
+    { serverVisit: null, localVisit: before, expected: "T3 Code" },
+  ])(
+    "uses the authoritative server visit timestamp: %j",
+    ({ serverVisit, localVisit, expected }) => {
+      expect(
+        getDocumentTitle("T3 Code", [{ ...thread, lastVisitedAt: serverVisit }], {
+          [key(thread)]: localVisit,
+        }),
+      ).toBe(expected);
+    },
+  );
   it("counts unseen completions across environments with the same thread ID", () => {
     const remote = { ...thread, environmentId: EnvironmentId.make("remote") };
     expect(
@@ -167,7 +181,7 @@ describe("getDocumentTitle", () => {
     { latestRun: { ...thread.latestRun!, status: "failed" } },
     { latestRun: { ...thread.latestRun!, status: "interrupted" } },
     { latestRun: { ...thread.latestRun!, status: "running", completedAt: null } },
-    { pendingBackgroundTasks: [{ taskId: "background", description: "Work", kind: "command" }] },
+    { pendingBackgroundTasks: [{ taskId: "background", description: "Work", kind: "monitor" }] },
     {
       runtime: {
         status: "idle",
@@ -181,4 +195,34 @@ describe("getDocumentTitle", () => {
   ])("excludes threads that do not await a completed-response visit: %j", (overrides) => {
     expect(getDocumentTitle("T3 Code", [{ ...thread, ...overrides }], visits)).toBe("T3 Code");
   });
+
+  it("counts an unseen completion while a command continues in the background", () => {
+    const completed: SidebarThreadSummary = {
+      ...thread,
+      pendingBackgroundTasks: [{ taskId: "command", description: "Watch files", kind: "command" }],
+    };
+    expect(getDocumentTitle("T3 Code", [completed], visits)).toBe("(1) T3 Code");
+    expect(getDocumentTitle("T3 Code", [completed], { [key(thread)]: after })).toBe("T3 Code");
+  });
+
+  it.each(["subagent", "monitor", "background_task"] as const)(
+    "waits for %s work before counting a completion or a ready plan",
+    (kind) => {
+      const pending: SidebarThreadSummary = {
+        ...thread,
+        pendingBackgroundTasks: [{ taskId: "background", description: "Work", kind }],
+      };
+      expect(getDocumentTitle("T3 Code", [pending], visits)).toBe("T3 Code");
+      expect(
+        getDocumentTitle(
+          "T3 Code",
+          [{ ...pending, interactionMode: "plan", hasActionableProposedPlan: true }],
+          visits,
+        ),
+      ).toBe("T3 Code");
+      expect(getDocumentTitle("T3 Code", [{ ...pending, hasPendingApprovals: true }], visits)).toBe(
+        "(1) T3 Code",
+      );
+    },
+  );
 });

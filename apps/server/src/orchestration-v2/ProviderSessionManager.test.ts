@@ -20,6 +20,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -443,7 +444,7 @@ function makeProviderAdapter(
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
+  readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -519,7 +520,7 @@ function layerTest(input: {
     IdAllocator.layer,
     layerConfiguredMcpRegistry,
     ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
+      ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
@@ -4386,5 +4387,119 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each([
+  {
+    name: "shorter",
+    initial: Duration.minutes(10),
+    next: Duration.seconds(30),
+    advance: Duration.minutes(5),
+    released: true,
+  },
+  {
+    name: "longer",
+    initial: Duration.minutes(5),
+    next: Duration.hours(1),
+    advance: Duration.minutes(10),
+    released: false,
+  },
+  {
+    name: "disabled",
+    initial: Duration.minutes(5),
+    next: Duration.zero,
+    advance: Duration.minutes(10),
+    released: false,
+  },
+])(
+  "ProviderSessionManagerV2 observes a $name configured idle timeout",
+  ({ initial, next, advance, released }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settingsLayer = ServerSettings.layerTest({ providerSessionIdleTimeout: initial });
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const threadId = ThreadId.make("configured-idle-session");
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust("1 minute");
+        yield* settings.updateSettings({ providerSessionIdleTimeout: next });
+        yield* TestClock.adjust(advance);
+        assert.equal(Option.isNone(yield* manager.get(providerSessionId)), released);
+        assert.equal((yield* Ref.get(state)).closeCount, released ? 1 : 0);
+        if (Duration.toMillis(next) === 0) {
+          yield* settings.updateSettings({ providerSessionIdleTimeout: Duration.seconds(1) });
+          yield* TestClock.adjust("5 minutes");
+          assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 1);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.merge(layerTest({ state, serverSettingsLayer: settingsLayer }), settingsLayer),
+        ),
+      );
+    }),
+);
+
+it.effect.each([Duration.zero, Duration.hours(1)])(
+  "ProviderSessionManagerV2 rechecks the configured timeout after a delayed provider probe (%s)",
+  (next) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const entered = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const settingsLayer = ServerSettings.layerTest({
+        providerSessionIdleTimeout: Duration.seconds(1),
+      });
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const threadId = ThreadId.make("changed-idle-session");
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(entered);
+        yield* settings.updateSettings({ providerSessionIdleTimeout: next });
+        yield* Deferred.succeed(gate, undefined);
+        yield* TestClock.adjust("5 minutes");
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            layerTest({
+              state,
+              serverSettingsLayer: settingsLayer,
+              hasPendingBackgroundWork: Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.as(false),
+              ),
+            }),
+            settingsLayer,
+          ),
+        ),
+      );
     }),
 );

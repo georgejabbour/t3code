@@ -2124,7 +2124,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const parsed = JSON.parse(raw);
       assert.equal(parsed.deleteArchivedThreadsNightly, true);
       assert.equal(parsed.providerSessionIdleTimeout, 43_200_000);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+      const reloaded = yield* Effect.gen(function* () {
+        return yield* (yield* ServerSettingsModule.ServerSettingsService).getSettings;
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+        ),
+      );
+      assert.isTrue(Duration.isDuration(reloaded.providerSessionIdleTimeout));
+      assert.equal(Duration.toMillis(reloaded.providerSessionIdleTimeout), 43_200_000);
+      assert.isTrue(reloaded.deleteArchivedThreadsNightly);
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("saves a setting when the file on disk already holds a non-default idle timeout", () =>
@@ -2153,7 +2163,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(parsed.newWorktreesStartFromOrigin, false);
       assert.equal(parsed.providerSessionIdleTimeout, 43_200_000);
       assert.equal(parsed.defaultThreadEnvMode, "worktree");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("keeps a non-default background activity interval whole on disk", () =>
@@ -2171,7 +2181,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.equal(JSON.parse(raw).automaticGitFetchInterval, 420_000);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("writes a failed settings update to the server log", () => {
@@ -2204,7 +2214,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       ),
       // The upstream settings module now reads its projections through SqlClient.
       // The log test uses the same in-memory database as the other tests.
-      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
         Layer.fresh(
           ServerConfig.layerTest(process.cwd(), {

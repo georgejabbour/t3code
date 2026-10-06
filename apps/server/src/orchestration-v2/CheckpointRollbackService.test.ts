@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
+  ProjectId,
   CheckpointScopeId,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -27,6 +28,9 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2RollbackThreadInput } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ServerConfig from "../config.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 
 // A root that does not exist never overlaps, so other owners decide isolation.
 const unrelatedProject = Option.some({
@@ -344,130 +348,183 @@ it.effect.each([
   { restoreFiles: false, shared: "worktree" },
   { restoreFiles: true, shared: "historical" },
   { restoreFiles: false, shared: "none", targetOrdinal: 1 },
-])("rewinds safely with %s", ({ restoreFiles, shared, targetOrdinal = 0 }) => {
-  const threadId = ThreadId.make("rewind-files");
-  const providerThreadId = ProviderThreadId.make("rewind-provider");
-  const providerSessionId = ProviderSessionId.make("rewind-session");
-  const instanceId = ProviderInstanceId.make("rewind-instance");
-  const checkpointId = CheckpointId.make("rewind-start");
-  const scopeId = CheckpointScopeId.make("rewind-scope");
-  const calls: string[] = [];
-  const providerThread = {
-    id: providerThreadId,
-    providerSessionId,
-    providerInstanceId: instanceId,
-  };
-  const projection = {
-    thread: {
-      worktreePath: shared === "root" ? null : process.cwd(),
-      activeProviderThreadId: providerThreadId,
-      modelSelection: { instanceId, model: "test" },
-    },
-    providerThreads: [providerThread],
-    providerSessions: [],
-    // Turn 3 remains in the audit history after an earlier rollback.
-    providerTurns: [1, 2, 3].map((ordinal) => ({
-      id: `turn-${ordinal}`,
-      providerThreadId,
-      runAttemptId: `attempt-${ordinal}`,
-      ordinal,
-      status: "completed",
-    })),
-    nodes: [],
-    attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
-    checkpoints: [
-      { id: checkpointId, scopeId, status: "ready", appRunOrdinal: targetOrdinal || null },
-    ],
-    checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
-    runs: [1, 2, 3].map((ordinal) => ({
-      id: `run-${ordinal}`,
-      ordinal,
-      status: ordinal === 3 ? "rolled_back" : "completed",
-      rootNodeId: null,
-      activeAttemptId: `attempt-${ordinal}`,
-    })),
-  } as unknown as OrchestrationV2ThreadProjection;
-  const layerTest = layerCheckpointRollbackService.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(CheckpointService.CheckpointServiceV2)({
-          restore: () =>
-            Effect.sync(() => {
-              calls.push("files");
-            }),
-        }),
-        Layer.mock(EventSink.EventSinkV2)({
-          write: ({ events }) =>
-            Effect.sync(() => {
-              assert.ok(
-                events.some(
-                  (event) => event.type === "run.updated" && event.payload.status === "rolled_back",
+  { restoreFiles: false, shared: "none", recoverMissing: true },
+])(
+  "rewinds safely with %s",
+  ({ restoreFiles, shared, targetOrdinal = 0, recoverMissing = false }) => {
+    const threadId = ThreadId.make("rewind-files");
+    const providerThreadId = ProviderThreadId.make("rewind-provider");
+    const providerSessionId = ProviderSessionId.make("rewind-session");
+    const instanceId = ProviderInstanceId.make("rewind-instance");
+    const checkpointId = CheckpointId.make("rewind-start");
+    const scopeId = CheckpointScopeId.make("rewind-scope");
+    const calls: string[] = [];
+    const recoveryPath = "/tmp/t3-rollback-recovery-home/worktrees/feature";
+    const providerThread = {
+      id: providerThreadId,
+      providerSessionId,
+      providerInstanceId: instanceId,
+    };
+    const projection = {
+      thread: {
+        id: threadId,
+        projectId: ProjectId.make("project-rollback-recovery"),
+        branch: recoverMissing ? "feature/recovery" : null,
+        deletedAt: null,
+        worktreePath: recoverMissing ? recoveryPath : shared === "root" ? null : process.cwd(),
+        activeProviderThreadId: providerThreadId,
+        modelSelection: { instanceId, model: "test" },
+      },
+      providerThreads: [providerThread],
+      providerSessions: [],
+      // Turn 3 remains in the audit history after an earlier rollback.
+      providerTurns: [1, 2, 3].map((ordinal) => ({
+        id: `turn-${ordinal}`,
+        providerThreadId,
+        runAttemptId: `attempt-${ordinal}`,
+        ordinal,
+        status: "completed",
+      })),
+      nodes: [],
+      attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
+      checkpoints: [
+        { id: checkpointId, scopeId, status: "ready", appRunOrdinal: targetOrdinal || null },
+      ],
+      checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
+      runs: [1, 2, 3].map((ordinal) => ({
+        id: `run-${ordinal}`,
+        ordinal,
+        status: ordinal === 3 ? "rolled_back" : "completed",
+        rootNodeId: null,
+        activeAttemptId: `attempt-${ordinal}`,
+      })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = layerCheckpointRollbackService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          recoverMissing
+            ? Layer.mergeAll(
+                ServerConfig.layerTest(process.cwd(), "/tmp/t3-rollback-recovery-home").pipe(
+                  Layer.provide(
+                    Layer.merge(
+                      Path.layer,
+                      FileSystem.layerNoop({ makeDirectory: () => Effect.void }),
+                    ),
+                  ),
                 ),
-              );
-              calls.push("projection");
-              return [];
-            }),
-        }),
-        IdAllocator.layer,
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadRecords: () => Effect.succeed(projection),
-          getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
-          getCheckpointContext: () =>
-            Effect.succeed({
-              checkpointScopes: [{ cwd: process.cwd() }],
-              runs: [],
-              checkpoints: [],
-            } as never),
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads:
-                shared === "worktree" || shared === "historical"
-                  ? [
-                      {
-                        id: ThreadId.make("other-thread"),
-                        deletedAt: null,
-                        worktreePath: shared === "worktree" ? process.cwd() : null,
-                      } as never,
-                    ]
-                  : [],
-            }),
-        }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          open: () =>
-            Effect.succeed({
-              rollbackThread: (input: ProviderAdapterV2RollbackThreadInput) =>
-                Effect.gen(function* () {
-                  const count = yield* resolveCodexRollbackTurnCount(input);
-                  assert.equal(count, 2 - targetOrdinal);
-                  calls.push("provider");
-                  return { providerThread };
+                Layer.mock(GitWorkflow.GitWorkflowService)({
+                  pruneWorktrees: () => Effect.void,
+                  createWorktree: () =>
+                    Effect.sync(() => {
+                      calls.push("recover");
+                      return {} as never;
+                    }),
                 }),
-            } as never),
-        }),
-        Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: () =>
+                    Effect.succeed(Option.some({ workspaceRoot: process.cwd() } as never)),
+                }),
+              )
+            : Layer.empty,
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            restore: () =>
+              Effect.sync(() => {
+                calls.push("files");
+              }),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            write: ({ events }) =>
+              Effect.sync(() => {
+                if (
+                  events.some(
+                    (event) =>
+                      event.type === "turn-item.updated" && event.payload.type === "system_notice",
+                  )
+                ) {
+                  calls.push("notice");
+                  return [];
+                }
+                assert.ok(
+                  events.some(
+                    (event) =>
+                      event.type === "run.updated" && event.payload.status === "rolled_back",
+                  ),
+                );
+                calls.push("projection");
+                return [];
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(projection.thread),
+            getNextTurnItemOrdinal: () => Effect.succeed(0),
+            getThreadRecords: () => Effect.succeed(projection),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
+            getCheckpointContext: () =>
+              Effect.succeed({
+                checkpointScopes: [{ cwd: process.cwd() }],
+                runs: [],
+                checkpoints: [],
+              } as never),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 1,
+                snapshotSequence: 0,
+                threads: [],
+                archivedThreads:
+                  shared === "worktree" || shared === "historical"
+                    ? [
+                        {
+                          id: ThreadId.make("other-thread"),
+                          deletedAt: null,
+                          worktreePath: shared === "worktree" ? process.cwd() : null,
+                        } as never,
+                      ]
+                    : [],
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            open: () => {
+              if (recoverMissing) assert.deepEqual(calls, ["recover", "notice"]);
+              return Effect.succeed({
+                rollbackThread: (input: ProviderAdapterV2RollbackThreadInput) =>
+                  Effect.gen(function* () {
+                    const count = yield* resolveCodexRollbackTurnCount(input);
+                    assert.equal(count, 2 - targetOrdinal);
+                    calls.push("provider");
+                    return { providerThread };
+                  }),
+              } as never);
+            },
+          }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+            resolve: () => Effect.succeed({ cwd: recoverMissing ? recoveryPath : null } as never),
+          }),
+        ),
       ),
-    ),
-  );
-  return Effect.gen(function* () {
-    const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
-    if (restoreFiles && shared !== "none") {
-      const error = yield* Effect.flip(
-        service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles }),
-      );
-      assert.equal(error.reason, "shared-workspace");
-      assert.deepEqual(calls, []);
-      return;
-    }
-    yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
-    assert.deepEqual(
-      calls,
-      restoreFiles ? ["provider", "files", "projection"] : ["provider", "projection"],
     );
-  }).pipe(Effect.provide(layerTest));
-});
+    return Effect.gen(function* () {
+      const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+      if (restoreFiles && shared !== "none") {
+        const error = yield* Effect.flip(
+          service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles }),
+        );
+        assert.equal(error.reason, "shared-workspace");
+        assert.deepEqual(calls, []);
+        return;
+      }
+      yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
+      assert.deepEqual(
+        calls,
+        recoverMissing
+          ? ["recover", "notice", "provider", "projection"]
+          : restoreFiles
+            ? ["provider", "files", "projection"]
+            : ["provider", "projection"],
+      );
+    }).pipe(Effect.provide(layerTest));
+  },
+);
 
 it.effect.skipIf(!symlinksSupported)(
   "rejects an archived thread sharing a worktree through a symlink",

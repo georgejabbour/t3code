@@ -26,6 +26,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import * as WorktreeRecovery from "./WorktreeRecovery.ts";
 
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
@@ -103,6 +104,7 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
+    const restoreWorktree = yield* WorktreeRecovery.make;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -180,6 +182,7 @@ export const layer: Layer.Layer<
       const existingSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerThread.providerSessionId,
       );
+      yield* restoreWorktree(input.threadId, resolvedRuntimePolicy.cwd);
       const session = yield* sessions.open({
         threadId: input.threadId,
         providerSessionId: providerThread.providerSessionId,

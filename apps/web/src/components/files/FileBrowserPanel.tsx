@@ -24,11 +24,7 @@ import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import {
-  areAllDirectoriesExpanded,
-  readExpandedDirectoryPaths,
-  setAllDirectoriesExpanded,
-} from "./fileTreeExpansion";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -380,14 +376,11 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!ready) return;
     if (previousTreePathsRef.current === treePaths) return;
-    // Read the open folders before swapping the kinds: resetPaths forgets them,
-    // and the current kinds describe the rows the tree still holds.
-    const initialExpandedPaths = readExpandedDirectoryPaths(model, entryKindsRef.current);
     entryKindsRef.current = entryKinds;
     const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
     if (previousTreePaths === null) {
-      model.resetPaths(treePaths, { initialExpandedPaths });
+      model.resetPaths(treePaths);
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);

@@ -2085,6 +2085,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly separateQueries?: boolean;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2093,11 +2094,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         prefix: "t3-claude-v2-wake-",
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
-      const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
+      const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage, queue = sdkMessages) {
         const processed = yield* Deferred.make<void>();
         processedMessages.set(message, processed);
-        yield* Queue.offer(sdkMessages, message);
+        yield* Queue.offer(queue, message);
         yield* Deferred.await(processed);
       });
       const offeredMessages: Array<SDKUserMessage> = [];
@@ -2126,10 +2128,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
           open: (input) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              const processQueue = options?.separateQueries
+                ? yield* Queue.unbounded<SDKMessage>()
+                : sdkMessages;
+              processQueues.push(processQueue);
               openedOptions = input.options;
               return {
-                messages: Stream.fromQueue(sdkMessages).pipe(
+                messages: Stream.fromQueue(processQueue).pipe(
                   Stream.flatMap((message) =>
                     Stream.make(message).pipe(
                       // The next pull happens after runForEach finishes handling this frame.
@@ -2156,7 +2162,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
-                close: options?.close?.(sdkMessages) ?? Effect.void,
+                close: options?.close?.(processQueue) ?? Effect.void,
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -2205,6 +2211,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         providerThread,
         threadId,
         sdkMessages,
+        processQueues,
         offerAndWait,
         offeredMessages,
         permissionModeChanges,
@@ -2802,6 +2809,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, cwd);
       assert.notInclude(terminal.failure.message, "repeated API errors");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("closes only the expired Claude query and keeps its replacement usable", () =>
+    Effect.gen(function* () {
+      const closeEntered = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      const closeFinished = yield* Deferred.make<void>();
+      const closed: Array<Queue.Queue<SDKMessage>> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        separateQueries: true,
+        close: (queue) =>
+          Effect.sync(() => {
+            closed.push(queue);
+          }).pipe(
+            Effect.andThen(Deferred.succeed(closeEntered, undefined)),
+            Effect.andThen(Deferred.await(closeGate)),
+            Effect.andThen(Deferred.succeed(closeFinished, undefined)),
+            Effect.asVoid,
+          ),
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-expired-query"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const expired = harness.processQueues[0]!;
+      yield* harness.offerAndWait(
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000608",
+          error: "authentication_failed",
+        }),
+        expired,
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000609",
+          result: "API Error",
+          terminalReason: "api_error",
+        }),
+        expired,
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+      yield* Deferred.await(closeEntered);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-recovered-query"),
+          providerTurnOrdinal: 2,
+          text: "Try after login.",
+          attachments: [],
+        }),
+      );
+      assert.lengthOf(harness.processQueues, 2);
+      const replacement = harness.processQueues[1]!;
+      yield* Deferred.succeed(closeGate, undefined);
+      yield* Deferred.await(closeFinished);
+      // Queue receipts prove stale frames are processed before the replacement result.
+      yield* harness.offerAndWait(
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000610",
+          error: "authentication_failed",
+        }),
+        expired,
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000611",
+          result: "API Error",
+          terminalReason: "api_error",
+        }),
+        expired,
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000612", result: "Recovered." }),
+        replacement,
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(closed, [expired]);
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 

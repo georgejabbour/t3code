@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   hasUnseenCompletion,
   resolveSidebarThreadStatus,
@@ -18,21 +19,19 @@ export function getDocumentTitle(
       continue;
     }
     const status = resolveSidebarThreadStatus(thread);
+    const hasBackgroundWork = backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks);
     if (
       status === "input" ||
       status === "approval" ||
       (thread.interactionMode === "plan" &&
+        !hasBackgroundWork &&
         thread.hasActionableProposedPlan &&
         isLatestRunSettled(thread.latestRun, thread.runtime))
     ) {
       count += 1;
       continue;
     }
-    if (
-      thread.latestRun?.status !== "completed" ||
-      status !== "ready" ||
-      thread.pendingBackgroundTasks.length > 0
-    )
+    if (thread.latestRun?.status !== "completed" || status !== "ready" || hasBackgroundWork)
       continue;
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, lastVisitedAtById[key]);
