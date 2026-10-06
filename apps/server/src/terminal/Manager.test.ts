@@ -1731,6 +1731,130 @@ it.layer(
     }),
   );
 
+  it.effect.each([false, true])(
+    "confirmed shutdown waits for exit and cancels kill escalation (idle=%s)",
+    (idle) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+          processKillGraceMs: 10,
+          processTable: Effect.succeed([]),
+        });
+        yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+        let signalObserved = () => {};
+        const signal = yield* Effect.callback<void>((resume) => {
+          signalObserved = () => resume(Effect.void);
+        }).pipe(Effect.forkScoped({ startImmediately: true }));
+        const kill = process.kill.bind(process);
+        process.kill = (value) => {
+          kill(value);
+          signalObserved();
+        };
+        const closed = yield* Deferred.make<void>();
+        const closing = yield* (
+          idle
+            ? manager.closeIdle({ threadId: "thread-1", confirmExit: true })
+            : manager.closeAndWait({ threadId: "thread-1", deleteHistory: true })
+        ).pipe(
+          Effect.tap(() => Deferred.succeed(closed, undefined)),
+          Effect.forkScoped,
+        );
+        yield* Fiber.join(signal);
+        expect(yield* Deferred.isDone(closed)).toBe(false);
+        expect((yield* getEvents).some((event) => event.type === "closed")).toBe(false);
+        process.emitExit({ exitCode: 0, signal: 15 });
+        yield* Fiber.join(closing);
+        yield* TestClock.adjust("10 millis");
+        expect(process.killSignals).toEqual(["SIGTERM"]);
+        expect((yield* getEvents).some((event) => event.type === "closed")).toBe(true);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("confirmed shutdown retains the process after an exit timeout", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        processKillGraceMs: 10,
+        processTable: Effect.succeed([]),
+      });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      let signalObserved = () => {};
+      const signal = yield* Effect.callback<void>((resume) => {
+        signalObserved = () => resume(Effect.void);
+      }).pipe(Effect.forkScoped({ startImmediately: true }));
+      const kill = process.kill.bind(process);
+      process.kill = (value) => {
+        kill(value);
+        signalObserved();
+      };
+      const closing = yield* manager
+        .closeAndWait({ threadId: "thread-1" })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Fiber.join(signal);
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(closing);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") expect(result.failure._tag).toBe("TerminalShutdownError");
+      expect((yield* manager.open(openInput())).status).toBe("running");
+      const retry = yield* manager.closeAndWait({ threadId: "thread-1" }).pipe(Effect.forkScoped);
+      // The next signal proves the retry has registered its exit observer.
+      yield* Effect.callback<void>((resume) => {
+        if (process.killSignals.length > 2) resume(Effect.void);
+        else signalObserved = () => resume(Effect.void);
+      });
+      process.emitExit({ exitCode: 0, signal: 9 });
+      yield* Fiber.join(retry);
+      expect((yield* getEvents).some((event) => event.type === "closed")).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([false, true])(
+    "confirmed shutdown waits after ordinary close (timeout=%s)",
+    (timeout) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          processKillGraceMs: 10,
+          processTable: Effect.succeed([]),
+        });
+        yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+        let signalObserved = () => {};
+        const signal = yield* Effect.callback<void>((resume) => {
+          signalObserved = () => resume(Effect.void);
+        }).pipe(Effect.forkScoped({ startImmediately: true }));
+        const kill = process.kill.bind(process);
+        process.kill = (value) => {
+          kill(value);
+          signalObserved();
+        };
+        yield* manager.close({ threadId: "thread-1" });
+        yield* Fiber.join(signal);
+        const confirmed = yield* Deferred.make<void>();
+        const closing = yield* manager.closeAndWait({ threadId: "thread-1" }).pipe(
+          Effect.tap(() => Deferred.succeed(confirmed, undefined)),
+          Effect.result,
+          Effect.forkScoped,
+        );
+        if (timeout) {
+          yield* TestClock.adjust("10 seconds");
+          const result = yield* Fiber.join(closing);
+          assert.isTrue(result._tag === "Failure");
+          if (result._tag !== "Failure") return;
+          expect(result.failure._tag).toBe("TerminalShutdownError");
+          process.emitExit({ exitCode: 0, signal: 9 });
+          yield* manager.closeAndWait({ threadId: "thread-1" });
+        } else {
+          yield* Effect.yieldNow;
+          expect(yield* Deferred.isDone(confirmed)).toBe(false);
+          process.emitExit({ exitCode: 0, signal: 15 });
+          const result = yield* Fiber.join(closing);
+          expect(result._tag).toBe("Success");
+          yield* TestClock.adjust("10 millis");
+          expect(process.killSignals).toEqual(["SIGTERM"]);
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("escalates terminal shutdown to SIGKILL when process does not exit in time", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, { processKillGraceMs: 10 });

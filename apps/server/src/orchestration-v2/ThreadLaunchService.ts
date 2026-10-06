@@ -1,6 +1,9 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { resolveProjectScripts } from "@t3tools/shared/projectSettings";
+import { setupProjectScript } from "@t3tools/contracts";
+import { WorktreeRemoval } from "../project/WorktreeRemoval.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -177,6 +180,7 @@ const make = Effect.gen(function* () {
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
+  const worktreeRemoval = yield* WorktreeRemoval;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
@@ -487,12 +491,15 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
+      const setupScript = setupProjectScript(resolveProjectScripts(yield* serverSettings.getSettings, project));
+      setupTerminalId = setupScript ? `setup-${setupScript.id}` : null;
       const setup = yield* setupScripts
         .runForThread({
           threadId,
           projectId: input.projectId,
           projectCwd: project.workspaceRoot,
           worktreePath: cwd,
+          ...(setupTerminalId ? { preferredTerminalId: setupTerminalId } : {}),
           ...(tracked
             ? {
                 observeCompletion: {
@@ -576,20 +583,27 @@ const make = Effect.gen(function* () {
             cancelled ? "cancelled" : "failed",
             cancelled ? null : failureDetail(Cause.squash(cause)),
           );
-          // A cancelled setup leaves nothing behind. A failed one keeps a worktree
-          // the thread recorded, so a retry reuses it, and removes one it never
-          // recorded, which a retry would otherwise duplicate.
-          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded)) {
-            if (setupTerminalId)
-              yield* terminals
-                .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })
-                .pipe(Effect.ignore);
+          // Cleanup waits for setup exit. A failed removal keeps the saved path
+          // so a retry can find the checkout and its resources.
+          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded || setupTerminalId !== null)) {
+            if (setupTerminalId) {
+              const stopped = yield* terminals
+                .closeAndWait({ threadId, terminalId: setupTerminalId, deleteHistory: true })
+                .pipe(Effect.as(true), Effect.catchCause((shutdownCause) =>
+                  Effect.logWarning("Setup shutdown failed; the worktree remains", {
+                    threadId, path: createdWorktreePath, cause: shutdownCause,
+                  }).pipe(Effect.as(false))));
+              if (!stopped) return;
+            }
             const removedPath = createdWorktreePath;
             // The thread forgets the worktree only once it is gone; a failed
             // removal leaves the directory for the user to clean up rather than
             // reusing a checkout that may be half written.
-            yield* git
-              .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
+            yield* worktreeRemoval
+              .remove(
+                { cwd: project.workspaceRoot, path: removedPath, force: true, skipArchiveScript: setupTerminalId === null },
+                Effect.succeed(git.removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })),
+              )
               .pipe(
                 Effect.andThen(
                   threads

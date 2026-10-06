@@ -209,12 +209,18 @@ them. Those stacks held 12 named volumes and 3 containers. Conductor solves this
 with `[scripts] archive` in `.conductor/settings.toml`. T3 Code has
 `runOnWorktreeCreate` and no equivalent for removal.
 
-**What.** A `t3.json` script with the `runOnWorktreeRemove` flag runs to
-completion before `vcs.removeWorktree` deletes the worktree. A non-zero exit code
-or a timeout cancels the removal. The server then returns
-`WorktreeArchiveScriptError` with the script output. The client shows that output
-and offers to remove the worktree anyway. The retry sends `skipArchiveScript`. A
-cleanup failure never traps a workspace, and it never lets one leak in silence.
+**What.** A `t3.json` script with `runOnWorktreeRemove` runs before the shared worktree service removes the checkout.
+Manual removal and automatic cleanup use this service under the workspace lock.
+Automatic cleanup checks eligibility before the script and repeats safety checks after it.
+A failed script or timeout keeps the folder.
+Manual removal returns `WorktreeArchiveScriptError` with the script output.
+The client offers an explicit retry with `skipArchiveScript`.
+
+Failed or cancelled startup also uses this service after setup starts.
+It first confirms that the setup terminal process exits, including a terminal the user has already closed.
+A cleanup failure keeps the folder and thread, records the claimed path, and reports the error.
+Before setup starts, rollback removes only a checkout claimed by that create operation and skips the script.
+Git removal can retry after a transient error without running the script again.
 
 **Design notes.**
 
@@ -244,8 +250,7 @@ cleanup failure never traps a workspace, and it never lets one leak in silence.
   `processOutput` helper at the top of the test. The rebase stays clean, so this
   arrives as a typecheck error and never as a conflict.
 
-**Files.** New: `apps/server/src/project/WorktreeArchiveScriptRunner.ts` and its
-test. Edited: `packages/contracts/src/{t3ProjectFile,git,rpc}.ts`,
+**Files.** New: `apps/server/src/project/WorktreeArchiveScriptRunner.ts`, its test, and `WorktreeRemoval.ts`. Edited: `packages/contracts/src/{t3ProjectFile,git,rpc}.ts`,
 `packages/shared/src/projectScripts.ts`, `apps/server/src/{server,ws,server.test}.ts`,
 `apps/web/src/hooks/useThreadActions.ts`.
 
@@ -334,8 +339,8 @@ When those rules are disabled, or a safety check fails, the worktree remains.
 The deletion record retains its branch and path for later cleanup attempts.
 
 **Hook behavior.** The separate worktree removal hook remains available through the existing explicit removal flow.
-Automatic storage cleanup does not run that hook.
-Task 04 in `todo.md` tracks hook integration with the shared removal flow.
+Automatic storage cleanup uses the same shared removal service.
+It runs the hook only after eligibility checks pass and repeats safety checks before Git removes the folder.
 
 **Files.** The archive sweep, deletion command, decider, server wiring, settings description, and focused tests change.
 The service stays in the current worktree's orchestration folders.
