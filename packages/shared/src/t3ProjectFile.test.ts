@@ -42,7 +42,9 @@ describe("buildT3ProjectFileJsonSchema", () => {
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
-    expect(schema.properties.branchPrefix?.description).toContain("First segment of the branch");
+    expect(schema.properties.branchPrefix?.description).toContain(
+      "Overrides the project naming prefix",
+    );
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);

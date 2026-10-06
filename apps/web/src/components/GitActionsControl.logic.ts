@@ -463,7 +463,7 @@ export function resolveThreadBranchMetadataPatch(
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
-  /** The project's `branchPrefix` from `t3.json`, or null when it sets none. */
+  /** The repository prefix or resolved project prefix. */
   branchPrefix?: string | null;
 }): { branch: string | null } | null {
   if (!input.gitStatus) {

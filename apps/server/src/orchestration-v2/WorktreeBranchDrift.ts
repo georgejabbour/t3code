@@ -1,12 +1,14 @@
 import { CommandId } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import { isTemporaryWorktreeBranch, resolveBranchNamingOptions } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { resolveBranchPrefixForWorkspace } from "../project/BranchPrefix.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Option from "effect/Option";
+import * as ServerSettings from "../serverSettings.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -18,6 +20,7 @@ export const layer = Layer.effectDiscard(
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const loader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
     const crypto = yield* Crypto.Crypto;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const lastBranchByCwd = new Map<string, string | null>();
     yield* forkParked(
       vcs.streamAllStatusChanges().pipe(
@@ -29,14 +32,18 @@ export const layer = Layer.effectDiscard(
               return;
             lastBranchByCwd.set(change.cwd, branch);
             if (branch === null) return;
-            const prefix = yield* resolveBranchPrefixForWorkspace(loader, change.cwd);
-            if (isTemporaryWorktreeBranch(branch, prefix)) return;
             // Adopt a real checkout even if the recorded branch is a placeholder.
             // The expected branch rejects a concurrent metadata change.
             const snapshot = yield* orchestrator.getShellSnapshot({ location: "active" });
             const owners = snapshot.threads.filter((thread) => thread.worktreePath === change.cwd);
             const thread = owners.length === 1 ? owners[0] : undefined;
             if (thread === undefined || thread.branch === null || thread.branch === branch) return;
+            const file = yield* loader.load(change.cwd);
+            const naming = resolveBranchNamingOptions(
+              resolveProjectSettings(yield* serverSettings.getSettings, thread.projectId).settings,
+              Option.isSome(file) ? file.value.branchPrefix : undefined,
+            );
+            if (isTemporaryWorktreeBranch(branch, naming.prefix)) return;
             const uuid = yield* crypto.randomUUIDv4;
             yield* orchestrator.dispatch({
               type: "thread.metadata.update",

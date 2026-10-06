@@ -1,3 +1,6 @@
+import { resolveBranchNamingOptions } from "@t3tools/shared/git";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -1129,10 +1132,14 @@ export default function GitActionsControl({
   );
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const visibleInlineSuccess = inlineSuccess?.scopeKey === successScopeKey ? inlineSuccess : null;
-  // A project can name its own branch prefix in t3.json, and the placeholder
-  // branch T3 Code creates carries that prefix. Read it so the branch sync
-  // below recognises this project's placeholder.
   const projectBranchPrefix = useT3ProjectFileBranchPrefix(activeEnvironmentId, gitCwd);
+  const branchPrefix = resolveBranchNamingOptions(
+    resolveProjectSettings(
+      serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+      activeDraftThread?.projectId ?? null,
+    ).settings,
+    projectBranchPrefix,
+  ).prefix;
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   useEffect(() => {
@@ -1253,7 +1260,7 @@ export default function GitActionsControl({
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
-      branchPrefix: projectBranchPrefix,
+      branchPrefix,
     });
     if (!branchUpdate) {
       return;
@@ -1267,7 +1274,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
-    projectBranchPrefix,
+    branchPrefix,
   ]);
 
   const isDefaultRef = useMemo(() => {

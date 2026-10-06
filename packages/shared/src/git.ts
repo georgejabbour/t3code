@@ -1,5 +1,6 @@
 import type {
   BranchNamingOptions,
+  ServerSettings,
   VcsRef,
   SourceControlProviderInfo,
   VcsStatusLocalResult,
@@ -39,27 +40,43 @@ function temporaryBranchPattern(prefix: string): RegExp {
     return cached;
   }
   const pattern = new RegExp(
-    `^${escapeRegExpLiteral(prefix)}\\/(?:${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})$`,
+    `^(?:${escapeRegExpLiteral(prefix)}/(?:${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})|${escapeRegExpLiteral(prefix.replaceAll("/", "-"))}-${TEMP_WORKTREE_HEX_TOKEN})$`,
   );
   temporaryBranchPatterns.set(prefix, pattern);
   return pattern;
 }
 
-/**
- * Resolve the branch prefix for a project.
- *
- * Takes the `branchPrefix` value from the project's `t3.json`, which the
- * contract has already checked for shape, and lowercases it so it matches the
- * rest of a branch name T3 Code builds. An absent or blank value falls back to
- * {@link WORKTREE_BRANCH_PREFIX}, which keeps every project that sets nothing on
- * today's behaviour.
- */
+/** Apply the repository prefix to the native project naming options. */
+export function resolveBranchNamingOptions(
+  settings: Pick<
+    ServerSettings,
+    "branchNamingMode" | "branchNamePrefix" | "branchNameInstructions"
+  >,
+  repositoryPrefix?: string | null,
+): BranchNamingOptions {
+  return {
+    mode: settings.branchNamingMode,
+    prefix: repositoryPrefix ?? settings.branchNamePrefix,
+    instructions: settings.branchNameInstructions,
+  };
+}
+
+function sanitizeBranchPrefix(prefix: string): string {
+  return prefix
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/");
+}
+
+/** Temporary branches require a namespace, even when final names have no prefix. */
 export function resolveWorktreeBranchPrefix(configuredPrefix?: string | null): string {
-  const normalized = (configuredPrefix ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\/+|\/+$/g, "");
-  return normalized.length > 0 ? normalized : WORKTREE_BRANCH_PREFIX;
+  return sanitizeBranchPrefix(configuredPrefix ?? "") || WORKTREE_BRANCH_PREFIX;
 }
 
 /**
@@ -89,16 +106,7 @@ export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOpti
   if (naming?.mode === "custom") return raw.trim();
   const branch = sanitizeBranchFragment(raw);
   if (naming?.mode !== "static") return branch;
-  const prefix = naming.prefix
-    .split("/")
-    .map((part) =>
-      part
-        .replace(/[^a-zA-Z0-9_-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-+|-+$/g, ""),
-    )
-    .filter(Boolean)
-    .join("/");
+  const prefix = sanitizeBranchPrefix(naming.prefix);
   return prefix ? `${prefix}/${branch}` : branch;
 }
 
@@ -166,63 +174,26 @@ export function buildTemporaryWorktreeBranchName(
   return `${resolveWorktreeBranchPrefix(configuredPrefix)}/${token}`;
 }
 
-/**
- * Git stores refs as paths, so a plain `t3` branch makes every `t3/<hex>`
- * ref impossible. This moves a temporary name to the flat `t3-<hex>` sibling.
- */
+/** Flatten a temporary namespace when a branch blocks one of its parent paths. */
 export function flattenTemporaryWorktreeBranchName(refName: string): string {
-  // Keep only the canonical 8-hex token so legacy `t3code/` and UUID names map cleanly.
-  const normalized = refName.trim().toLowerCase();
-  const tokenStart = normalized.search(/[-/]/) + 1;
-  const token = normalized.slice(tokenStart, tokenStart + 8);
-  return `${WORKTREE_BRANCH_PREFIX}-${token}`;
+  const match = new RegExp(
+    `^(.+?)[/-](${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})$`,
+    "i",
+  ).exec(refName.trim());
+  if (!match) return refName;
+  const prefix = match[1]!.toLowerCase() === "t3code" ? WORKTREE_BRANCH_PREFIX : match[1]!;
+  return `${prefix.replaceAll("/", "-")}-${match[2]!.slice(0, 8).toLowerCase()}`;
 }
 
-/**
- * Report whether a branch name is the placeholder T3 Code creates for a new
- * thread, before the first turn renames it to a slug of the task.
- *
- * Pass the project's configured prefix. Callers that omit it test against
- * {@link WORKTREE_BRANCH_PREFIX}, which is what a project without a
- * `branchPrefix` in its `t3.json` uses.
- */
+/** Recognize configured placeholders and native placeholders from earlier clients. */
 export function isTemporaryWorktreeBranch(
   refName: string,
   configuredPrefix?: string | null,
 ): boolean {
-  const prefix = resolveWorktreeBranchPrefix(configuredPrefix);
-  const pattern =
-    prefix === WORKTREE_BRANCH_PREFIX
-      ? TEMP_WORKTREE_BRANCH_PATTERN
-      : temporaryBranchPattern(prefix);
-  return pattern.test(refName.trim().toLowerCase());
-}
-
-/**
- * Build the branch name for a thread from the slug a model wrote for the task.
- *
- * Strips a prefix the model repeated back, so the result carries the project's
- * prefix exactly once.
- */
-export function buildGeneratedWorktreeBranchName(
-  raw: string,
-  configuredPrefix?: string | null,
-): string {
-  const prefix = resolveWorktreeBranchPrefix(configuredPrefix);
-  // Strip quotes before the `refs/heads/` test. A model that answers with a
-  // quoted ref puts the quote first, and testing before the strip leaves
-  // `refs/heads/` inside the branch name.
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/^refs\/heads\//, "");
-
-  const withoutPrefix = normalized.startsWith(`${prefix}/`)
-    ? normalized.slice(prefix.length + 1)
-    : normalized;
-
-  return `${prefix}/${sanitizeBranchFragment(withoutPrefix)}`;
+  const normalized = refName.trim().toLowerCase();
+  if (TEMP_WORKTREE_BRANCH_PATTERN.test(normalized)) return true;
+  const prefix = resolveWorktreeBranchPrefix(configuredPrefix).toLowerCase();
+  return prefix !== WORKTREE_BRANCH_PREFIX && temporaryBranchPattern(prefix).test(normalized);
 }
 
 /**

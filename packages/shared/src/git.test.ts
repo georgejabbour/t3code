@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyGitStatusStreamEvent,
   formatGeneratedBranchName,
-  buildGeneratedWorktreeBranchName,
+  resolveBranchNamingOptions,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
@@ -236,12 +236,35 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch("team/george/deadbeef", "team/george")).toBe(true);
   });
 
-  it("holds a configured project's placeholder apart from the default one", () => {
+  it("recognizes native placeholders with a configured prefix", () => {
     // Without the project's prefix this reads as a real branch, and the
     // first-turn rename would then skip it.
     expect(isTemporaryWorktreeBranch("george/deadbeef")).toBe(false);
-    // The default prefix is not a second, always-accepted prefix.
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "george")).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "george")).toBe(true);
+  });
+});
+
+describe("configured temporary branches", () => {
+  it.each(["george", "team/george", "Team/My-prefix"])(
+    "flattens %s and retains recognition",
+    (prefix) => {
+      const branch = buildTemporaryWorktreeBranchName(() => "DEADBEEF", prefix);
+      const flat = flattenTemporaryWorktreeBranchName(branch);
+      expect(flat).toBe(`${prefix.replaceAll("/", "-")}-deadbeef`);
+      expect(isTemporaryWorktreeBranch(branch, prefix)).toBe(true);
+      expect(isTemporaryWorktreeBranch(flat, prefix)).toBe(true);
+      expect(isTemporaryWorktreeBranch(`${flat}-extra`, prefix)).toBe(false);
+    },
+  );
+
+  it.each([
+    "t3/deadbeef",
+    "t3-deadbeef",
+    "t3code/deadbeef",
+    "t3code-deadbeef",
+    "t3code/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12",
+  ])("recognizes %s after a prefix change", (branch) => {
+    expect(isTemporaryWorktreeBranch(branch, "team/george")).toBe(true);
   });
 });
 
@@ -252,9 +275,9 @@ describe("resolveWorktreeBranchPrefix", () => {
     expect(resolveWorktreeBranchPrefix("   ")).toBe(WORKTREE_BRANCH_PREFIX);
   });
 
-  it("lowercases the configured prefix and drops surrounding slashes", () => {
-    expect(resolveWorktreeBranchPrefix("George")).toBe("george");
-    expect(resolveWorktreeBranchPrefix(" /team/George/ ")).toBe("team/george");
+  it("uses the native prefix sanitizer and preserves case", () => {
+    expect(resolveWorktreeBranchPrefix("George")).toBe("George");
+    expect(resolveWorktreeBranchPrefix(" /team/George/ ")).toBe("team/George");
   });
 });
 
@@ -270,26 +293,32 @@ describe("buildTemporaryWorktreeBranchName", () => {
   });
 });
 
-describe("buildGeneratedWorktreeBranchName", () => {
-  it("applies the project's prefix to the slug a model wrote", () => {
-    expect(buildGeneratedWorktreeBranchName("Fix Login", "george")).toBe("george/fix-login");
+describe("resolveBranchNamingOptions", () => {
+  const settings = {
+    branchNamingMode: "static" as const,
+    branchNamePrefix: "project",
+    branchNameInstructions: "Use short names",
+  };
+
+  it("uses the repository prefix and preserves native options", () => {
+    expect(resolveBranchNamingOptions(settings, "team/george")).toEqual({
+      mode: "static",
+      prefix: "team/george",
+      instructions: "Use short names",
+    });
+    expect(
+      resolveBranchNamingOptions({ ...settings, branchNamingMode: "custom" }, "repo").mode,
+    ).toBe("custom");
+    expect(
+      resolveBranchNamingOptions({ ...settings, branchNamingMode: "semantic" }, "repo").mode,
+    ).toBe("semantic");
   });
 
-  it("applies the default prefix when a project sets none", () => {
-    expect(buildGeneratedWorktreeBranchName("Fix Login")).toBe(
-      `${WORKTREE_BRANCH_PREFIX}/fix-login`,
-    );
-  });
-
-  it("carries the prefix once when the model repeats it back", () => {
-    expect(buildGeneratedWorktreeBranchName("george/fix-login", "george")).toBe("george/fix-login");
-    expect(buildGeneratedWorktreeBranchName('"refs/heads/fix-login"', "george")).toBe(
-      "george/fix-login",
-    );
-  });
-
-  it("falls back to a usable name when the slug sanitizes away", () => {
-    expect(buildGeneratedWorktreeBranchName("   ---   ", "george")).toBe("george/update");
+  it("preserves project settings and an empty final prefix", () => {
+    expect(resolveBranchNamingOptions(settings).prefix).toBe("project");
+    const naming = resolveBranchNamingOptions({ ...settings, branchNamePrefix: "" });
+    expect(formatGeneratedBranchName("Fix Login", naming)).toBe("fix-login");
+    expect(buildTemporaryWorktreeBranchName(() => "deadbeef", naming.prefix)).toBe("t3/deadbeef");
   });
 });
 

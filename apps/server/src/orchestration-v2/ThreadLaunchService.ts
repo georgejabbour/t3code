@@ -35,7 +35,7 @@ import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
-  WORKTREE_BRANCH_PREFIX,
+  resolveBranchNamingOptions,
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -251,8 +251,15 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    const projectFile = yield* projectFileLoader.load(project.workspaceRoot);
-    const branchPrefix = Option.isSome(projectFile) ? projectFile.value.branchPrefix : undefined;
+    const namingWorkspace =
+      input.workspaceStrategy.type === "existing_worktree"
+        ? input.workspaceStrategy.worktreePath
+        : project.workspaceRoot;
+    const projectFile = yield* projectFileLoader.load(namingWorkspace);
+    const branchPrefix = resolveBranchNamingOptions(
+      resolveProjectSettings(yield* serverSettings.getSettings, input.projectId).settings,
+      Option.isSome(projectFile) ? projectFile.value.branchPrefix : undefined,
+    ).prefix;
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
@@ -283,6 +290,11 @@ const make = Effect.gen(function* () {
             yield* serverSettings.getSettings,
             input.projectId,
           ).settings;
+          const file = yield* projectFileLoader.load(cwd);
+          const naming = resolveBranchNamingOptions(
+            settings,
+            Option.isSome(file) ? file.value.branchPrefix : undefined,
+          );
           const modelSelection =
             settings.sourceControlWriterModelSelection === null
               ? settings.textGenerationModelSelection
@@ -292,11 +304,7 @@ const make = Effect.gen(function* () {
                 );
           return yield* textGeneration
             .generateBranchName({
-              naming: {
-                mode: settings.branchNamingMode,
-                prefix: branchPrefix ?? settings.branchNamePrefix,
-                instructions: settings.branchNameInstructions,
-              },
+              naming,
               cwd,
               message: message.text,
               attachments: message.attachments,
@@ -312,7 +320,7 @@ const make = Effect.gen(function* () {
         });
 
       // The server owns worktree naming: without an explicit branch, provision
-      // under a temporary `t3/<hash>` name so the worktree never waits on
+      // under a temporary `<prefix>/<hash>` name so the worktree never waits on
       // name generation, then rename in the background below.
       const requestedBranch = input.workspaceStrategy.branch;
       let branch: string | null;
@@ -376,17 +384,20 @@ const make = Effect.gen(function* () {
           }
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (
-          branch !== null &&
-          isTemporaryWorktreeBranch(branch) &&
-          (yield* git
-            .hasCommit({
-              cwd: project.workspaceRoot,
-              refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
-            })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
-        ) {
-          branch = flattenTemporaryWorktreeBranchName(branch);
+        if (branch !== null && isTemporaryWorktreeBranch(branch, branchPrefix)) {
+          const parents = branch.split("/").slice(0, -1);
+          for (let index = 0; index < parents.length; index++) {
+            const blocked = yield* git
+              .hasCommit({
+                cwd: project.workspaceRoot,
+                refName: `refs/heads/${parents.slice(0, index + 1).join("/")}`,
+              })
+              .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+            if (blocked) {
+              branch = flattenTemporaryWorktreeBranchName(branch);
+              break;
+            }
+          }
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
         const worktree = yield* git

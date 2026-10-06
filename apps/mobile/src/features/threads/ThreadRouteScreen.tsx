@@ -976,7 +976,6 @@ function ThreadRouteContent(
           branch: null,
           worktreePath: null,
           startFromOrigin: false,
-          worktreeBranchName: "",
         }),
       });
       if (launched._tag !== "Success") return;

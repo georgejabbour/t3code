@@ -43,7 +43,7 @@ const trimmedNonEmpty = (
 export const T3ProjectFileBranchPrefix = trimmedNonEmpty(
   {
     description:
-      'First segment of the branch name T3 Code creates for a new thread, so a repository keeps its own branch convention. For example "george" makes T3 Code name a branch "george/fix-login". T3 Code lowercases the value. Defaults to "t3code".',
+      'Prefix for temporary branches and static generated names. Overrides the project naming prefix. For example "george" produces "george/fix-login". Preserves case. Defaults to the project naming prefix.',
   },
   T3_PROJECT_FILE_BRANCH_PREFIX_MAX_LENGTH,
   T3_PROJECT_FILE_BRANCH_PREFIX_PATTERN,

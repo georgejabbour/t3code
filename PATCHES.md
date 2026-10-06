@@ -73,11 +73,13 @@ Web and desktop share this client code.
 Native folders already start closed and preserve expansion through incremental tree updates.
 The extra expansion scan is removed. Explicit expand and collapse controls remain.
 
-The remaining client differences include additional fonts, ignored-file preferences and search, clipboard refinements, and branch preferences.
+The remaining client differences include additional fonts, ignored-file preferences and search, clipboard refinements.
 Upstream already supplies physical directory browsing, HTTP clipboard fallback, workspace command discovery, and project naming settings.
 Further consolidation of these differences remains pending.
 Preserve rich clipboard formats and iOS selection behavior until their replacements are verified.
-Checked-in branch prefixes, thread-named directories, and immediate branch tracking remain.
+Checked-in branch prefixes feed the native project naming policy.
+The server owns temporary naming, including mobile requests and namespace collision checks.
+Thread-named directories and immediate branch tracking remain.
 Skills and commands use native discovery for the selected provider instance and workspace.
 The separate Claude scanner, prompt RPC, and cross-provider composer merge are removed.
 Shared menu filtering removes duplicate command names and preserves native precedence.
