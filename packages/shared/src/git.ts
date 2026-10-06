@@ -192,7 +192,9 @@ export function isTemporaryWorktreeBranch(
 ): boolean {
   const prefix = resolveWorktreeBranchPrefix(configuredPrefix);
   const pattern =
-    prefix === WORKTREE_BRANCH_PREFIX ? TEMP_WORKTREE_BRANCH_PATTERN : temporaryBranchPattern(prefix);
+    prefix === WORKTREE_BRANCH_PREFIX
+      ? TEMP_WORKTREE_BRANCH_PATTERN
+      : temporaryBranchPattern(prefix);
   return pattern.test(refName.trim().toLowerCase());
 }
 
