@@ -14,7 +14,7 @@ import {
   type SubscriptionUsageList,
 } from "@t3tools/contracts";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useCallback, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";

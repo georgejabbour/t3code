@@ -3,7 +3,7 @@ import type { EnvironmentId, GitStackRunActionInput, GitStackView } from "@t3too
 import { createGitStackEnvironmentAtoms } from "@t3tools/client-runtime/state/git-stacks";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";

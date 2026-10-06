@@ -17,7 +17,7 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
