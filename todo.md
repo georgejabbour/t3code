@@ -1,6 +1,6 @@
 # Fork consolidation TODO
 
-Assessment date: 2026-10-06. Three tasks remain after adoption of the October 6 nightly.
+Assessment date: 2026-10-06. Two tasks remain after adoption of the October 6 nightly.
 This file tracks pending work. Task numbers remain unchanged for reference.
 “Keep” tasks retain and verify a feature; they do not require a rewrite.
 
@@ -21,24 +21,6 @@ Recheck current source in `t3/assess-fork-patches-against-nightly` before each c
 
 Browser and device checks require George's explicit authorization.
 Follow repository limits on checks and protect live T3 data.
-
-## Task 16: Retain only missing clipboard behavior
-
-- [ ] Complete implementation and focused verification.
-
-**Decision:** Keep. **Original patch:** 2.
-
-**Reason:** Retain iOS selection handling, selection restoration, and native-write failure fallback where upstream lacks them.
-
-**Change:** Upstream already provides an HTTP execCommand fallback, focus restoration, and extra clipboard formats. Keep missing iOS range handling, page selection restoration, and intentional fallback after a native write failure. Retain required shared-helper callers and support detection. Verify browser-specific behavior before removal.
-
-**Completion check:** Focused tests cover HTTP fallback, iOS selection handling, selection restoration, failure reporting, and required helper callers. Preserve rich clipboard content.
-
-**References:** [Native HTTP fallback](https://github.com/pingdotgg/t3code/blob/fd1c3386c4d60f3477ab3f13c87537848de099f5/apps/web/src/hooks/useCopyToClipboard.ts#L54); [Fork refinements](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/web/src/hooks/useCopyToClipboard.ts#L55).
-
-**Result:** Pending.
-
-**Current reassessment:** The original HTTP-gap claim remains obsolete. Preserve rich clipboard formats and native focus restoration. The smaller remaining differences require real browser evidence when George authorizes that check.
 
 ## Task 21: Retain the bundled fonts as one appearance change
 

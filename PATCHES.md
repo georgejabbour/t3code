@@ -77,10 +77,12 @@ File browsing uses native directory reads and ignored-entry labels.
 The fork's ignored-file filters, visibility preference, and supplemental path search are removed.
 The tree includes ignored files and `node_modules`. Mentions and file pickers use the native search index.
 
-The remaining client differences include additional fonts and clipboard refinements.
-Upstream already supplies HTTP clipboard fallback, workspace command discovery, and project naming settings.
-Further consolidation of these differences remains pending.
-Preserve rich clipboard formats and iOS selection behavior until their replacements are verified.
+Clipboard copying uses the native helper and Connections settings controls.
+The fork's iOS selection handling, page selection restoration, failure retry, and support helper are removed.
+Native plain HTTP copying, focus restoration, and rich clipboard formats remain.
+
+The remaining client preferences include additional fonts.
+Upstream already supplies workspace command discovery and project naming settings.
 Checked-in branch prefixes feed the native project naming policy.
 The server owns temporary naming, including mobile requests and namespace collision checks.
 Thread-named directories and immediate branch tracking remain.
