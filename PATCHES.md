@@ -78,7 +78,10 @@ Upstream already supplies physical directory browsing, HTTP clipboard fallback, 
 Further consolidation of these differences remains pending.
 Preserve rich clipboard formats and iOS selection behavior until their replacements are verified.
 Checked-in branch prefixes, thread-named directories, and immediate branch tracking remain.
-Repository command discovery still needs provider-specific consolidation and invocation checks.
+Skills and commands use native discovery for the selected provider instance and workspace.
+The separate Claude scanner, prompt RPC, and cross-provider composer merge are removed.
+Shared menu filtering removes duplicate command names and preserves native precedence.
+The repository Claude skills link remains because Claude uses that supported path.
 
 ## Git and build extensions
 
