@@ -10941,8 +10941,6 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
-        threadCwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null}
-        threadBranch={activeThread.branch ?? null}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

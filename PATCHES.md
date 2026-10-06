@@ -87,12 +87,10 @@ The repository Claude skills link remains because Claude uses that supported pat
 
 ## Git and build extensions
 
-Upstream supplies native pull request stack membership and stack presentation.
-The fork also uses the `gh-stack` extension for local branch discovery, actions, and additional interface controls.
-Fallback labels use environment, checkout, repository, branch, and pull request identity.
-Native membership takes precedence. Failed or mismatched extension reads produce no fallback label.
-A shared checkout cache combines concurrent stack reads and expires failed reads immediately.
-Presentation and mutation scheduling need further assessment against native code.
+Stacks use upstream membership, navigation, badges, and merge protections.
+The fork's `gh-stack` services, RPC methods, caches, and interface controls are removed.
+Local and unpublished stack controls no longer appear in the application.
+Existing branches, worktrees, and extension tracking files remain unchanged.
 
 Native Git pushes already have unlimited time to complete.
 The redundant push wrapper is removed.

@@ -5,7 +5,6 @@ import type {
   PullRequestDetailView,
   PullRequestRef,
   PullRequestReviewThread,
-  PullRequestMergeMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -19,8 +18,6 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
-// Added by this fork. See Patch 16 in PATCHES.md.
-import { GitStackChainCard } from "~/components/stacks/GitStackChainCard";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -471,9 +468,6 @@ export function PullRequestSummaryTab({
   onFixFinding,
   onRefresh,
   onRefreshChecks = onRefresh,
-  threadCwd,
-  threadBranch,
-  mergeMethod,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
@@ -489,10 +483,6 @@ export function PullRequestSummaryTab({
   onFixFinding?: (finding: PullRequestFinding) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
-  /** The worktree for the thread beside this panel, when there is one. */
-  threadCwd?: string | null | undefined;
-  threadBranch?: string | null | undefined;
-  mergeMethod?: PullRequestMergeMethod | undefined;
 }) {
   const checkOccurrences = new Map<string, number>();
   const checks = detail.checks.map((check) => {
@@ -726,20 +716,6 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      <div className="px-4 pt-3">
-        <GitStackChainCard
-          environmentId={environmentId}
-          cwd={detail.workspaceRoot}
-          viewingBranch={detail.headBranch}
-          mergeMethod={mergeMethod}
-          threadBranch={threadBranch}
-          branch={detail.headBranch}
-          reference={reference}
-          threadRef={threadRef}
-          threadCwd={threadCwd}
-          mergePrNumber={detail.state === "open" ? reference.number : null}
-        />
-      </div>
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">

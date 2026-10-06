@@ -1,6 +1,6 @@
 # Fork consolidation TODO
 
-Assessment date: 2026-10-06. Six tasks remain after adoption of the October 6 nightly.
+Assessment date: 2026-10-06. Four tasks remain after adoption of the October 6 nightly.
 This file tracks pending work. Task numbers remain unchanged for reference.
 “Keep” tasks retain and verify a feature; they do not require a rewrite.
 
@@ -21,46 +21,6 @@ Recheck current source in `t3/assess-fork-patches-against-nightly` before each c
 
 Browser and device checks require George's explicit authorization.
 Follow repository limits on checks and protect live T3 data.
-
-## Task 13: Consolidate native and extension stack presentation
-
-- [ ] Complete implementation and focused verification.
-
-**Decision:** Consolidate. **Original patch:** 16.
-
-**Reason:** Use native stack membership and UI. Retain the gh-stack adapter for local operations.
-
-**Change:** Upstream has host-native stacks, layer lists, popovers, and menus. The fork displays a second chain card beside them. Share presentation for native stacks. Retain local and unpublished branches, submit, sync, and checkout through GhStackCli. Extension chains and native stack IDs describe different systems. Keep upstream expected-commit checks for merge actions.
-
-**Dependency:** Preserve repository and environment identity. Keep extension mutation behavior available for Task 14.
-
-**Completion check:** Native stacks use upstream membership and merge protections. Local and unpublished branches retain submit, sync, and checkout. Extension chains do not become native stack IDs.
-
-**References:** [Fork duplicate presentation](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#L730); [Native stack API](https://github.com/pingdotgg/t3code/blob/fd1c3386c4d60f3477ab3f13c87537848de099f5/apps/server/src/pullRequest/GitHubPullRequestCli.ts#L2231); [Native stack presentation](https://github.com/pingdotgg/t3code/blob/fd1c3386c4d60f3477ab3f13c87537848de099f5/apps/web/src/components/pullRequest/PullRequestStackLayers.tsx); [Retained extension adapter](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/server/src/git/stack/GhStackCli.ts).
-
-**Result:** Pending.
-
-**Current reassessment:** Native stack layers, menus, and host membership remain available. The fork chain card remains separate. Share presentation while retaining local and unpublished extension branches and their commands. Preserve native expected-commit checks; extension chains do not become native stack IDs.
-
-## Task 14: Coordinate stack mutations and refresh on the server
-
-- [ ] Complete implementation and focused verification.
-
-**Decision:** Refactor. **Original patch:** 16.
-
-**Reason:** Coordinate ordinary VCS mutations and extension stack mutations on the server.
-
-**Change:** The fork’s client stack scheduler remains separate from ordinary VCS commands and cannot coordinate other clients. No shared native server mutation coordinator covers both paths. Use a small shared KeyedLock keyed by repository identity across ordinary and extension mutations. Refresh the affected checkout, stack, and pull request state together. Consume the returned refreshed view. Pass the branch to mobile discovery.
-
-**Dependency:** Task 13 defines retained extension actions. Preserve repository and environment identity.
-
-**Completion check:** Focused integration tests prevent conflicting mutations from separate clients. Actions refresh the checkout that runs the command. Mobile discovers the requested branch from another checkout.
-
-**References:** [Mismatched map key](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/web/src/state/gitStacks.ts#L143); [Caller key](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/web/src/routes/_chat.pull-requests.tsx#L1952); [Independent client scheduler](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/packages/client-runtime/src/state/gitStacks.ts#L22).
-
-**Result:** Pending.
-
-**Current reassessment:** The shared read cache does not serialize mutations across clients. This task requires a shared server lock using the existing primitive, not an assumed native repository scheduler.
 
 ## Task 15: Shrink ignored-file browsing around native directory reads
 

@@ -104,8 +104,6 @@ import {
   MenuSubPopup,
   MenuTrigger,
 } from "~/components/ui/menu";
-// Added by this fork. See Patch 16 in PATCHES.md.
-import { GitStackMenuItems } from "~/components/stacks/GitStackMenuItems";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -1690,8 +1688,6 @@ export default function GitActionsControl({
   };
   const gitItems = (
     <>
-      {/* Added by this fork. Stack commands render only for a GitHub stack. */}
-      <GitStackMenuItems environmentId={activeEnvironmentId} cwd={gitCwd} />
       {gitActionMenuItems.map((item) => {
         const disabledReason = getMenuActionDisabledReason({
           item,

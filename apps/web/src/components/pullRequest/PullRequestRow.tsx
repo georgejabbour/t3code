@@ -85,7 +85,6 @@ function PullRequestRowImpl({
   showProjectTitle,
   showProvider,
   environmentLabel,
-  stackLabel,
   matchedElsewhere,
   statsKey,
   statsRef,
@@ -103,12 +102,6 @@ function PullRequestRowImpl({
   showProvider: boolean;
   /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string;
-  /**
-   * Added by this fork. "Position/length" when this pull request's branch sits
-   * in a GitHub stack; absent otherwise, so nothing changes for plain rows.
-   * See Patch 16 in PATCHES.md.
-   */
-  stackLabel?: string | null;
   /**
    * A search found this, but in something the row does not show — a description, a comment, a
    * commit message. Saying so is the difference between a result and an apparently random row.
@@ -253,18 +246,6 @@ function PullRequestRowImpl({
                 labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
               />
               {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
-              {stackLabel ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-3xs tabular-nums" />
-                    }
-                  >
-                    {stackLabel}
-                  </TooltipTrigger>
-                  <TooltipPopup>Position in this pull request's stack</TooltipPopup>
-                </Tooltip>
-              ) : null}
               {environmentLabel ? (
                 <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
               ) : null}

@@ -424,8 +424,6 @@ export function PullRequestDetailPanel({
   composerDraftTarget,
   onBack,
   onSelectPullRequest,
-  threadCwd,
-  threadBranch,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -473,14 +471,6 @@ export function PullRequestDetailPanel({
    * expects to land on it, with this one still open behind.
    */
   onBack?: (() => void) | undefined;
-  /** The worktree for the thread beside this panel, when there is one. */
-  threadCwd?: string | null | undefined;
-  /**
-   * The branch that thread's worktree sits on. The stack chain card marks it
-   * "here", so the mark follows the reader's own working tree rather than the
-   * pull request they happen to be reading.
-   */
-  threadBranch?: string | null | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -2765,7 +2755,6 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
-                  mergeMethod={selectedMergeMethod}
                   environmentId={environmentId}
                   threadRef={threadRef}
                   reference={reference}
@@ -2779,8 +2768,6 @@ export function PullRequestDetailPanel({
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
-                  threadCwd={threadCwd}
-                  threadBranch={threadBranch}
                 />
               </div>
             ) : null}

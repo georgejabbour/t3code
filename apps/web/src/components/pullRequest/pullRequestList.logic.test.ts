@@ -6,7 +6,6 @@ import {
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
-  pullRequestStackLabelTargets,
   pullRequestEnvironmentSetKey,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
@@ -74,52 +73,6 @@ function entry(
     ...overrides,
   } as EnvironmentPullRequestEntry;
 }
-
-describe("extension stack label targets", () => {
-  const projects = [{ id: "project-1", environmentId: "env-1", workspaceRoot: "/repo" }];
-
-  it("queries only visible GitHub rows without native stack membership", () => {
-    const rows = [
-      entry({ number: 1 }),
-      entry({ number: 2 }),
-      entry({ number: 3, stack: { number: 9, position: 1, size: 2, base: "main" } }),
-      entry({ number: 4, provider: "gitlab" }),
-    ];
-    expect(
-      pullRequestStackLabelTargets(rows, projects, new Set(rows.slice(1).map(pullRequestEntryKey))),
-    ).toEqual([
-      {
-        environmentId: "env-1",
-        cwd: "/repo",
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        headBranch: "feat/branch-2",
-        number: 2,
-      },
-    ]);
-  });
-
-  it("resolves the project on the row's environment when project ids match", () => {
-    const rows = [entry({ number: 1 })];
-    const otherProject = { ...projects[0]!, environmentId: "env-2", workspaceRoot: "/wrong-repo" };
-    const targets = pullRequestStackLabelTargets(
-      rows,
-      [otherProject, ...projects],
-      new Set(rows.map(pullRequestEntryKey)),
-    );
-    expect(targets[0]?.cwd).toBe("/repo");
-    expect(
-      pullRequestStackLabelTargets(rows, [otherProject], new Set(rows.map(pullRequestEntryKey))),
-    ).toEqual([]);
-  });
-
-  it("does not repeat stack reads for duplicate rows", () => {
-    const row = entry({ number: 1 });
-    expect(
-      pullRequestStackLabelTargets([row, row], projects, new Set([pullRequestEntryKey(row)])),
-    ).toHaveLength(1);
-  });
-});
 
 describe("visible pull request line-count targets", () => {
   it("reuses counts supplied by the listing and only requests missing counts", () => {
