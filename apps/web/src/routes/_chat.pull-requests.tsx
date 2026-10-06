@@ -62,6 +62,7 @@ import {
   partitionPullRequestsWithPriority,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
+  pullRequestStackLabelTargets,
   pullRequestEntryViewer,
   rankPullRequestMatches,
   sortPullRequestGroups,
@@ -140,7 +141,9 @@ import { toastManager } from "../components/ui/toast";
 import { useEscapeToGoBack } from "../hooks/useNavigateBack";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 // Added by this fork. See Patch 16 in PATCHES.md.
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { useGitStackPositionLabels } from "../state/gitStacks";
+import { gitStackPositionLabelKey } from "@t3tools/client-runtime/state/git-stacks";
 import {
   PULL_REQUESTS_PANEL_REF,
   pullRequestSurfaceId,
@@ -418,22 +421,6 @@ function PullRequestsRouteView() {
         environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
     [environments],
-  );
-  // Added by this fork. One stack read per project checkout, so rows whose
-  // branch sits in a GitHub stack can show their position in the chain.
-  // See Patch 16 in PATCHES.md.
-  const stackTargets = useMemo(
-    () =>
-      projects.map((project) => ({
-        environmentId: project.environmentId,
-        cwd: project.workspaceRoot,
-      })),
-    [projects],
-  );
-  const stackLabelsByBranch = useGitStackPositionLabels(stackTargets);
-  const workspaceRootByProject = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.workspaceRoot] as const)),
-    [projects],
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
@@ -1430,6 +1417,30 @@ function PullRequestsRouteView() {
     ),
   );
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
+  const [stackVisibility, setStackVisibility] = useState({
+    key: filterKey,
+    values: new Set<string>(),
+  });
+  const stackTargets = useMemo(
+    () =>
+      pullRequestStackLabelTargets(
+        groups.flatMap((group) => group.entries),
+        projects,
+        stackVisibility.key === filterKey ? stackVisibility.values : new Set(),
+      ),
+    [groups, projects, filterKey, stackVisibility],
+  );
+  const stackLabels = useGitStackPositionLabels(stackTargets);
+  const workspaceRootByProject = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [
+          scopedProjectKey({ environmentId: project.environmentId, projectId: project.id }),
+          project.workspaceRoot,
+        ]),
+      ),
+    [projects],
+  );
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
   const statsByRowRef = useRef(statsByRow);
   statsByRowRef.current = statsByRow;
@@ -1460,14 +1471,9 @@ function PullRequestsRouteView() {
       statsObserver.current?.unobserve(node);
       const key = node.dataset.pullRequestStatsKey;
       const visible = visibleStatsKeys.current;
-      if (
-        statsPolicyRef.current !== "visible" ||
-        key === undefined ||
-        !visible.values.delete(key) ||
-        statsPending.current
-      ) {
-        return;
-      }
+      if (key === undefined || !visible.values.delete(key)) return;
+      setStackVisibility({ key: visible.key, values: new Set(visible.values) });
+      if (statsPolicyRef.current !== "visible" || statsPending.current) return;
       setStatsTargetState((current) => {
         if (current.key !== visible.key) return current;
         const batches = retainVisiblePullRequestStatsBatches(current.batches, visible.values);
@@ -1491,7 +1497,7 @@ function PullRequestsRouteView() {
     });
   }, [filterKey, groups, statsPolicy]);
   useEffect(() => {
-    if (statsPolicy !== "visible" || typeof IntersectionObserver === "undefined") return;
+    if (typeof IntersectionObserver === "undefined") return;
     visibleStatsKeys.current = { key: filterKey, values: new Set() };
     const observer = new IntersectionObserver(
       (observed) => {
@@ -1512,6 +1518,8 @@ function PullRequestsRouteView() {
           changed ||= wasVisible !== visible.values.has(key);
         }
         if (!changed) return;
+        setStackVisibility({ key: filterKey, values: new Set(visible.values) });
+        if (statsPolicy !== "visible") return;
         setStatsTargetState((current) => {
           const batches = current.key === filterKey ? current.batches : [];
           const retained = statsPending.current
@@ -1948,9 +1956,14 @@ function PullRequestsRouteView() {
                       ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
                       : {})}
                     stackLabel={
-                      stackLabelsByBranch.get(
-                        `${workspaceRootByProject.get(entry.projectId) ?? ""} ${entry.headBranch}`,
-                      ) ?? null
+                      entry.stack
+                        ? null
+                        : (stackLabels.get(
+                            gitStackPositionLabelKey({
+                              ...entry,
+                              cwd: workspaceRootByProject.get(scopedProjectKey(entry)) ?? "",
+                            }),
+                          ) ?? null)
                     }
                     // Ten is the floor the ranking gives a row whose own fields say nothing
                     // about the search: the host matched something this row cannot show.

@@ -216,6 +216,13 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  // One checkout answer covers the whole chain. Share pending reads and results
+  // across branches without extending the answer's lifetime through another cache.
+  const checkoutViewCache = yield* Cache.makeWith(ghStack.view, {
+    capacity: VIEW_CACHE_CAPACITY,
+    timeToLive: (exit) => (exit._tag === "Success" ? VIEW_CACHE_TTL : Duration.zero),
+  });
+
   const readFileSafe = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.match({
@@ -245,7 +252,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     branch?: string,
   ) {
-    const atCwd = yield* ghStack.view(cwd);
+    const atCwd = yield* Cache.get(checkoutViewCache, cwd);
     if (branch === undefined) {
       return atCwd === null ? null : ({ cwd, view: atCwd } satisfies StackReading);
     }
@@ -280,7 +287,9 @@ export const make = Effect.gen(function* () {
     )) {
       // A checkout that cannot answer is not a failure of the read: the next
       // one may still hold the chain.
-      const view = yield* ghStack.view(candidate).pipe(Effect.orElseSucceed(() => null));
+      const view = yield* Cache.get(checkoutViewCache, candidate).pipe(
+        Effect.orElseSucceed(() => null),
+      );
       if (viewHoldsBranch(view, branch)) {
         return { cwd: candidate, view } satisfies StackReading;
       }
@@ -290,24 +299,11 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  const viewCache = yield* Cache.makeWith(
-    Effect.fn("GitStackService.readStack.cached")(function* (input: {
-      readonly cwd: string;
-      readonly branch?: string | undefined;
-    }) {
-      return yield* readStack(input.cwd, input.branch);
-    }),
-    {
-      capacity: VIEW_CACHE_CAPACITY,
-      timeToLive: (exit) => (exit._tag === "Success" ? VIEW_CACHE_TTL : Duration.zero),
-    },
-  );
-
   // A stack action moves branches across a whole repository, and one repository
   // is reachable through its root and through every worktree, under keys this
   // cache cannot relate to each other. So a successful action drops every entry
   // rather than pretending to know which ones it invalidated.
-  const invalidate = Cache.invalidateAll(viewCache);
+  const invalidate = Cache.invalidateAll(checkoutViewCache);
 
   /**
    * One short git read whose failure reads as "no answer". Every caller here
@@ -458,7 +454,7 @@ export const make = Effect.gen(function* () {
       });
     }
     yield* invalidate;
-    const reading = yield* Cache.get(viewCache, { cwd: input.cwd });
+    const reading = yield* readStack(input.cwd);
     if (reading === null) {
       return yield* new GitStackCommandError({
         cwd: input.cwd,
@@ -484,10 +480,7 @@ export const make = Effect.gen(function* () {
       // always where the caller stands: a pull request panel acts from the
       // project's root checkout, while the tracking sits in the worktree that
       // set the stack up.
-      const reading = yield* Cache.get(viewCache, {
-        cwd: input.cwd,
-        ...(input.branch === undefined ? {} : { branch: input.branch }),
-      });
+      const reading = yield* readStack(input.cwd, input.branch);
       if (reading === null) {
         return yield* notInStack(input);
       }
@@ -578,7 +571,7 @@ export const make = Effect.gen(function* () {
       }
 
       yield* invalidate;
-      const nextReading = yield* Cache.get(viewCache, { cwd });
+      const nextReading = yield* readStack(cwd);
       if (nextReading === null) {
         return yield* new GitStackCommandError({
           cwd,
@@ -596,7 +589,7 @@ export const make = Effect.gen(function* () {
 
   return {
     view: (input: { readonly cwd: string; readonly branch?: string | undefined }) =>
-      Cache.get(viewCache, input).pipe(Effect.map((reading) => reading?.view ?? null)),
+      readStack(input.cwd, input.branch).pipe(Effect.map((reading) => reading?.view ?? null)),
     runAction,
   };
 });

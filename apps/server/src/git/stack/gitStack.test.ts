@@ -1,11 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitStackService from "./GitStackService.ts";
@@ -87,7 +91,8 @@ describe("stack merge preferences", () => {
       );
       return Effect.gen(function* () {
         const service = yield* GitStackService.GitStackService;
-        const before = yield* service.view({ cwd: "/repo" });
+        const target = { cwd: "/repo" };
+        const before = yield* service.view(target);
         expect(before?.branches[0]?.pr?.state).toBe("open");
         const result = yield* service.runAction({
           cwd: "/repo",
@@ -98,6 +103,7 @@ describe("stack merge preferences", () => {
         expect(result.action).toBe("merge");
         expect(result.summary).toBe("Merged pull request #42.");
         expect(result.view.branches[0]?.pr?.state).toBe("merged");
+        expect((yield* service.view(target))?.branches[0]?.pr?.state).toBe("merged");
         expect(calls.filter((call) => call.args[1] === "merge")).toHaveLength(1);
         expect(calls.filter((call) => call.args[1] === "view")).toHaveLength(2);
       }).pipe(Effect.provide(serviceLayer));
@@ -139,6 +145,197 @@ const capturedView = `{
     }
   ]
 }`;
+
+function stackProcessOutput(stdout: string, exitCode = 0) {
+  return {
+    exitCode: ChildProcessSpawner.ExitCode(exitCode),
+    stdout,
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+}
+
+function makeStackService(run: VcsProcess.VcsProcess["Service"]["run"]) {
+  return GitStackService.make.pipe(
+    Effect.provide([
+      GhStackCli.layer.pipe(Layer.provideMerge(Layer.succeed(VcsProcess.VcsProcess, { run }))),
+      NodeServices.layer,
+    ]),
+  );
+}
+
+describe("shared checkout stack reads", () => {
+  it.effect("shares one pending command across different branches", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let calls = 0;
+      const service = yield* makeStackService((input) =>
+        Effect.gen(function* () {
+          expect(input.command).toBe("gh");
+          expect(input.args).toEqual(["stack", "view", "--json"]);
+          calls += 1;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          return stackProcessOutput(capturedView);
+        }),
+      );
+      const reads = yield* Effect.forEach(
+        ["api", "frontend"],
+        (branch) => service.view({ cwd: "/repo", branch }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("0 millis");
+      expect(calls).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      const results = yield* Fiber.join(reads);
+      expect(results).toEqual([
+        Result.getOrThrow(parseStackViewJson(capturedView)),
+        Result.getOrThrow(parseStackViewJson(capturedView)),
+      ]);
+      expect(calls).toBe(1);
+    }),
+  );
+
+  it.effect("keeps separate checkouts isolated", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const otherView = capturedView.replace('"trunk": "main"', '"trunk": "other-main"');
+      const service = yield* makeStackService((input) =>
+        Effect.sync(() => {
+          calls.push(input.cwd);
+          return stackProcessOutput(input.cwd === "/repo-a" ? capturedView : otherView);
+        }),
+      );
+      expect((yield* service.view({ cwd: "/repo-a", branch: "api" }))?.trunk).toBe("main");
+      expect((yield* service.view({ cwd: "/repo-b", branch: "api" }))?.trunk).toBe("other-main");
+      expect((yield* service.view({ cwd: "/repo-a", branch: "frontend" }))?.trunk).toBe("main");
+      expect((yield* service.view({ cwd: "/repo-b", branch: "frontend" }))?.trunk).toBe(
+        "other-main",
+      );
+      expect(calls).toEqual(["/repo-a", "/repo-b"]);
+    }),
+  );
+
+  it.effect("reuses successful reads for fifteen seconds and then reads again", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const service = yield* makeStackService(() =>
+        Effect.sync(() => {
+          calls += 1;
+          return stackProcessOutput(capturedView);
+        }),
+      );
+      yield* service.view({ cwd: "/repo", branch: "api" });
+      yield* TestClock.adjust("14 seconds");
+      const frontendTarget = { cwd: "/repo", branch: "frontend" };
+      yield* service.view(frontendTarget);
+      expect(calls).toBe(1);
+      yield* TestClock.adjust("2 seconds");
+      yield* service.view(frontendTarget);
+      expect(calls).toBe(2);
+    }),
+  );
+
+  it.effect("shares missing-stack answers and discovers a new stack after expiry", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      let tracked = false;
+      const service = yield* makeStackService((input) =>
+        Effect.sync(() => {
+          if (input.command === "git") return stackProcessOutput("");
+          calls += 1;
+          return tracked ? stackProcessOutput(capturedView) : stackProcessOutput("", 2);
+        }),
+      );
+      expect(yield* service.view({ cwd: "/repo", branch: "api" })).toBeNull();
+      expect(yield* service.view({ cwd: "/repo", branch: "frontend" })).toBeNull();
+      expect(calls).toBe(1);
+      tracked = true;
+      yield* TestClock.adjust("16 seconds");
+      expect((yield* service.view({ cwd: "/repo", branch: "frontend" }))?.branches).toHaveLength(3);
+      expect(calls).toBe(2);
+    }),
+  );
+
+  it.effect("retries failed reads without waiting for cache expiry", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const service = yield* makeStackService(() =>
+        Effect.sync(() => {
+          calls += 1;
+          return calls === 1 ? stackProcessOutput("", 1) : stackProcessOutput(capturedView);
+        }),
+      );
+      expect(
+        Exit.isFailure(yield* Effect.exit(service.view({ cwd: "/repo", branch: "api" }))),
+      ).toBe(true);
+      expect((yield* service.view({ cwd: "/repo", branch: "api" }))?.branches).toHaveLength(3);
+      yield* service.view({ cwd: "/repo", branch: "frontend" });
+      expect(calls).toBe(2);
+    }),
+  );
+
+  it.effect("shares root and worktree probes without answering for an unrelated branch", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const service = yield* makeStackService((input) =>
+        Effect.sync(() => {
+          if (input.command === "git")
+            return stackProcessOutput(
+              "worktree /repo\nbranch refs/heads/main\n\nworktree /repo/api\nbranch refs/heads/api\n",
+            );
+          calls.push(input.cwd);
+          return input.cwd === "/repo/api"
+            ? stackProcessOutput(capturedView)
+            : stackProcessOutput("", 2);
+        }),
+      );
+      expect((yield* service.view({ cwd: "/repo", branch: "api" }))?.branches).toHaveLength(3);
+      expect((yield* service.view({ cwd: "/repo", branch: "frontend" }))?.branches).toHaveLength(3);
+      expect(yield* service.view({ cwd: "/repo", branch: "unrelated" })).toBeNull();
+      expect(calls).toEqual(["/repo", "/repo/api"]);
+    }),
+  );
+
+  it.effect("clears cached stack answers after a successful branch checkout", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      let checkedOut = false;
+      const service = yield* makeStackService((input) =>
+        Effect.sync(() => {
+          if (input.command === "git") {
+            expect(input.args).toEqual(["status", "--porcelain", "--untracked-files=no"]);
+            return stackProcessOutput("");
+          }
+          if (input.args[1] === "checkout") {
+            expect(input.args).toEqual(["stack", "checkout", "43"]);
+            checkedOut = true;
+            return stackProcessOutput("Checked out frontend.");
+          }
+          calls += 1;
+          return stackProcessOutput(
+            checkedOut
+              ? capturedView.replace('"currentBranch": "api"', '"currentBranch": "frontend"')
+              : capturedView,
+          );
+        }),
+      );
+      const apiTarget = { cwd: "/repo", branch: "api" };
+      const frontendTarget = { cwd: "/repo", branch: "frontend" };
+      expect((yield* service.view(apiTarget))?.currentBranch).toBe("api");
+      expect((yield* service.view(frontendTarget))?.currentBranch).toBe("api");
+      expect(calls).toBe(1);
+      const action = yield* service.runAction({ cwd: "/repo", action: "checkout", prNumber: 43 });
+      expect(action.view.currentBranch).toBe("frontend");
+      expect((yield* service.view(apiTarget))?.currentBranch).toBe("frontend");
+      expect((yield* service.view(frontendTarget))?.currentBranch).toBe("frontend");
+      expect(calls).toBe(2);
+    }),
+  );
+});
 
 describe("stack discovery", () => {
   it.effect("finds saved stack state beyond the first eight worktrees", () =>

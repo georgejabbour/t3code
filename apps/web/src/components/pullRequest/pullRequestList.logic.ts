@@ -1,4 +1,8 @@
 import * as Schema from "effect/Schema";
+import {
+  gitStackPositionLabelKey,
+  type GitStackPositionLabelTarget,
+} from "@t3tools/client-runtime/state/git-stacks";
 
 import {
   EnvironmentId,
@@ -911,6 +915,39 @@ export function findScopedProject<
     return matches.length === 1 ? matches[0] : undefined;
   }
   return matches.find((project) => project.environmentId === environmentId);
+}
+
+/** Query extension stacks only for nearby GitHub rows without native membership. */
+export function pullRequestStackLabelTargets(
+  entries: ReadonlyArray<EnvironmentPullRequestEntry>,
+  projects: ReadonlyArray<{
+    readonly id: string;
+    readonly environmentId: string;
+    readonly workspaceRoot: string;
+  }>,
+  visibleKeys: ReadonlySet<string>,
+): ReadonlyArray<GitStackPositionLabelTarget> {
+  const targets = new Map<string, GitStackPositionLabelTarget>();
+  for (const entry of entries) {
+    if (
+      entry.stack !== undefined ||
+      entry.provider !== "github" ||
+      !visibleKeys.has(pullRequestEntryKey(entry))
+    )
+      continue;
+    const project = findScopedProject(projects, entry.environmentId, entry.projectId);
+    if (project === undefined) continue;
+    const target = {
+      environmentId: entry.environmentId,
+      cwd: project.workspaceRoot,
+      host: entry.host,
+      repository: entry.repository,
+      headBranch: entry.headBranch,
+      number: entry.number,
+    };
+    targets.set(gitStackPositionLabelKey(target), target);
+  }
+  return [...targets.values()];
 }
 
 /**
