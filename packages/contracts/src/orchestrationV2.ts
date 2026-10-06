@@ -2643,6 +2643,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.delete"),
     commandId: CommandId,
     threadId: ThreadId,
+    expectedArchivedAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),

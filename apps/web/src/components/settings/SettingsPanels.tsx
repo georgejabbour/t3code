@@ -3181,7 +3181,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           className="bg-muted/20 sm:pl-9"
           title={searchableSetting("delete-archived-nightly").title}
-          description="Deletes every archived thread once a day, and removes the worktree it owns. Runs the project's worktree removal script first. This cannot be undone."
+          description="Deletes idle archived conversations once a day. Worktree removal follows your separate cleanup rules and safety checks. Conversation deletion cannot be undone."
           resetAction={
             settings.deleteArchivedThreadsNightly !==
             DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly ? (

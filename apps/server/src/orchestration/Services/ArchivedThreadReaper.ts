@@ -8,6 +8,8 @@ export interface ArchivedThreadReaperShape {
    * provided scope.
    */
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+  /** Wait for queued sweeps and the current sweep to finish. */
+  readonly drain: Effect.Effect<void>;
 }
 
 export class ArchivedThreadReaper extends Context.Service<

@@ -1,24 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off
 /**
- * ArchivedThreadReaper - deletes archived threads once a day and removes the
- * worktree each one owns.
- *
- * Archiving takes a thread out of the sidebar but keeps its row and its
- * worktree path. Nothing ever removes either, so a retired thread holds its
- * checkout, its containers and its volumes for as long as the database lives,
- * and a thread whose worktree was removed by hand keeps pointing at a folder
- * that is gone.
- *
- * The sweep runs behind `deleteArchivedThreadsNightly`, which is off by
- * default because deleting a thread cannot be undone.
- *
- * A thread records the path its worktree had, not proof that T3 made it, so the
- * sweep removes a folder only when it sits inside the server's `worktreesDir`.
- * See `isManagedWorktree` in `project/ManagedWorktree.ts`.
- *
- * @module ArchivedThreadReaper
+ * Deletes idle archived conversations once a day when the setting is enabled.
+ * Storage cleanup handles worktrees after deletion under its own rules.
  */
-import { CommandId, type ProjectId, type ThreadId } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Crypto from "effect/Crypto";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -27,14 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 
-import * as ServerConfig from "../../config.ts";
-import { canonicalPath, isManagedWorktree, worktreeExists } from "../../project/ManagedWorktree.ts";
-import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import { WorktreeArchiveScriptRunner } from "../../project/WorktreeArchiveScriptRunner.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
-import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import {
   ArchivedThreadReaper,
   type ArchivedThreadReaperShape,
@@ -58,16 +38,8 @@ export interface ArchivedThreadReaperLiveOptions {
 const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const serverSettings = yield* ServerSettingsService;
-    const gitWorkflow = yield* GitWorkflowService;
-    const archiveScriptRunner = yield* WorktreeArchiveScriptRunner;
     const crypto = yield* Crypto.Crypto;
-    const config = yield* ServerConfig.ServerConfig;
-
-    // The folder T3 manages does not move while the server runs, so it is
-    // resolved once here rather than once per thread on every sweep.
-    const managedRoot = canonicalPath(config.worktreesDir);
 
     const tickInterval = options?.tickInterval ?? DEFAULT_TICK_INTERVAL;
     const sweepPeriodMs = Duration.toMillis(options?.sweepPeriod ?? DEFAULT_SWEEP_PERIOD);
@@ -76,76 +48,6 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
     const commandId = crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`server:archived-thread-reaper:${uuid}`)),
     );
-
-    /**
-     * Tears down the thread's worktree. Returns false when teardown failed, so
-     * the thread survives to be retried on the next sweep rather than losing
-     * the only record of which folder still needs cleaning.
-     */
-    const removeWorktreeFor = Effect.fn("ArchivedThreadReaper.removeWorktree")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly worktreePath: string;
-      readonly workspaceRoot: string;
-    }) {
-      // Ownership is settled before anything reads or runs inside the folder.
-      // A refusal returns false, so the thread keeps its record of the path and
-      // the sweep can try again; nothing in the folder is touched either way.
-      if (!isManagedWorktree(managedRoot, input.worktreePath)) {
-        yield* Effect.logWarning("orchestration.archived-thread.reaper.refused-foreign-worktree", {
-          threadId: input.threadId,
-          worktreePath: input.worktreePath,
-          managedWorktreesDir: config.worktreesDir,
-          detail:
-            "T3 did not create this folder, so the sweep will not remove it. " +
-            "Clear the thread's worktree path, or delete the thread by hand.",
-        });
-        return false;
-      }
-
-      // A worktree removed by hand is the common case here — most archived
-      // threads on a long-lived install already point at nothing. There is no
-      // folder to run a teardown script in and nothing for git to remove, so
-      // the thread is free to go.
-      if (!worktreeExists(input.worktreePath)) {
-        yield* Effect.logDebug("orchestration.archived-thread.reaper.worktree-already-gone", {
-          threadId: input.threadId,
-          worktreePath: input.worktreePath,
-        });
-        return true;
-      }
-
-      const scriptOk = yield* archiveScriptRunner
-        .run({ workspaceRoot: input.workspaceRoot, worktreePath: input.worktreePath })
-        .pipe(
-          Effect.as(true),
-          Effect.catch((error) =>
-            Effect.logWarning("orchestration.archived-thread.reaper.script-failed", {
-              threadId: input.threadId,
-              worktreePath: input.worktreePath,
-              error,
-            }).pipe(Effect.as(false)),
-          ),
-        );
-      // Removing the folder after its teardown script failed would strand the
-      // containers and volumes that script exists to stop, with the path they
-      // are keyed to gone.
-      if (!scriptOk) {
-        return false;
-      }
-
-      return yield* gitWorkflow
-        .removeWorktree({ cwd: input.workspaceRoot, path: input.worktreePath, force: true })
-        .pipe(
-          Effect.as(true),
-          Effect.catch((error) =>
-            Effect.logWarning("orchestration.archived-thread.reaper.remove-failed", {
-              threadId: input.threadId,
-              worktreePath: input.worktreePath,
-              error,
-            }).pipe(Effect.as(false)),
-          ),
-        );
-    });
 
     const sweep = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings;
@@ -162,51 +64,23 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
       }
 
       const snapshot = yield* orchestrator.getShellSnapshot({ location: "archive" });
-      const projects = yield* projectStore.listShells();
-      const workspaceRoots = new Map<ProjectId, string>(
-        projects.map((project) => [project.id, project.workspaceRoot]),
-      );
-
       let deletedCount = 0;
       let skippedCount = 0;
 
       for (const thread of snapshot.archivedThreads) {
-        if (thread.archivedAt === null) {
+        const archivedAt = thread.archivedAt;
+        if (archivedAt === null) {
           continue;
         }
 
-        // Archiving does not stop the agent, so an archived thread can still
-        // have one running. An unattended sweep must not delete the thread out
-        // from under live work.
-        if (thread.activeRunId !== null || (thread.pendingBackgroundTasks?.length ?? 0) > 0) {
-          yield* Effect.logInfo("orchestration.archived-thread.reaper.skipped-live-session", {
-            threadId: thread.id,
-            status: thread.activityRunStatus ?? thread.status,
-          });
+        if (
+          thread.activeRunId !== null ||
+          ["preparing", "queued", "starting", "running", "waiting"].includes(thread.status) ||
+          thread.pendingRuntimeRequest !== null ||
+          (thread.pendingBackgroundTasks?.length ?? 0) > 0
+        ) {
           skippedCount += 1;
           continue;
-        }
-
-        if (thread.worktreePath !== null) {
-          const workspaceRoot = workspaceRoots.get(thread.projectId);
-          if (workspaceRoot === undefined) {
-            yield* Effect.logWarning("orchestration.archived-thread.reaper.no-workspace-root", {
-              threadId: thread.id,
-              projectId: thread.projectId,
-              worktreePath: thread.worktreePath,
-            });
-            skippedCount += 1;
-            continue;
-          }
-          const removed = yield* removeWorktreeFor({
-            threadId: thread.id,
-            worktreePath: thread.worktreePath,
-            workspaceRoot,
-          });
-          if (!removed) {
-            skippedCount += 1;
-            continue;
-          }
         }
 
         const deleted = yield* commandId.pipe(
@@ -215,6 +89,7 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
               type: "thread.delete",
               commandId: id,
               threadId: thread.id,
+              expectedArchivedAt: archivedAt,
             }),
           ),
           Effect.as(true),
@@ -243,18 +118,23 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
       });
     });
 
+    const worker = yield* makeDrainableWorker(() =>
+      sweep.pipe(
+        Effect.catch((error: unknown) =>
+          Effect.logWarning("orchestration.archived-thread.reaper.sweep-failed", { error }),
+        ),
+        Effect.catchDefect((defect: unknown) =>
+          Effect.logWarning("orchestration.archived-thread.reaper.sweep-defect", { defect }),
+        ),
+      ),
+    );
+
     const start: ArchivedThreadReaperShape["start"] = () =>
       Effect.gen(function* () {
         yield* forkParked(
-          sweep.pipe(
-            Effect.catch((error: unknown) =>
-              Effect.logWarning("orchestration.archived-thread.reaper.sweep-failed", { error }),
-            ),
-            Effect.catchDefect((defect: unknown) =>
-              Effect.logWarning("orchestration.archived-thread.reaper.sweep-defect", { defect }),
-            ),
-            Effect.repeat(Schedule.spaced(tickInterval)),
-          ),
+          worker
+            .enqueue(undefined)
+            .pipe(Effect.andThen(worker.drain), Effect.repeat(Schedule.spaced(tickInterval))),
         );
 
         yield* Effect.logInfo("orchestration.archived-thread.reaper.started", {
@@ -262,7 +142,7 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
         });
       });
 
-    return { start } satisfies ArchivedThreadReaperShape;
+    return { start, drain: worker.drain } satisfies ArchivedThreadReaperShape;
   });
 
 export const makeArchivedThreadReaperLive = (options?: ArchivedThreadReaperLiveOptions) =>

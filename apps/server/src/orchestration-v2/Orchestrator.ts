@@ -10185,12 +10185,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "runtimeRequests",
             "subagents",
             "providerSessions",
+            "providerThreads",
           ])
           .pipe(
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        if (
+          command.expectedArchivedAt !== undefined &&
+          (projection.thread.archivedAt === null ||
+            DateTime.toEpochMillis(projection.thread.archivedAt) !==
+              DateTime.toEpochMillis(command.expectedArchivedAt) ||
+            projection.thread.deletedAt !== null ||
+            projection.runs.some((run) =>
+              ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+            ) ||
+            projection.runtimeRequests.some((request) => request.status === "pending") ||
+            projection.providerSessions.some((session) =>
+              ["starting", "running", "waiting"].includes(session.status),
+            ) ||
+            projection.providerThreads.some((thread) => thread.pendingBackgroundTasks.length > 0) ||
+            projection.subagents.some((task) =>
+              ["pending", "running", "waiting"].includes(task.status),
+            ))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is no longer idle in the expected archive state.`,
+          });
+        }
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,

@@ -119,7 +119,7 @@ stops with an error.
 | ----- | ------------------------------------------ | ------------------------------------------- |
 | 1     | `runOnWorktreeRemove`                      | `dist/bin.mjs`, the server bundle           |
 | 2     | `execCommand("copy")`                      | `dist/client/assets`, the web client bundle |
-| 3     | `refused-foreign-worktree`                 | `dist/bin.mjs`, the server bundle           |
+| 3     | `expected archive state`                   | `dist/bin.mjs`, the server bundle           |
 | 5     | `IgnoredWorkspaceEntries.listIgnoredPaths` | `dist/bin.mjs`, the server bundle           |
 | 5     | `t3code:file-explorer-show-ignored`        | `dist/client/assets`, the web client bundle |
 | 6     | `data-file-tree-initial-expansion`         | `dist/client/assets`, the web client bundle |
@@ -316,69 +316,38 @@ support, page selection restoration, fallback after a failed modern clipboard
 write, and copy support at the additional call sites. Both test sets remain.
 A refused fallback reports `ClipboardWriteError`, as the fork requires.
 
-## Patch 3 — the archived-thread sweep only removes folders T3 made
+## Patch 3 — delete archived history through safe storage cleanup
 
-**Commit:** `fix(server): stop archived sweeps removing foreign worktrees`
+**Why.** The fork adds optional daily deletion of archived conversations.
+The original sweep also force-removes their worktrees before it deletes their history.
+Its managed-directory guard protects foreign folders, but does not protect dirty or shared worktrees.
 
-**Why.** This fork adds a sweep that deletes archived threads once a day and
-removes the worktree each one owns. See the commit `feat(server): delete archived
-threads once a day, behind a setting`. The sweep trusted the path stored on the
-thread. A thread stores whatever path its worktree had, and that path can name any
-folder on the disk, including one T3 never created.
+**What.** The sweep now dispatches `thread.delete` without scripts, filesystem access, or Git removal.
+It skips running turns, starting sessions, background work, queued messages, pending approvals, and pending questions.
+The command includes the archive timestamp the sweep inspects.
+The decider rejects deletion if that archive state changes or new foreground work appears.
+Manual deletion keeps its existing behavior.
 
-One thread on George's machine recorded the maintained fork checkout itself, at
-`~/Development/worktrees/t3code/worktree-remove-hook`. The sweep therefore ran
-`git worktree remove` against the folder that holds this patch layer. That
-checkout is large, the command passed its time limit, and the run was stopped part
-way through. Git had already begun deleting, so each attempt left 140 tracked
-files gone, among them `pnpm-lock.yaml`, `tsconfig.base.json` and this file. The
-removal never finished, so the thread stayed archived and the next sweep tried
-again. It happened on 7 August 2026 and again on 8 August 2026.
+Storage cleanup reads the retained deletion record and waits for provider and terminal cleanup.
+It applies the separate worktree cleanup rules and removes eligible folders with `force: false`.
+When those rules are disabled, or a safety check fails, the worktree remains.
+The deletion record retains its branch and path for later cleanup attempts.
 
-**What.** The sweep now decides who owns a folder before it reads or runs
-anything inside it. A worktree counts as T3's only when it sits inside
-`worktreesDir`, the folder the server derives from its base directory and creates
-its worktrees in. Anything else is refused, with a warning naming the thread, the
-path and the managed folder.
+**Hook behavior.** The separate worktree removal hook remains available through the existing explicit removal flow.
+Automatic storage cleanup does not run that hook.
+Task 04 in `todo.md` tracks hook integration with the shared removal flow.
 
-A refusal returns the same "not removed" answer a failed teardown returns, so the
-thread keeps its record of the path and the sweep can try again later. Nothing in
-the folder is touched, so a refusal cannot damage files.
+**Files.** The archive sweep, deletion command, decider, server wiring, settings description, and focused tests change.
+The service stays in the current worktree's orchestration folders.
+Adopt newer service conventions when this branch moves to the corresponding upstream version.
 
-**Design notes.**
+**Verification.** Focused tests cover daily scheduling, retryable deletion, active work, and changed archive state.
+Integration tests use the real engine, projections, deletion reactor, SQLite database, and Git worktrees.
+They cover disabled cleanup, clean removal, dirty files, and shared ownership.
 
-- The managed folder comes from `ServerConfig.worktreesDir`, the value the server
-  already derives and already creates. It is not spelled out a second time here.
-- Both the candidate and the managed folder are resolved through the filesystem
-  first, so a symbolic link inside the managed folder cannot stand in for a folder
-  outside it.
-- Containment is decided with `path.relative`, not by comparing the start of one
-  string with another. A sibling folder named `worktrees-elsewhere` begins with
-  the managed folder's spelling without being inside it, and a plain text
-  comparison would accept it.
-- The managed folder itself is refused. It is not a worktree, and removing it
-  would take every worktree with it.
-- A worktree removed by hand no longer exists, and a path that is not there cannot
-  be resolved. Its parent is resolved instead and the last segment put back. This
-  step is what keeps macOS working, where `/var` and the home folder are links: an
-  unresolved `/var/…` never matches a resolved `/private/var/…`, and without it
-  every removed worktree would read as somebody else's.
-- When neither the path nor its parent resolves, the guard refuses. Ownership that
-  cannot be proven is treated as ownership the fork does not have.
-- The checks are synchronous, like the `worktreeExists` check beside them. The
-  sweep's tests run on a test clock that never advances on its own, so a real
-  asynchronous wait inside the sweep would hang them.
-
-**Files.** Edited: `apps/server/src/orchestration/Layers/ArchivedThreadReaper.ts`
-and its test.
-
-**Upstream status.** Not filed, for the reason given in Patch 1. The sweep itself
-is this fork's, so upstream does not carry this fault.
-
-**Marker.** `refused-foreign-worktree`, the warning code emitted when the guard
-rejects a path outside T3's managed worktree root. The guard's tests prove the
-path-containment behavior, while this bundle marker proves the installed server
-contains that tested guard.
+**Marker.** `expected archive state` identifies the scheduled deletion guard in the server bundle.
+The external installer marker check still expects `refused-foreign-worktree`.
+Update that check before installing this revision.
 
 ## Patch 4 — steer a running turn from a phone (removed 2026-08-16)
 
@@ -720,11 +689,8 @@ The thread then shows an activity saying the folder was rebuilt and that
 uncommitted work is not in it. A folder that reappears silently, missing work,
 reads as data loss.
 
-`isManagedWorktree`, `canonicalPath` and `worktreeExists` moved out of
-`ArchivedThreadReaper.ts` into `project/ManagedWorktree.ts`. The sweep asks
-"may I remove this?" and the turn asks "may I rebuild this?", and both must
-answer the same way. Their comments moved intact, including the August 2026
-incident that made the containment test necessary.
+`project/ManagedWorktree.ts` provides the ownership and existence checks for provider recovery.
+The archive sweep delegates folder removal to storage cleanup and no longer uses these helpers.
 
 **Design notes.**
 
