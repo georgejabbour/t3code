@@ -157,10 +157,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
+        // Failed usage reads may retain quota only for the same signed-in account.
         const snapshot = withUsageLimits(
           probedSnapshot,
           resolveUsageLimitsAfterProbe({
-            published: state.snapshot.usageLimits,
+            published:
+              state.snapshot.driver === probedSnapshot.driver &&
+              state.snapshot.auth.status === probedSnapshot.auth.status &&
+              state.snapshot.auth.email?.trim().toLowerCase() ===
+                probedSnapshot.auth.email?.trim().toLowerCase() &&
+              state.snapshot.auth.type === probedSnapshot.auth.type
+                ? state.snapshot.usageLimits
+                : undefined,
             probed: probedSnapshot.usageLimits,
           }),
         );

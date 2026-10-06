@@ -18,7 +18,7 @@
  * This fork keeps its additions in new files, so an upstream change rarely
  * conflicts with them.
  */
-import type { EnvironmentId, ProviderInstanceId, SubscriptionUsageList } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import {
   describeSubscription,
   describeSubscriptionFreshness,
@@ -41,11 +41,9 @@ const SEVEN_DAY_MARKS = [1, 2, 3, 4, 5, 6].map((day) => (day / 7) * 100);
 
 export interface SubscriptionSelectorProps {
   /** The last reading, kept on screen while a newer one is in flight. */
-  readonly usage: SubscriptionUsageList | null;
+  readonly usage: ReadonlyArray<ServerProvider> | null;
   /** True while a request for a newer reading is running. */
   readonly isRevalidating: boolean;
-  /** When the reading above was taken, or null before the first one arrives. */
-  readonly updatedAtMs: number | null;
   readonly activeInstanceId: string | null;
   readonly onSelect: (instanceId: ProviderInstanceId) => void;
   readonly onRefresh: () => void;
@@ -98,7 +96,7 @@ function WindowLine({
           {remaining === null ? "—" : `${remaining}%`}
         </span>
         {window.resetsIn === null ? null : (
-          <span className="text-muted-foreground truncate">resets in {window.resetsIn}</span>
+          <span className="text-muted-foreground truncate">{window.resetsIn}</span>
         )}
       </span>
       {remaining === null ? null : (
@@ -145,7 +143,7 @@ function SubscriptionRow({
   onSelect: (instanceId: ProviderInstanceId) => void;
   onManage: (instanceId: ProviderInstanceId) => void;
 }) {
-  const { subscription } = row;
+  const { subscription, displayName } = row;
   const labelId = useId();
   const isDisabled = !subscription.enabled;
   const handleClick = useCallback(() => {
@@ -169,7 +167,7 @@ function SubscriptionRow({
       />
       <ProviderInstanceIcon
         driverKind={subscription.driver}
-        displayName={subscription.displayName}
+        displayName={displayName}
         accentColor={subscription.accentColor ?? undefined}
         className={cn("pointer-events-none mt-0.5 size-5", isDisabled && "opacity-40")}
         iconClassName="size-5"
@@ -177,17 +175,17 @@ function SubscriptionRow({
       <span className={cn("pointer-events-none min-w-0 flex-1", isDisabled && "opacity-60")}>
         <span className="flex items-center gap-1.5">
           <span id={labelId} className="min-w-0 truncate text-sm">
-            {subscription.displayName.includes("@") ? (
+            {displayName.includes("@") ? (
               <RedactedSensitiveText
-                key={subscription.displayName}
-                value={subscription.displayName}
+                key={displayName}
+                value={displayName}
                 ariaLabel="Toggle account label visibility"
                 revealTooltip="Click to reveal account"
                 hideTooltip="Click to hide account"
                 className="pointer-events-auto relative max-w-full truncate font-sans text-sm leading-normal"
               />
             ) : (
-              subscription.displayName
+              displayName
             )}
           </span>
           {row.isActive ? <CheckIcon aria-label="In use" className="size-3.5 shrink-0" /> : null}
@@ -205,9 +203,9 @@ function SubscriptionRow({
           <span className="mt-1 flex flex-col gap-1.5">
             {row.windows.map((window) => (
               <WindowLine
-                key={window.label}
+                key={window.id}
                 window={window}
-                accentColor={subscription.accentColor}
+                accentColor={subscription.accentColor ?? null}
               />
             ))}
           </span>
@@ -220,7 +218,6 @@ function SubscriptionRow({
 export function SubscriptionSelector({
   usage,
   isRevalidating,
-  updatedAtMs,
   activeInstanceId,
   onSelect,
   onRefresh,
@@ -237,8 +234,8 @@ export function SubscriptionSelector({
   }, []);
 
   const summary = useMemo(
-    () => summarizeSubscriptionUsage(usage?.subscriptions ?? [], activeInstanceId, nowMs),
-    [usage?.subscriptions, activeInstanceId, nowMs],
+    () => summarizeSubscriptionUsage(usage ?? [], activeInstanceId, nowMs),
+    [usage, activeInstanceId, nowMs],
   );
 
   const handleManageAll = useCallback(() => {
@@ -247,8 +244,8 @@ export function SubscriptionSelector({
 
   const freshness = describeSubscriptionFreshness({
     hasReading: usage !== null,
+    updatedAtMs: summary.updatedAtMs,
     isRevalidating,
-    updatedAtMs,
     nowMs,
   });
   // A stale total may already have moved, so it steps back to the muted colour

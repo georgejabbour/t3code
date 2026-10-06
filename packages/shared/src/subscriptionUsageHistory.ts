@@ -1,135 +1,122 @@
-/**
- * subscriptionUsageHistory - remember how high each plan window climbed.
- *
- * Utilization only rises inside a rate-limit window and returns to zero when
- * the window resets, so the whole story of a window is one number: the highest
- * it reached. That keeps the record to a row per window instead of a reading
- * every few minutes, and it answers the question worth asking, which is how
- * often a plan runs out rather than what it looked like at 3pm.
- *
- * A window is identified by its reset time. The provider gives an exact one,
- * and two samples naming the same reset time are the same window.
- *
- * Everything here is pure, so the sampler and the view share one definition of
- * "hit the limit".
- *
- * @module subscriptionUsageHistory
- */
-import type {
-  SubscriptionUsage,
-  SubscriptionWindowKind,
-  SubscriptionWindowPeak,
-} from "@t3tools/contracts";
+/** Peak history from native usage windows. Old records remain unattributed. */
+import type { ServerProvider, SubscriptionWindowPeak } from "@t3tools/contracts";
+import { subscriptionAccountKey, subscriptionWindows } from "./subscriptionUsage.ts";
 
-/** At or above this, a window counts as having run out. */
 export const AT_LIMIT_UTILIZATION = 95;
 
-const WINDOW_KINDS: ReadonlyArray<SubscriptionWindowKind> = ["fiveHour", "sevenDay"];
-
-function windowOf(subscription: SubscriptionUsage, kind: SubscriptionWindowKind) {
-  return kind === "fiveHour" ? subscription.fiveHour : subscription.sevenDay;
+/** An instance alone cannot distinguish a changed sign-in. */
+export function subscriptionHistoryAccountKey(provider: ServerProvider): string | null {
+  return provider.auth.status === "authenticated" && provider.auth.email?.trim()
+    ? subscriptionAccountKey(provider)
+    : null;
 }
 
-function keyOf(peak: {
-  readonly instanceId: string;
-  readonly window: SubscriptionWindowKind;
-  readonly resetsAt: string;
-}): string {
-  return `${peak.instanceId}\u0000${peak.window}\u0000${peak.resetsAt}`;
+function keyOf(
+  peak: Pick<SubscriptionWindowPeak, "accountKey" | "instanceId" | "window" | "resetsAt">,
+): string {
+  return JSON.stringify([
+    peak.accountKey ?? `legacy:${peak.instanceId}`,
+    peak.window,
+    peak.resetsAt,
+  ]);
 }
 
-/**
- * Fold one reading of one subscription into the record.
- *
- * Returns a new list. A window already recorded keeps the higher of the two
- * utilizations, because the point of the record is the peak. A window the
- * provider reports without a reset time is skipped: without one there is no
- * way to tell a new window from the one before it, and merging two windows
- * into a single row would invent a peak that never happened.
- */
 export function recordSubscriptionSample(
   peaks: ReadonlyArray<SubscriptionWindowPeak>,
-  subscription: SubscriptionUsage,
-  sampledAt: string,
+  provider: ServerProvider,
 ): ReadonlyArray<SubscriptionWindowPeak> {
+  const accountKey = subscriptionHistoryAccountKey(provider);
+  const limits = provider.usageLimits;
+  if (accountKey === null || limits === undefined) return peaks;
   const byKey = new Map(peaks.map((peak) => [keyOf(peak), peak]));
-
-  for (const kind of WINDOW_KINDS) {
-    const window = windowOf(subscription, kind);
-    if (window === null || window.resetsAt === null) {
-      continue;
-    }
-
+  let changed = false;
+  for (const window of subscriptionWindows(provider)) {
+    if (window.resetsAt === undefined) continue;
     const candidate = {
-      instanceId: subscription.instanceId,
-      window: kind,
+      instanceId: provider.instanceId,
+      accountKey,
+      window: window.id,
+      label:
+        window.label === "Weekly" || window.label === "Week"
+          ? "Weekly windows"
+          : window.windowDurationMins === 300
+            ? "5-hour windows"
+            : `${window.label} windows`,
       resetsAt: window.resetsAt,
     };
     const key = keyOf(candidate);
     const existing = byKey.get(key);
-
+    if (
+      existing &&
+      limits.checkedAt <= existing.lastSampledAt &&
+      window.usedPercent <= existing.peakUtilization
+    )
+      continue;
+    changed = true;
     byKey.set(key, {
       ...candidate,
-      peakUtilization:
-        existing === undefined
-          ? window.utilization
-          : Math.max(existing.peakUtilization, window.utilization),
-      firstSampledAt: existing?.firstSampledAt ?? sampledAt,
-      lastSampledAt: sampledAt,
+      peakUtilization: Math.max(existing?.peakUtilization ?? 0, window.usedPercent),
+      firstSampledAt:
+        existing && existing.firstSampledAt < limits.checkedAt
+          ? existing.firstSampledAt
+          : limits.checkedAt,
+      lastSampledAt:
+        existing && existing.lastSampledAt > limits.checkedAt
+          ? existing.lastSampledAt
+          : limits.checkedAt,
       sampleCount: (existing?.sampleCount ?? 0) + 1,
     });
   }
-
-  return [...byKey.values()].sort((left, right) => left.resetsAt.localeCompare(right.resetsAt));
+  return changed ? [...byKey.values()].sort((a, b) => a.resetsAt.localeCompare(b.resetsAt)) : peaks;
 }
 
-/**
- * Drop windows that reset before the cutoff.
- *
- * Keyed on the reset time rather than when it was sampled, so a window is kept
- * for a fixed span after it closed however long ago it was first seen.
- */
 export function pruneSubscriptionHistory(
   peaks: ReadonlyArray<SubscriptionWindowPeak>,
   cutoffIso: string,
-): ReadonlyArray<SubscriptionWindowPeak> {
+) {
   return peaks.filter((peak) => peak.resetsAt >= cutoffIso);
 }
 
-/** What the history view says about one subscription's window. */
 export interface SubscriptionWindowHistory {
-  readonly window: SubscriptionWindowKind;
-  /** Closed windows, oldest first. The open one is excluded, see below. */
+  readonly window: string;
+  readonly label: string;
   readonly peaks: ReadonlyArray<SubscriptionWindowPeak>;
-  /** How many of those windows reached {@link AT_LIMIT_UTILIZATION}. */
   readonly windowsAtLimit: number;
-  /** Highest peak across them, or null when none are recorded. */
-  readonly worstPeak: number | null;
 }
 
-/**
- * Summarize one subscription's recorded windows.
- *
- * The window still open is left out. It is only part-way through, so counting
- * it would report a quiet afternoon as a window that never ran out and drag
- * the answer downward.
- */
+/** Keep legacy instance history visible, but separate from the current account's counts. */
 export function summarizeSubscriptionHistory(
   peaks: ReadonlyArray<SubscriptionWindowPeak>,
-  instanceId: string,
-  window: SubscriptionWindowKind,
+  provider: ServerProvider,
   nowIso: string,
-): SubscriptionWindowHistory {
-  const closed = peaks
-    .filter(
-      (peak) => peak.instanceId === instanceId && peak.window === window && peak.resetsAt <= nowIso,
+): ReadonlyArray<SubscriptionWindowHistory> {
+  const accountKey = subscriptionHistoryAccountKey(provider);
+  const groups = new Map<string, SubscriptionWindowPeak[]>();
+  for (const peak of peaks) {
+    const legacy = peak.accountKey === undefined;
+    if (
+      peak.resetsAt > nowIso ||
+      (legacy
+        ? peak.instanceId !== provider.instanceId
+        : accountKey === null || peak.accountKey !== accountKey)
     )
-    .sort((left, right) => left.resetsAt.localeCompare(right.resetsAt));
-
-  return {
+      continue;
+    const key = JSON.stringify([legacy, peak.window]);
+    const group = groups.get(key) ?? [];
+    group.push(peak);
+    groups.set(key, group);
+  }
+  return [...groups].map(([window, group]) => ({
     window,
-    peaks: closed,
-    windowsAtLimit: closed.filter((peak) => peak.peakUtilization >= AT_LIMIT_UTILIZATION).length,
-    worstPeak: closed.length === 0 ? null : Math.max(...closed.map((peak) => peak.peakUtilization)),
-  };
+    label:
+      group[0]!.accountKey === undefined
+        ? group[0]!.window === "sevenDay"
+          ? "Earlier weekly windows"
+          : group[0]!.window === "fiveHour"
+            ? "Earlier 5-hour windows"
+            : "Earlier windows"
+        : (group[0]!.label ?? "Usage windows"),
+    peaks: group.sort((a, b) => a.resetsAt.localeCompare(b.resetsAt)),
+    windowsAtLimit: group.filter((peak) => peak.peakUtilization >= AT_LIMIT_UTILIZATION).length,
+  }));
 }

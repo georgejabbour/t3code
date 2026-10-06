@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { RpcClient, type RpcMessage } from "effect/unstable/rpc";
+import { RpcClient, type RpcMessage } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,

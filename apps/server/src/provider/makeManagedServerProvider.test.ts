@@ -657,4 +657,49 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+  it.effect("clears carried usage when a different account has a failed probe", () =>
+    Effect.gen(function* () {
+      let checks = 0;
+      const provider = yield* makeManagedServerProvider<TestSettings>({
+        resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+        getSettings: Effect.succeed({ enabled: true }),
+        streamSettings: Stream.empty,
+        haveSettingsChanged: () => false,
+        initialSnapshot: () => Effect.succeed(initialSnapshot),
+        checkProvider: Effect.sync(() => {
+          checks += 1;
+          return {
+            ...refreshedSnapshot,
+            auth: {
+              status: "authenticated" as const,
+              email: checks === 1 ? "a@example.com" : "b@example.com",
+            },
+            usageLimits:
+              checks === 1
+                ? {
+                    checkedAt: refreshedSnapshot.checkedAt,
+                    windows: [
+                      {
+                        id: "primary",
+                        kind: "session" as const,
+                        label: "Session",
+                        usedPercent: 60,
+                      },
+                    ],
+                  }
+                : {
+                    checkedAt: refreshedSnapshotSecond.checkedAt,
+                    windows: [],
+                    unavailable: { reason: "probeFailed" as const },
+                  },
+          };
+        }),
+        refreshInterval: "1 hour",
+      });
+      yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+      const refreshed = yield* provider.refresh;
+      assert.strictEqual(refreshed.auth.email, "b@example.com");
+      assert.deepStrictEqual(refreshed.usageLimits?.windows, []);
+    }).pipe(Effect.scoped, Effect.provide(AlwaysRunTestLayer)),
+  );
 });

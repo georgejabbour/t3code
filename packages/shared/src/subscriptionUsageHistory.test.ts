@@ -1,188 +1,168 @@
-import { ProviderDriverKind, ProviderInstanceId, type SubscriptionUsage } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
-
 import {
-  pruneSubscriptionHistory,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  SubscriptionUsageHistory,
+  type ServerProvider,
+  type SubscriptionWindowPeak,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { describe, expect, it } from "vite-plus/test";
+import {
   recordSubscriptionSample,
+  pruneSubscriptionHistory,
   summarizeSubscriptionHistory,
 } from "./subscriptionUsageHistory.ts";
-
-/** A short window, named the way the Claude probe names it. */
-const shortWindow = (utilization: number, resetsAt: string | null) => ({
-  label: "5h",
-  utilization,
-  resetsAt,
-});
-
-/** A long window, named the way both probes name a seven-day one. */
-const longWindow = (utilization: number, resetsAt: string | null) => ({
-  label: "Week",
-  utilization,
-  resetsAt,
-});
-
-const subscription = (overrides: Partial<SubscriptionUsage> = {}): SubscriptionUsage => ({
+const decodeHistory = Schema.decodeSync(Schema.fromJsonString(SubscriptionUsageHistory));
+const observedAt = "2026-10-01T12:00:00.000Z";
+const reset = "2026-10-02T12:00:00.000Z";
+const weekly = {
+  id: "seven_day",
+  kind: "weekly",
+  label: "Weekly",
+  usedPercent: 99,
+  resetsAt: reset,
+} as const;
+const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make("personal"),
-  driver: ProviderDriverKind.make("claudeAgent"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
-  displayName: "Personal",
-  accentColor: null,
-  email: null,
-  subscriptionType: "max",
-  fiveHour: shortWindow(10, "2026-08-16T17:00:00.000Z"),
-  sevenDay: longWindow(20, "2026-08-18T15:00:00.000Z"),
-  absence: null,
-  collectedAt: "2026-08-16T12:00:00.000Z",
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated", email: "me@example.com" },
+  checkedAt: observedAt,
+  models: [],
+  slashCommands: [],
+  skills: [],
+  usageLimits: { checkedAt: observedAt, windows: [weekly] },
   ...overrides,
 });
-
-describe("recordSubscriptionSample", () => {
-  it("records a window the first time it is seen", () => {
-    const peaks = recordSubscriptionSample([], subscription(), "2026-08-16T12:00:00.000Z");
-
+const legacy: SubscriptionWindowPeak = {
+  instanceId: ProviderInstanceId.make("personal"),
+  window: "sevenDay",
+  resetsAt: reset,
+  peakUtilization: 30,
+  firstSampledAt: observedAt,
+  lastSampledAt: observedAt,
+  sampleCount: 47,
+};
+describe("native quota history", () => {
+  it("preserves old JSON records without assigning today's account", () => {
+    const old = decodeHistory(JSON.stringify({ peaks: [legacy] }));
+    const peaks = recordSubscriptionSample(old.peaks, provider());
     expect(peaks).toHaveLength(2);
-    expect(peaks[0]).toMatchObject({
-      window: "fiveHour",
-      resetsAt: "2026-08-16T17:00:00.000Z",
-      peakUtilization: 10,
-      sampleCount: 1,
+    expect(peaks[0]).toEqual(legacy);
+    const history = summarizeSubscriptionHistory(peaks, provider(), "2026-10-03T00:00:00.000Z");
+    expect(history.map((row) => [row.label, row.windowsAtLimit])).toEqual([
+      ["Earlier weekly windows", 0],
+      ["Weekly windows", 1],
+    ]);
+  });
+  it("keeps peaks and ignores repeated snapshot samples", () => {
+    const first = recordSubscriptionSample([], provider());
+    expect(recordSubscriptionSample(first, provider())).toBe(first);
+    const later = recordSubscriptionSample(
+      first,
+      provider({
+        usageLimits: {
+          checkedAt: "2026-10-01T13:00:00.000Z",
+          windows: [{ ...weekly, usedPercent: 40 }],
+        },
+      }),
+    );
+    expect(later[0]).toMatchObject({
+      peakUtilization: 99,
+      sampleCount: 2,
+      firstSampledAt: observedAt,
+      lastSampledAt: "2026-10-01T13:00:00.000Z",
     });
   });
-
-  it("keeps the highest reading for a window rather than the latest", () => {
-    // Utilization only climbs, but a provider that reports a dip must not
-    // erase the peak the window actually reached.
-    let peaks = recordSubscriptionSample([], subscription(), "2026-08-16T12:00:00.000Z");
+  it("separates new windows and account changes on one instance", () => {
+    let peaks = recordSubscriptionSample([], provider());
+    const other = provider({ auth: { status: "authenticated", email: "other@example.com" } });
+    peaks = recordSubscriptionSample(peaks, other);
     peaks = recordSubscriptionSample(
       peaks,
-      subscription({ fiveHour: shortWindow(80, "2026-08-16T17:00:00.000Z") }),
-      "2026-08-16T14:00:00.000Z",
+      provider({
+        usageLimits: {
+          checkedAt: observedAt,
+          windows: [{ ...weekly, resetsAt: "2026-10-09T12:00:00.000Z" }],
+        },
+      }),
     );
-    peaks = recordSubscriptionSample(
-      peaks,
-      subscription({ fiveHour: shortWindow(60, "2026-08-16T17:00:00.000Z") }),
-      "2026-08-16T15:00:00.000Z",
-    );
-
-    const fiveHour = peaks.filter((peak) => peak.window === "fiveHour");
-    expect(fiveHour).toHaveLength(1);
-    expect(fiveHour[0]?.peakUtilization).toBe(80);
-    expect(fiveHour[0]?.sampleCount).toBe(3);
-    expect(fiveHour[0]?.firstSampledAt).toBe("2026-08-16T12:00:00.000Z");
-    expect(fiveHour[0]?.lastSampledAt).toBe("2026-08-16T15:00:00.000Z");
+    expect(peaks).toHaveLength(3);
+    expect(
+      summarizeSubscriptionHistory(peaks, other, "2026-10-03T00:00:00.000Z")[0]?.peaks,
+    ).toHaveLength(1);
   });
-
-  it("starts a new row once the window resets", () => {
-    let peaks = recordSubscriptionSample(
-      [],
-      subscription({ fiveHour: shortWindow(96, "2026-08-16T17:00:00.000Z") }),
-      "2026-08-16T16:00:00.000Z",
-    );
-    peaks = recordSubscriptionSample(
-      peaks,
-      subscription({ fiveHour: shortWindow(3, "2026-08-16T22:00:00.000Z") }),
-      "2026-08-16T17:30:00.000Z",
-    );
-
-    const fiveHour = peaks.filter((peak) => peak.window === "fiveHour");
-    expect(fiveHour.map((peak) => peak.peakUtilization)).toEqual([96, 3]);
+  it("shares account history across instances without counting a sample twice", () => {
+    const peaks = recordSubscriptionSample([], provider());
+    const duplicate = provider({ instanceId: ProviderInstanceId.make("second") });
+    expect(recordSubscriptionSample(peaks, duplicate)).toBe(peaks);
+    expect(
+      summarizeSubscriptionHistory(peaks, duplicate, "2026-10-03T00:00:00.000Z")[0]?.peaks,
+    ).toHaveLength(1);
   });
-
-  it("skips a window with no reset time, which has no identity", () => {
+  it("keeps multiple weekly IDs separate and excludes open windows", () => {
     const peaks = recordSubscriptionSample(
       [],
-      subscription({ fiveHour: shortWindow(40, null), sevenDay: null }),
-      "2026-08-16T12:00:00.000Z",
+      provider({
+        usageLimits: {
+          checkedAt: observedAt,
+          windows: [weekly, { ...weekly, id: "weekly-model", label: "Sonnet allowance" }],
+        },
+      }),
     );
-
-    expect(peaks).toEqual([]);
+    expect(summarizeSubscriptionHistory(peaks, provider(), observedAt)).toEqual([]);
+    expect(
+      summarizeSubscriptionHistory(peaks, provider(), "2026-10-03T00:00:00.000Z"),
+    ).toHaveLength(2);
+    expect(
+      summarizeSubscriptionHistory(peaks, provider(), "2026-10-03T00:00:00.000Z").map(
+        (row) => row.label,
+      ),
+    ).toEqual(["Weekly windows", "Sonnet allowance windows"]);
   });
-
-  it("keeps subscriptions apart", () => {
-    let peaks = recordSubscriptionSample([], subscription(), "2026-08-16T12:00:00.000Z");
-    peaks = recordSubscriptionSample(
-      peaks,
-      subscription({ instanceId: ProviderInstanceId.make("hermes") }),
-      "2026-08-16T12:00:00.000Z",
+  it("skips unknown account identities, disabled providers, and windows without resets", () => {
+    expect(recordSubscriptionSample([], provider({ auth: { status: "authenticated" } }))).toEqual(
+      [],
     );
-
-    expect(peaks.filter((peak) => peak.window === "fiveHour")).toHaveLength(2);
+    expect(recordSubscriptionSample([], provider({ enabled: false }))).toEqual([]);
+    expect(
+      recordSubscriptionSample(
+        [],
+        provider({
+          usageLimits: { checkedAt: observedAt, windows: [{ ...weekly, resetsAt: undefined }] },
+        }),
+      ),
+    ).toEqual([]);
   });
-});
-
-describe("pruneSubscriptionHistory", () => {
-  it("drops windows that reset before the cutoff", () => {
-    const peaks = recordSubscriptionSample([], subscription(), "2026-08-16T12:00:00.000Z");
-
-    expect(pruneSubscriptionHistory(peaks, "2026-08-17T00:00:00.000Z")).toHaveLength(1);
-    expect(pruneSubscriptionHistory(peaks, "2026-08-19T00:00:00.000Z")).toHaveLength(0);
-  });
-});
-
-describe("summarizeSubscriptionHistory", () => {
-  const peaks = [
-    {
-      instanceId: ProviderInstanceId.make("personal"),
-      window: "fiveHour" as const,
-      resetsAt: "2026-08-15T17:00:00.000Z",
-      peakUtilization: 99,
-      firstSampledAt: "2026-08-15T13:00:00.000Z",
-      lastSampledAt: "2026-08-15T16:30:00.000Z",
-      sampleCount: 8,
-    },
-    {
-      instanceId: ProviderInstanceId.make("personal"),
-      window: "fiveHour" as const,
-      resetsAt: "2026-08-15T22:00:00.000Z",
-      peakUtilization: 40,
-      firstSampledAt: "2026-08-15T18:00:00.000Z",
-      lastSampledAt: "2026-08-15T21:00:00.000Z",
-      sampleCount: 6,
-    },
-    {
-      instanceId: ProviderInstanceId.make("personal"),
-      window: "fiveHour" as const,
-      resetsAt: "2026-08-16T17:00:00.000Z",
-      peakUtilization: 12,
-      firstSampledAt: "2026-08-16T12:00:00.000Z",
-      lastSampledAt: "2026-08-16T12:30:00.000Z",
-      sampleCount: 2,
-    },
-  ];
-
-  it("counts how many closed windows ran out", () => {
-    const summary = summarizeSubscriptionHistory(
-      peaks,
-      "personal",
-      "fiveHour",
-      "2026-08-16T13:00:00.000Z",
+  it("retains chronological sample times when updates arrive out of order", () => {
+    const peaks = recordSubscriptionSample(
+      recordSubscriptionSample([], provider()),
+      provider({
+        usageLimits: {
+          checkedAt: "2026-10-01T11:00:00.000Z",
+          windows: [{ ...weekly, usedPercent: 100 }],
+        },
+      }),
     );
-
-    expect(summary.peaks).toHaveLength(2);
-    expect(summary.windowsAtLimit).toBe(1);
-    expect(summary.worstPeak).toBe(99);
+    expect(peaks[0]).toMatchObject({
+      firstSampledAt: "2026-10-01T11:00:00.000Z",
+      lastSampledAt: observedAt,
+      peakUtilization: 100,
+    });
+    expect(pruneSubscriptionHistory(peaks, "2026-10-03T00:00:00.000Z")).toEqual([]);
   });
-
-  it("leaves out the window still open, which is only part-way through", () => {
-    const summary = summarizeSubscriptionHistory(
-      peaks,
-      "personal",
-      "fiveHour",
-      "2026-08-16T13:00:00.000Z",
+  it("keeps a native ID that resembles a legacy key separate", () => {
+    const peaks = recordSubscriptionSample(
+      [legacy],
+      provider({
+        usageLimits: { checkedAt: observedAt, windows: [{ ...weekly, id: "legacy:sevenDay" }] },
+      }),
     );
-
-    expect(summary.peaks.map((peak) => peak.resetsAt)).not.toContain("2026-08-16T17:00:00.000Z");
-  });
-
-  it("reports nothing for a subscription with no record", () => {
-    const summary = summarizeSubscriptionHistory(
-      peaks,
-      "hermes",
-      "fiveHour",
-      "2026-08-16T13:00:00.000Z",
-    );
-
-    expect(summary.peaks).toEqual([]);
-    expect(summary.worstPeak).toBeNull();
+    const summary = summarizeSubscriptionHistory(peaks, provider(), "2026-10-03T00:00:00.000Z");
+    expect(summary).toHaveLength(2);
+    expect(summary.map((row) => row.label)).toEqual(["Earlier weekly windows", "Weekly windows"]);
   });
 });

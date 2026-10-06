@@ -11,14 +11,14 @@ import {
   EnvironmentId,
   type ProviderInstanceId,
   type SubscriptionUsageHistory,
-  type SubscriptionUsageList,
 } from "@t3tools/contracts";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -28,23 +28,6 @@ import { SubscriptionSelector } from "./SubscriptionSelector";
 // Stands in while no environment is chosen. The request is never sent, so the
 // name only has to be one no real environment takes.
 const NO_ENVIRONMENT_ID = EnvironmentId.make("t3code:no-environment");
-
-/**
- * When the reading a result carries was taken.
- *
- * A failed request keeps the reading that came before it, so a request that
- * fails leaves the last good numbers on screen with their own date rather than
- * an empty panel.
- */
-function readingTimestamp(result: AsyncResult.AsyncResult<unknown, unknown>): number | null {
-  if (AsyncResult.isSuccess(result)) {
-    return result.timestamp;
-  }
-  if (AsyncResult.isFailure(result)) {
-    return Option.getOrNull(Option.map(result.previousSuccess, (success) => success.timestamp));
-  }
-  return null;
-}
 
 export function SubscriptionSelectorPanel({
   environmentId,
@@ -60,51 +43,43 @@ export function SubscriptionSelectorPanel({
 }) {
   const navigate = useNavigate();
   const [isRefreshingServer, setIsRefreshingServer] = useState(false);
-  // The query family is keyed by the whole request, and it needs an
-  // environment. Without one there is nothing to ask, so the panel reads the
-  // idle result the family returns for a request it never sends.
-  const usageAtom = serverEnvironment.subscriptionUsage(
-    environmentId === null
-      ? { environmentId: NO_ENVIRONMENT_ID, input: {} }
-      : { environmentId, input: {} },
-  );
-  const result = useAtomValue(usageAtom);
-  const refreshQuery = useAtomRefresh(usageAtom);
-  const refreshServer = useAtomCommand(serverEnvironment.refreshSubscriptionUsage, {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const refreshServer = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const historyAtom = serverEnvironment.subscriptionUsageHistory({
+    environmentId: environmentId ?? NO_ENVIRONMENT_ID,
+    input: {},
+  });
+  const refreshHistory = useAtomRefresh(historyAtom);
 
-  const historyResult = useAtomValue(
-    serverEnvironment.subscriptionUsageHistory(
-      environmentId === null
-        ? { environmentId: NO_ENVIRONMENT_ID, input: {} }
-        : { environmentId, input: {} },
-    ),
-  );
-
-  // AsyncResult keeps the last value while a newer one is in flight, so these
-  // three read apart: what to draw, whether a request is running, and when the
-  // drawn reading was taken. Treating the request as "no data" is what used to
-  // blank the panel on every open.
-  const usage = Option.getOrNull(AsyncResult.value(result)) as SubscriptionUsageList | null;
-  const history = Option.getOrNull(
+  const historyResult = useAtomValue(historyAtom);
+  const usage = config?.providers ?? null;
+  const history: SubscriptionUsageHistory | null = Option.getOrNull(
     AsyncResult.value(historyResult),
-  ) as SubscriptionUsageHistory | null;
-  const isRevalidating = isRefreshingServer || AsyncResult.isWaiting(result);
-  const updatedAtMs = readingTimestamp(result);
+  );
+  const historyReadingKey = JSON.stringify(
+    usage?.map((provider) => [
+      provider.instanceId,
+      provider.auth.email,
+      provider.usageLimits?.checkedAt,
+    ]),
+  );
+  useEffect(() => {
+    // A native reading can add a peak while this popover stays open.
+    if (historyReadingKey !== undefined) refreshHistory();
+  }, [historyReadingKey, refreshHistory]);
 
-  const handleRefresh = useCallback(async () => {
-    if (environmentId === null) {
-      return;
-    }
+  const handleRefresh = async () => {
+    if (environmentId === null) return;
     setIsRefreshingServer(true);
     try {
-      await refreshServer({ environmentId, input: {} });
+      await refreshUsageLimits(environmentId, () => refreshServer({ environmentId, input: {} }));
     } finally {
-      refreshQuery();
+      refreshHistory();
       setIsRefreshingServer(false);
     }
-  }, [environmentId, refreshQuery, refreshServer]);
+  };
 
   // `add: true` opens the add-provider dialog on arrival, so a reader who
   // asked to add a subscription lands on the form instead of on a screen they
@@ -122,8 +97,7 @@ export function SubscriptionSelectorPanel({
   return (
     <SubscriptionSelector
       usage={usage}
-      isRevalidating={isRevalidating}
-      updatedAtMs={updatedAtMs}
+      isRevalidating={isRefreshingServer}
       activeInstanceId={activeInstanceId}
       onSelect={onSelect}
       onRefresh={handleRefresh}
@@ -134,7 +108,7 @@ export function SubscriptionSelectorPanel({
       {activeInstanceId === null ? null : (
         <SubscriptionHistory
           history={history}
-          instanceId={activeInstanceId}
+          provider={usage?.find((provider) => provider.instanceId === activeInstanceId) ?? null}
           nowIso={new Date().toISOString()}
         />
       )}

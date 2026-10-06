@@ -11,7 +11,7 @@
  */
 import type {
   SubscriptionUsageHistory as SubscriptionUsageHistoryData,
-  SubscriptionWindowKind,
+  ServerProvider,
 } from "@t3tools/contracts";
 import {
   AT_LIMIT_UTILIZATION,
@@ -24,11 +24,6 @@ import { cn } from "~/lib/utils";
 
 /** Most recent windows drawn, so the strip stays readable at this width. */
 const MAX_BARS = 24;
-
-const WINDOW_LABELS: Record<SubscriptionWindowKind, string> = {
-  fiveHour: "5-hour windows",
-  sevenDay: "Weekly windows",
-};
 
 function PeakBars({
   peaks,
@@ -67,21 +62,10 @@ function PeakBars({
 }
 
 function WindowHistory({
-  history,
-  window,
-  instanceId,
-  nowIso,
+  summary,
 }: {
-  history: SubscriptionUsageHistoryData;
-  window: SubscriptionWindowKind;
-  instanceId: string;
-  nowIso: string;
+  summary: ReturnType<typeof summarizeSubscriptionHistory>[number];
 }) {
-  const summary = useMemo(
-    () => summarizeSubscriptionHistory(history.peaks, instanceId, window, nowIso),
-    [history.peaks, instanceId, window, nowIso],
-  );
-
   if (summary.peaks.length === 0) {
     return null;
   }
@@ -90,7 +74,7 @@ function WindowHistory({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-muted-foreground text-xs">{WINDOW_LABELS[window]}</span>
+        <span className="text-muted-foreground text-xs">{summary.label}</span>
         <span
           className={cn(
             "text-xs",
@@ -109,21 +93,26 @@ function WindowHistory({
 
 export function SubscriptionHistory({
   history,
-  instanceId,
+  provider,
   nowIso,
 }: {
   readonly history: SubscriptionUsageHistoryData | null;
-  readonly instanceId: string;
+  readonly provider: ServerProvider | null;
   readonly nowIso: string;
 }) {
-  if (history === null || history.peaks.length === 0) {
-    return null;
-  }
-
+  const summaries = useMemo(
+    () =>
+      history === null || provider === null
+        ? []
+        : summarizeSubscriptionHistory(history.peaks, provider, nowIso),
+    [history, provider, nowIso],
+  );
+  if (summaries.length === 0) return null;
   return (
     <div className="flex flex-col gap-2 px-2 pt-1 pb-2" data-testid="subscription-history">
-      <WindowHistory history={history} window="fiveHour" instanceId={instanceId} nowIso={nowIso} />
-      <WindowHistory history={history} window="sevenDay" instanceId={instanceId} nowIso={nowIso} />
+      {summaries.map((summary) => (
+        <WindowHistory key={summary.window} summary={summary} />
+      ))}
     </div>
   );
 }

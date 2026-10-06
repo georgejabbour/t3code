@@ -328,7 +328,10 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
           commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
         }),
-        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: (usageOptions?: {
+          skipBehaviors?: boolean;
+        }) => {
+          assert.deepStrictEqual(usageOptions, { skipBehaviors: true });
           Deferred.doneUnsafe(usageStarted, Effect.void);
           return new Promise(() => {});
         },

@@ -128,14 +128,12 @@ stops with an error.
 | 8     | `Refresh git and pull request status`      | `dist/client/assets`, the web client bundle |
 | 9     | `Rebuilt this thread's worktree`           | `dist/bin.mjs`, the server bundle           |
 | 10    | `providerSessionIdleTimeout`               | `dist/bin.mjs`, the server bundle           |
-| 11    | `t3/provider/SubscriptionUsageService`     | `dist/bin.mjs`, the server bundle           |
 | 11    | `Add another subscription`                 | `dist/client/assets`, the web client bundle |
 | 12    | `subscription-usage-history.json`          | `dist/bin.mjs`, the server bundle           |
 | 12    | `ran out in`                               | `dist/client/assets`, the web client bundle |
 | 13    | `discoverClaudeProjectCommands`            | `dist/bin.mjs`, the server bundle           |
 | 13    | `provider.getProjectPrompts`               | `dist/client/assets`, the web client bundle |
 | 14    | `no setting was saved`                     | `dist/bin.mjs`, the server bundle           |
-| 15    | `t3/provider/CodexSubscriptionUsage.probe` | `dist/bin.mjs`, the server bundle           |
 | 15    | `Turned off in Providers`                  | `dist/client/assets`, the web client bundle |
 | 16    | `t3/git/stack/GitStackService`             | `dist/bin.mjs`, the server bundle           |
 | 16    | `git-stack-chain-card`                     | `dist/client/assets`, the web client bundle |
@@ -765,135 +763,44 @@ setting.
 
 **Marker.** `providerSessionIdleTimeout`, in `dist/bin.mjs`, the server bundle.
 
-## Patch 11 — pick which Claude subscription a thread uses
+## Patch 11 — select the subscription for new threads
 
-**Commits:**
+The sidebar popover and Providers settings let a user select a subscription
+for new threads. The selection writes `activeSubscriptionInstanceId`.
+Existing saved selections remain valid. A running thread keeps its provider.
 
-- `feat: read how much of each Claude subscription is left`
-- `feat: choose a Claude subscription from the sidebar and settings`
+The popover reads native provider snapshots from the server configuration
+stream. Native provider checks and live turn updates supply the usage windows.
+The refresh control uses the same provider refresh and request sharing as
+Usage → Limits. The fork has no separate Claude or Codex usage probe.
 
-**Why.** One Claude provider instance already carries its own `homePath`, which
-becomes `CLAUDE_CONFIG_DIR`, so each instance signs in to its own claude.ai
-account. Several subscriptions could therefore be connected at once, and
-nothing showed how much of any of them was left or made one of them the
-subscription new threads use. Choosing meant opening settings and reading
-instance names that say nothing about remaining capacity.
+The header adds remaining allowance once per account. Configured instances
+remain separate selectable rows, even when they share an account. A disabled
+instance stays visible and opens Providers settings when selected.
 
-**What.** A selector, in the sidebar footer and on the provider settings
-screen. It lists every enabled Claude instance with the share of its five-hour
-window still available, adds those shares for the header the way the Claude
-Code selector does, and marks the one new threads use. Picking one writes
-`activeSubscriptionInstanceId`, and a thread with no choice of its own takes
-it.
+**Marker:** `Add another subscription`, in the web client bundle.
 
-**Nothing routes on its own.** No thread moves between subscriptions, and none
-is chosen for a person. That is deliberate: a provider session is bound to the
-credentials directory it started in, so moving a live thread would cost it its
-resume cursor and start a new provider session. The number beside each row is
-there so a person decides.
+## Patch 12 — retain quota window peaks
 
-**The experimental method, and why it is quarantined.** The Claude Agent SDK
-reports plan utilization through:
+The popover shows closed quota windows as bars and counts how often their
+observed peak reaches 95%. The server records native provider snapshot updates.
+History reads include the latest cached snapshot. History capture adds no
+provider checks or polling timer.
 
-```
-usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
-```
+The store keeps a peak per account, native window ID, and reset time. It skips
+readings without an account address or reset time. It keeps records for ninety
+days after reset. It serializes file updates and replaces the JSON file with
+an atomic rename. A malformed existing file stops recording and remains intact.
 
-Its own documentation says the API may change or be removed in any release and
-that the name will change once it settles. This fork rebases onto nightly
-builds, so that rename arrives unannounced.
+Earlier records lack account identity. The popover shows them under “Earlier”
+labels, separate from the current account's history. The store preserves their
+window names and sample counts without assigning them to today's sign-in.
 
-Every use of it sits in `apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
-and the call is a lookup by string rather than a typed method. When the name
-changes, the lookup returns undefined, the probe reports that usage is not
-available, and the selector lists the subscription with no percentage beside
-it. Nothing throws, and no other file has to know the method ever existed.
-Restoring the number is then a one-line edit to one constant.
+The history records observed readings only. It can miss a peak between native
+readings or while the server is stopped.
 
-**Design notes.**
-
-- Reading usage spawns a short-lived Claude subprocess per instance, the same
-  way the capabilities probe already does, so answers are held for five
-  minutes. The refresh control asks again.
-- The cache key carries the instance configuration, so an edited instance is
-  asked again instead of answering from the entry its old settings filled.
-- The header shows a total only when at least one subscription reported a
-  window. A zero would read as "nothing left" rather than "nothing known".
-- The sidebar entry resolves its own environment and writes its own setting, so
-  this fork's edit to `SidebarChrome.tsx` is one line.
-- `activeSubscriptionInstanceId` counts only while the instance it names is
-  still configured. A removed instance falls back to the previous order rather
-  than pinning threads to something that is gone.
-
-**Files.** New: `packages/contracts/src/subscriptionUsage.ts`,
-`packages/shared/src/subscriptionUsage.ts`,
-`apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
-`apps/server/src/provider/SubscriptionUsageService.ts`, and three components
-under `apps/web/src/components/subscriptions/`. Edited, a line or two each:
-both package indexes, `rpc.ts`, `RpcAuthorization.ts`, `settings.ts`,
-`server.ts`, one call in `ws.ts`, `client-runtime/state/server.ts`,
-`SidebarChrome.tsx`, `ProviderSettingsPanel.tsx` and `ChatView.tsx`.
-
-**Upstream status.** Not filed, for the reason given in Patch 1.
-
-**Markers.** `t3/provider/SubscriptionUsageService`, the service tag, and
-`Add another subscription`, the button label.
-
-## Patch 12 — how often a plan runs out
-
-**Commit:** `feat: record how high each plan window climbs`
-
-**Why.** The selector shows what is left right now. It could not answer the
-question behind that number, which is whether a plan runs out again and again
-or whether one bad afternoon stood out. The Usage page does not answer it
-either: it reads local transcripts for token cost, and its own documentation
-says subscription billing is separate from what it shows.
-
-**What.** A reading is taken every thirty minutes and folded into a record of
-window peaks. The selector draws those peaks under the subscription in use, as
-a bar per window with a count: "ran out in 3 of the last 18".
-
-**One number per window, not a time series.** Utilization only climbs inside a
-rate-limit window and returns to zero when the window resets, so the highest it
-reached is the whole story. Two subscriptions over ninety days come to roughly
-a thousand rows rather than tens of thousands of readings. A window is
-identified by its reset time, which the provider states exactly, so two samples
-naming the same reset time are the same window.
-
-**Design notes.**
-
-- The record is a JSON file beside the state database, not a table. A migration
-  numbered by this fork collides with the first migration upstream adds at the
-  same number, and this fork rebases onto a nightly most days. The file is
-  written to a temporary name and moved into place, so a reader never sees half
-  of it.
-- Sampling is skipped whenever `BackgroundPolicy` says the machine has no
-  reason to be working, so a sleeping laptop does not spawn a Claude process
-  every half hour. A skipped sample leaves a gap rather than a wrong number,
-  because peaks only climb and the next reading still catches the high mark.
-- The window still open is excluded from the counts. It is part-way through, so
-  counting it would report a quiet afternoon as a window that never ran out.
-- A window the provider reports with no reset time is skipped. Without one
-  there is no way to tell a new window from the one before it, and merging two
-  windows into a row would invent a peak that never happened.
-- 95% counts as having run out, in one shared constant, so the sampler and the
-  view cannot disagree about it.
-
-**A limitation worth knowing.** Sampling only sees windows while the server
-runs. A limit reached overnight with T3 Code closed is missed, and the record
-understates it.
-
-**Files.** New: `apps/server/src/provider/SubscriptionUsageHistoryStore.ts`,
-`packages/shared/src/subscriptionUsageHistory.ts`, and
-`apps/web/src/components/subscriptions/SubscriptionHistory.tsx`. Edited, a line
-or two each: `subscriptionUsage.ts` in contracts, `rpc.ts`,
-`RpcAuthorization.ts`, `server.ts`, one call in `ws.ts`,
-`client-runtime/state/server.ts`, and the two selector components.
-
-**Upstream status.** Not filed, for the reason given in Patch 1.
-
-**Markers.** `subscription-usage-history.json`, the file the record lives in,
-and `ran out in`, the count the history strip prints.
+**Markers:** `subscription-usage-history.json` in the server bundle and
+`ran out in` in the web client bundle.
 
 ## Patch 13 — a repository's own skills and commands reach the menus
 
@@ -1032,116 +939,18 @@ the same shape, so upstream will meet this the day it adds its own third
 `stripDefaultServerSettings` holds no string literal, so no marker can watch it.
 The four tests above are its check. Run them before an install.
 
-## Patch 15 — every subscription in one panel, whichever provider it belongs to
+## Patch 15 — show Claude and Codex subscriptions together
 
-**Commits:**
+The popover lists configured Claude and Codex instances, including disabled
+instances. Each row uses its native account label, usage windows, and reset
+time. Weekly-only plans and additional native windows need no fixed window
+slots. The header counts each known account once and uses its latest reading.
 
-- `feat: show every provider subscription, not only Claude`
-- `fix(web): mount the add-provider search reader as a child element`
+“Add another subscription” opens the add-provider dialog in Providers settings.
+“Manage in Providers” opens that settings page. A disabled row also opens the
+settings page. The existing manual selection behavior remains unchanged.
 
-**Why.** The panel Patch 11 added read one driver, `claudeAgent`, and skipped
-every instance that was switched off. A machine with three subscription
-sign-ins therefore showed one row. Two ChatGPT plans behind the Codex
-command-line tool had numbers to report and no place to report them, and a
-Claude sign-in whose organization had switched plan access off was invisible
-rather than listed with a reason. A person who added a subscription and later
-turned it off could not tell whether it had ever been added.
-
-**What.** The panel now lists every provider instance whose driver can carry a
-paid plan: `claudeAgent` and `codex`. Turned off or not, each one gets a row.
-The header counts accounts rather than rows. A row shows its provider's mark,
-the plan name, the windows the plan reports, and, when there is no number, the
-reason there is none.
-
-**Reading a ChatGPT plan.** `apps/server/src/provider/CodexSubscriptionUsage.ts`
-starts `codex app-server`, the long-running mode T3 Code already starts for the
-provider health check, and asks it two questions: `account/read` for the
-account and the plan, and `account/rateLimits/read` for the windows. Both are
-declared in the generated protocol under `packages/effect-codex-app-server`, so
-no string lookup is needed here, unlike the Claude route in Patch 11.
-
-**The two window slots.** A plan reports at most two windows, a short one and a
-long one. The contract still names those slots `fiveHour` and `sevenDay`,
-because the record of past windows on disk is keyed by those names and a rename
-would throw away ninety days of it. Each window now carries its own `label`,
-written by the server, so a slot never claims a length it does not have. That
-matters: Codex states a duration in minutes rather than a name, and a ChatGPT
-Pro 5x account reports **one seven-day window as its primary and no five-hour
-window at all**. Trusting the field name would have drawn a weekly figure under
-the heading "5h".
-
-**One subprocess per sign-in, not per instance.** The answer cache is keyed by
-the sign-in — driver, binary, credentials directory, launch arguments and
-declared environment — rather than by the instance id. Two instances that read
-one account therefore cost one subprocess between them. The key is also the
-whole input the probe needs, and `subscriptionSignInFromKey` reads it straight
-back, because a cache hands its lookup nothing but the key.
-
-**Design notes.**
-
-- A row that is turned off cannot be picked. A thread started on it would find
-  no provider to run. Pressing it opens the Providers screen instead, which is
-  where a subscription is turned back on.
-- "Add another subscription" now navigates with `?add=1`, and the Providers
-  screen opens the add-provider dialog on arrival. Landing on a long screen and
-  hunting for a small plus button was the step that made adding a second
-  sign-in feel out of reach.
-- The header adds one figure per account. Two instances on one ChatGPT sign-in
-  would otherwise report twice the capacity the account has.
-- `unsupported` now means only what its name says: an API key, Bedrock or
-  Vertex, none of which bills against a plan. A sign-in that names a plan and
-  reports no window is `unavailable`. An account whose organization has
-  switched Claude Code subscription access off is exactly that case, and
-  calling it "billed per token" denied it a plan it has.
-- Both probes end with `Effect.catchCause`. A missing binary throws a defect
-  rather than a typed failure, and one instance that cannot start must not stop
-  the rest of the list from being read.
-- Cursor, Grok and OpenCode are left out. None reports a plan window T3 Code can
-  read, so a row for one would show a name and no number every time, which
-  teaches a reader to ignore the panel.
-- The `?add=1` reader is a child element, `OpenAddProviderDialogFromSearch`,
-  rather than a hook call in the provider panel's own body. Upstream's test
-  `ProviderSettingsPanel.environment.test.tsx` calls that panel as a plain
-  function, with stand-ins for four React hooks and no router, so a router
-  hook in the body stopped five upstream tests. A child element does not run
-  there, because the test reads the element tree the panel returns and never
-  renders it. The app mounts the child with the panel, so the dialog still
-  opens on arrival.
-
-**Tests.**
-
-```sh
-vp test run src/provider/CodexSubscriptionUsage.test.ts \
-            src/provider/ClaudeSubscriptionUsage.test.ts \
-            src/provider/SubscriptionUsageService.test.ts   # from apps/server
-vp test run src/subscriptionUsage.test.ts \
-            src/subscriptionUsageHistory.test.ts            # from packages/shared
-vp test run --project unit \
-            src/components/subscriptions/useOpenAddProviderDialogFromSearch.test.ts \
-            src/components/settings/ProviderSettingsPanel.environment.test.tsx
-                                                            # from apps/web
-```
-
-**Files.** New: `apps/server/src/provider/CodexSubscriptionUsage.ts`,
-`apps/server/src/provider/subscriptionUsageProbe.ts`,
-`apps/web/src/components/subscriptions/useOpenAddProviderDialogFromSearch.ts`,
-which also exports the child element, and a test beside each. Edited:
-`packages/contracts/src/subscriptionUsage.ts`,
-`packages/contracts/src/settings.ts` (one comment),
-`packages/shared/src/subscriptionUsage.ts`,
-`apps/server/src/provider/SubscriptionUsageService.ts`,
-`apps/server/src/provider/ClaudeSubscriptionUsage.ts`,
-`apps/web/src/components/subscriptions/SubscriptionSelector.tsx`,
-`SubscriptionSelectorPanel.tsx`, `SubscriptionSidebarButton.tsx`. A line or two
-each: `apps/web/src/routes/settings.providers.tsx` and
-`apps/web/src/components/settings/ProviderSettingsPanel.tsx`, where the fork
-adds two imports and one block of elements and nothing else.
-
-**Upstream status.** Not filed, for the reason given in Patch 1.
-
-**Markers.** `t3/provider/CodexSubscriptionUsage.probe`, the trace name one
-read carries, and `Turned off in Providers`, the line a switched-off row
-shows.
+**Marker:** `Turned off in Providers`, in the web client bundle.
 
 ## Patch 16 — GitHub stacks in the interface
 

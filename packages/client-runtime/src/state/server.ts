@@ -1072,18 +1072,7 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
-    // Added by this fork. See the subscription selector in PATCHES.md.
-    //
-    // Both of these live in a popover, so they go idle every time it closes.
-    // The default idle timeout drops the reading five minutes later, and the
-    // next open then has nothing to show while it asks again. An hour keeps
-    // the last reading, so opening the panel draws numbers at once and asks
-    // for new ones behind them. The header dates whatever it draws.
-    subscriptionUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:subscription-usage",
-      tag: WS_METHODS.serverGetSubscriptionUsage,
-      idleTtlMs: 60 * 60_000,
-    }),
+    // Keep closed-window history available between popover mounts.
     subscriptionUsageHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:subscription-usage-history",
       tag: WS_METHODS.serverGetSubscriptionUsageHistory,
@@ -1334,16 +1323,6 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
-    }),
-    // Added by this fork. Asking every instance again spawns a process each,
-    // so one request at a time per environment.
-    refreshSubscriptionUsage: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:refresh-subscription-usage",
-      tag: WS_METHODS.serverRefreshSubscriptionUsage,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,

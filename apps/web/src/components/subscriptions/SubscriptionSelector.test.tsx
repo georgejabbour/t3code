@@ -1,8 +1,4 @@
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type SubscriptionUsageList,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -25,23 +21,36 @@ vi.mock("../ui/tooltip", async () => {
 
 import { SubscriptionSelector } from "./SubscriptionSelector";
 
-const usage: SubscriptionUsageList = {
-  subscriptions: [
-    {
-      instanceId: ProviderInstanceId.make("personal"),
-      driver: ProviderDriverKind.make("claudeAgent"),
-      enabled: true,
-      displayName: "Personal",
-      accentColor: "#d97757",
-      email: null,
-      subscriptionType: "max",
-      fiveHour: { label: "5h", utilization: 9, resetsAt: null },
-      sevenDay: { label: "Week", utilization: 20, resetsAt: null },
-      absence: null,
-      collectedAt: "2026-08-28T12:00:00.000Z",
+const usage: ReadonlyArray<ServerProvider> = [
+  {
+    instanceId: ProviderInstanceId.make("personal"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    displayName: "Personal",
+    accentColor: "#d97757",
+    auth: { status: "authenticated", label: "max" },
+    checkedAt: "2026-08-28T12:00:00.000Z",
+    models: [],
+    skills: [],
+    slashCommands: [],
+    usageLimits: {
+      checkedAt: "2026-08-28T12:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          windowDurationMins: 300,
+          usedPercent: 9,
+        },
+        { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 20 },
+      ],
     },
-  ],
-};
+  },
+];
 
 describe("SubscriptionSelector limit bars", () => {
   it("hides email labels until requested and keeps subscription selection separate", async () => {
@@ -54,9 +63,8 @@ describe("SubscriptionSelector limit bars", () => {
       await act(async () => {
         renderer = create(
           <SubscriptionSelector
-            usage={{ subscriptions: [{ ...usage.subscriptions[0]!, displayName: email }] }}
+            usage={[{ ...usage[0]!, displayName: email }]}
             isRevalidating={false}
-            updatedAtMs={null}
             activeInstanceId="personal"
             onSelect={onSelect}
             onRefresh={() => {}}
@@ -88,7 +96,6 @@ describe("SubscriptionSelector limit bars", () => {
       <SubscriptionSelector
         usage={usage}
         isRevalidating={false}
-        updatedAtMs={null}
         activeInstanceId="personal"
         onSelect={() => {}}
         onRefresh={() => {}}

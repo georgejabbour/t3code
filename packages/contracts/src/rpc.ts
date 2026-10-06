@@ -299,7 +299,7 @@ import {
   ServerUpsertKeybindingResult,
   ProjectPrompts,
 } from "./server.ts";
-import { SubscriptionUsageHistory, SubscriptionUsageList } from "./subscriptionUsage.ts";
+import { SubscriptionUsageHistory } from "./subscriptionUsage.ts";
 import {
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
@@ -464,8 +464,6 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
-  serverGetSubscriptionUsage: "server.getSubscriptionUsage",
-  serverRefreshSubscriptionUsage: "server.refreshSubscriptionUsage",
   serverGetSubscriptionUsageHistory: "server.getSubscriptionUsageHistory",
   providerGetProjectPrompts: "provider.getProjectPrompts",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -732,19 +730,6 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
-});
-
-// Added by this fork. See the subscription selector in PATCHES.md.
-const WsServerGetSubscriptionUsageRpc = Rpc.make(WS_METHODS.serverGetSubscriptionUsage, {
-  payload: Schema.Struct({}),
-  success: SubscriptionUsageList,
-  error: Schema.Union([EnvironmentAuthorizationError]),
-});
-
-const WsServerRefreshSubscriptionUsageRpc = Rpc.make(WS_METHODS.serverRefreshSubscriptionUsage, {
-  payload: Schema.Struct({}),
-  success: SubscriptionUsageList,
-  error: Schema.Union([EnvironmentAuthorizationError]),
 });
 
 const WsServerGetSubscriptionUsageHistoryRpc = Rpc.make(
@@ -1843,8 +1828,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
-  WsServerGetSubscriptionUsageRpc,
-  WsServerRefreshSubscriptionUsageRpc,
   WsServerGetSubscriptionUsageHistoryRpc,
   WsProviderGetProjectPromptsRpc,
   WsServerDiscoverSourceControlRpc,
