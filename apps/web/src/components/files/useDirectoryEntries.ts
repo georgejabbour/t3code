@@ -5,15 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
-import { useShowIgnoredFiles } from "~/showIgnoredFilesPreference";
-
-export function directoryEntriesInput(cwd: string, directoryPath: string, showIgnored: boolean) {
-  return { cwd, directoryPath, ...(showIgnored ? { includeIgnored: true as const } : {}) };
-}
 
 /** Loads only requested directories; collapsing a folder keeps its children cached. */
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
-  const [showIgnored] = useShowIgnoredFiles();
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
   const [pending, setPending] = useState(0);
@@ -23,7 +17,6 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const active = useRef(true);
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
-  const generation = useRef(0);
 
   const load = useCallback(
     function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
@@ -33,18 +26,14 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       if (!refresh && loaded.current.has(directoryPath)) return Promise.resolve();
       loaded.current.add(directoryPath);
       requested.current.add(directoryPath);
-      const requestGeneration = generation.current;
-      const atom = projectEnvironment.listEntries({
-        environmentId,
-        input: directoryEntriesInput(cwd, directoryPath, showIgnored),
-      });
+      const atom = projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } });
       setPending((count) => count + 1);
       const request = (async () => {
         if (running.current >= 4)
           await new Promise<void>((resolve) => waiting.current.push(resolve));
         else running.current++;
         try {
-          if (!active.current || requestGeneration !== generation.current) return undefined;
+          if (!active.current) return undefined;
           return await executeAtomQuery(appAtomRegistry, atom, {
             refresh: true,
             reportFailure: false,
@@ -57,7 +46,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
         }
       })()
         .then((result) => {
-          if (!active.current || requestGeneration !== generation.current || !result) return;
+          if (!active.current || !result) return;
           if (result._tag === "Success") {
             setDirectories((previous) =>
               new Map(previous).set(
@@ -85,29 +74,18 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
           }
         })
         .finally(() => {
-          if (requests.current.get(directoryPath) === request) {
-            requests.current.delete(directoryPath);
-          }
-          if (active.current && requestGeneration === generation.current) {
-            setPending((count) => count - 1);
-          }
+          requests.current.delete(directoryPath);
+          if (active.current) setPending((count) => count - 1);
         });
       requests.current.set(directoryPath, request);
       return request;
     },
-    [cwd, environmentId, showIgnored],
+    [cwd, environmentId],
   );
 
   useEffect(() => {
-    generation.current += 1;
     active.current = true;
-    loaded.current.clear();
-    requested.current.clear();
-    requests.current.clear();
-    setDirectories(new Map());
-    setErrors(new Map());
-    setPending(0);
-    void load("", true);
+    void load("");
     return () => {
       active.current = false;
     };

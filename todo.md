@@ -1,6 +1,6 @@
 # Fork consolidation TODO
 
-Assessment date: 2026-10-06. Four tasks remain after adoption of the October 6 nightly.
+Assessment date: 2026-10-06. Three tasks remain after adoption of the October 6 nightly.
 This file tracks pending work. Task numbers remain unchanged for reference.
 “Keep” tasks retain and verify a feature; they do not require a rewrite.
 
@@ -21,24 +21,6 @@ Recheck current source in `t3/assess-fork-patches-against-nightly` before each c
 
 Browser and device checks require George's explicit authorization.
 Follow repository limits on checks and protect live T3 data.
-
-## Task 15: Shrink ignored-file browsing around native directory reads
-
-- [ ] Complete implementation and focused verification.
-
-**Decision:** Consolidate. **Original patch:** 5.
-
-**Reason:** Upstream already browses ignored files. Keep only the chosen hide preference and supplemental search.
-
-**Change:** The native tree reads each directory from disk and marks ignored entries. The fork hides them by default and excludes node_modules. Restore native tree behavior unless that preference remains intentional. Preserve ignored-path search for mentions and file pickers, which still use the native index. Keep the stale-request guard when a preference changes.
-
-**Completion check:** Focused tests cover ignored directories, .env files, mentions, file pickers, and stale requests. Record the chosen default visibility and node_modules behavior.
-
-**References:** [Native directory browsing](https://github.com/pingdotgg/t3code/blob/fd1c3386c4d60f3477ab3f13c87537848de099f5/apps/server/src/workspace/WorkspaceEntries.ts#L305); [Fork filtering](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/server/src/workspace/WorkspaceEntries.ts#L335); [Retained supplemental search](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/server/src/workspace/IgnoredWorkspaceEntries.ts).
-
-**Result:** Pending.
-
-**Current reassessment:** Native physical directory reads include ignored entries and node_modules, while indexed search remains separate. The fork adds hide preferences and supplemental ignored-path search. Consolidation remains valid; choose visibility and node_modules policy before removing filters.
 
 ## Task 16: Retain only missing clipboard behavior
 
