@@ -700,6 +700,6 @@ describe("makeManagedServerProvider", () => {
       const refreshed = yield* provider.refresh;
       assert.strictEqual(refreshed.auth.email, "b@example.com");
       assert.deepStrictEqual(refreshed.usageLimits?.windows, []);
-    }).pipe(Effect.scoped, Effect.provide(AlwaysRunTestLayer)),
+    }).pipe(Effect.scoped, Effect.provide(layerAlwaysRunTest)),
   );
 });

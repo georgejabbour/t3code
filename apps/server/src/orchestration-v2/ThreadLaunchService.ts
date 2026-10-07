@@ -1,8 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { resolveProjectScripts } from "@t3tools/shared/projectSettings";
-import { setupProjectScript } from "@t3tools/contracts";
+import { resolveProjectScripts, setupProjectScript } from "@t3tools/shared/projectScripts";
 import { WorktreeRemoval } from "../project/WorktreeRemoval.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -263,6 +262,7 @@ const make = Effect.gen(function* () {
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
+    let createdWorktreeBranch: string | null = null;
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     if (input.workspaceStrategy.type === "worktree") {
@@ -400,6 +400,7 @@ const make = Effect.gen(function* () {
           }
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        createdWorktreeBranch = branch;
         const worktree = yield* git
           .createWorktree(
             {
@@ -502,7 +503,9 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
-      const setupScript = setupProjectScript(resolveProjectScripts(yield* serverSettings.getSettings, project));
+      const setupScript = setupProjectScript(
+        resolveProjectScripts(yield* serverSettings.getSettings, project),
+      );
       setupTerminalId = setupScript ? `setup-${setupScript.id}` : null;
       const setup = yield* setupScripts
         .runForThread({
@@ -596,24 +599,62 @@ const make = Effect.gen(function* () {
           );
           // Cleanup waits for setup exit. A failed removal keeps the saved path
           // so a retry can find the checkout and its resources.
-          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded || setupTerminalId !== null)) {
-            if (setupTerminalId) {
-              const stopped = yield* terminals
-                .closeAndWait({ threadId, terminalId: setupTerminalId, deleteHistory: true })
-                .pipe(Effect.as(true), Effect.catchCause((shutdownCause) =>
-                  Effect.logWarning("Setup shutdown failed; the worktree remains", {
-                    threadId, path: createdWorktreePath, cause: shutdownCause,
-                  }).pipe(Effect.as(false))));
-              if (!stopped) return;
-            }
+          const retainWorktree = (cleanupCause: unknown) =>
+            Effect.gen(function* () {
+              const detail = `${failureDetail(Cause.squash(cause))} Cleanup failed; the worktree remains. ${failureDetail(cleanupCause)}`;
+              yield* setupTracker.finish(threadId, "failed", detail);
+              if (!workspaceRecorded && createdWorktreePath) {
+                yield* threads
+                  .dispatch({
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`${input.commandId}:retain-workspace`),
+                    threadId,
+                    worktreePath: createdWorktreePath,
+                    branch: createdWorktreeBranch,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }));
+              }
+              yield* Effect.logWarning("Worktree cleanup failed; the saved checkout remains", {
+                threadId,
+                path: createdWorktreePath,
+                cause: cleanupCause,
+              });
+            });
+          if (tracked && setupTerminalId) {
+            const stopped = yield* terminals
+              .closeAndWait({ threadId, terminalId: setupTerminalId, deleteHistory: true })
+              .pipe(
+                Effect.as(true),
+                Effect.catchCause((shutdownCause) =>
+                  retainWorktree(Cause.squash(shutdownCause)).pipe(Effect.as(false)),
+                ),
+              );
+            if (!stopped) return;
+          }
+          if (
+            tracked &&
+            createdWorktreePath &&
+            (cancelled || !workspaceRecorded || setupTerminalId !== null)
+          ) {
             const removedPath = createdWorktreePath;
             // The thread forgets the worktree only once it is gone; a failed
             // removal leaves the directory for the user to clean up rather than
             // reusing a checkout that may be half written.
             yield* worktreeRemoval
               .remove(
-                { cwd: project.workspaceRoot, path: removedPath, force: true, skipArchiveScript: setupTerminalId === null },
-                Effect.succeed(git.removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })),
+                {
+                  cwd: project.workspaceRoot,
+                  path: removedPath,
+                  force: true,
+                  skipArchiveScript: setupTerminalId === null,
+                },
+                Effect.succeed(
+                  git.removeWorktree({
+                    cwd: project.workspaceRoot,
+                    path: removedPath,
+                    force: true,
+                  }),
+                ),
               )
               .pipe(
                 Effect.andThen(
@@ -627,14 +668,7 @@ const make = Effect.gen(function* () {
                     })
                     .pipe(Effect.ignore),
                 ),
-                Effect.catchCause((removeCause) =>
-                  Effect.logWarning("Failed to remove an abandoned thread worktree", {
-                    commandId: input.commandId,
-                    threadId,
-                    path: removedPath,
-                    cause: removeCause,
-                  }),
-                ),
+                Effect.catchCause((removeCause) => retainWorktree(Cause.squash(removeCause))),
               );
           }
         }),

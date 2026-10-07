@@ -316,7 +316,6 @@ import {
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
-  clearSiblingLifecycleFlags,
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,

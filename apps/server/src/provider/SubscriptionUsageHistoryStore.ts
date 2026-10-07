@@ -14,7 +14,7 @@ import {
   recordSubscriptionSample,
 } from "@t3tools/shared/subscriptionUsageHistory";
 import * as ServerConfig from "../config.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "./ProviderRegistry.ts";
 
 export const SUBSCRIPTION_HISTORY_RETENTION_DAYS = 90;
 const HISTORY_FILE_NAME = "subscription-usage-history.json";

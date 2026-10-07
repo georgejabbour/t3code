@@ -10178,15 +10178,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "thread.delete": {
         const projection = yield* projectionStore
-          .getThreadRecords(command.threadId, [
-            "runs",
-            "attempts",
-            "nodes",
-            "runtimeRequests",
-            "subagents",
-            "providerSessions",
-            "providerThreads",
-          ])
+          .getThreadRecords(
+            command.threadId,
+            [
+              "runs",
+              "attempts",
+              "nodes",
+              "runtimeRequests",
+              "subagents",
+              "providerSessions",
+              "providerThreads",
+              ...(command.expectedArchivedAt === undefined ? [] : ["turnItems" as const]),
+            ],
+            {
+              turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          )
           .pipe(
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -10205,10 +10213,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projection.providerSessions.some((session) =>
               ["starting", "running", "waiting"].includes(session.status),
             ) ||
-            projection.providerThreads.some((thread) => thread.pendingBackgroundTasks.length > 0) ||
+            projection.providerThreads.some(
+              (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+            ) ||
             projection.subagents.some((task) =>
               ["pending", "running", "waiting"].includes(task.status),
-            ))
+            ) ||
+            derivePendingBackgroundWork({
+              latestRun: projection.runs.findLast((run) => run.status !== "queued"),
+              providerThreads: projection.providerThreads,
+              turnItems: projection.turnItems,
+              activeProviderThreadId: projection.thread.activeProviderThreadId,
+              runs: projection.runs,
+              pullRequests: projection.thread.pullRequests,
+            }).length > 0)
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,

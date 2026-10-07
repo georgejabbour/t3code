@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "./ProviderRegistry.ts";
 import { make } from "./SubscriptionUsageHistoryStore.ts";
 
 const checkedAt = "2026-10-01T12:00:00.000Z";

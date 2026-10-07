@@ -550,7 +550,7 @@ it.effect("waits for a slow pre-push hook instead of stopping at the default tim
 
       assert.deepInclude(yield* Fiber.join(push), { status: "pushed" });
     }),
-  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
@@ -1930,6 +1930,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
+        if ((yield* HostProcessPlatform) !== "win32") {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.chmod(path.join(cwd, "mode-only.sh"), 0o755);
+        }
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
         const preview = yield* driver.getReviewDiffPreview({
           cwd,

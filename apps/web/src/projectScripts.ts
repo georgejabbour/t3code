@@ -40,10 +40,7 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
   };
 }
 
-/**
- * A project runs at most one setup script and one settle script, so saving a
- * script that claims either role takes it from the script that held it.
- */
+/** Saving an action releases each claimed lifecycle role from the action that previously held it. */
 export function releaseClaimedRoles(
   script: ProjectScript,
   saved: ProjectScriptInput,

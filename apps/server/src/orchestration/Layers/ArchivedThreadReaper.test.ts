@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   RunId,
+  RuntimeRequestId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadShellSnapshot,
 } from "@t3tools/contracts";
@@ -109,20 +110,28 @@ const runSweep = (input: {
     const layer = makeArchivedThreadReaperLive({ tickInterval: Duration.hours(24) }).pipe(
       Layer.provideMerge(
         Layer.mock(Orchestrator.OrchestratorV2)({
-          getShellSnapshot: () => Effect.sync(() => {
-            snapshotReads += 1;
-            return { schemaVersion: 2 as const, snapshotSequence: 0, threads: [], archivedThreads: input.threads };
-          }),
+          getShellSnapshot: () =>
+            Effect.sync(() => {
+              snapshotReads += 1;
+              return {
+                schemaVersion: 2 as const,
+                snapshotSequence: 0,
+                threads: [],
+                archivedThreads: input.threads,
+              };
+            }),
           dispatch: (command) => {
             if (command.type !== "thread.delete") return Effect.die("unexpected command");
             assert.strictEqual(DateTime.formatIso(command.expectedArchivedAt!), NOW);
             attempted.push(command.threadId);
             if (input.failFirstDelete && attempted.length === 1) {
-              return Effect.fail(new Orchestrator.OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause: "retryable deletion failure",
-              }));
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "retryable deletion failure",
+                }),
+              );
             }
             deleted.push(command.threadId);
             return Effect.succeed({ sequence: deleted.length, storedEvents: [] });
@@ -223,8 +232,26 @@ describe("ArchivedThreadReaper", () => {
           makeThread("running", { activeRunId: RunId.make("active"), status: "running" }),
           makeThread("starting", { status: "starting" }),
           makeThread("queued", { status: "queued" }),
-          makeThread("background", { pendingBackgroundTasks: [{ taskId: "command", kind: "command" }] }),
-          makeThread("monitoring", { pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" }] }),
+          makeThread("approval", {
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request:approval"),
+              kind: "permission",
+              createdAt: DateTime.makeUnsafe(NOW),
+            },
+          }),
+          makeThread("question", {
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request:question"),
+              kind: "user_input",
+              createdAt: DateTime.makeUnsafe(NOW),
+            },
+          }),
+          makeThread("background", {
+            pendingBackgroundTasks: [{ taskId: "command", kind: "command" }],
+          }),
+          makeThread("monitoring", {
+            pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" }],
+          }),
           makeThread("idle"),
         ],
       });
