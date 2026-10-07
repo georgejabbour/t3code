@@ -63,6 +63,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArchiveIcon,
   ArrowRightLeftIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -161,7 +162,11 @@ import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "../state/session";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -182,9 +187,11 @@ import {
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
+  archiveSelectedThreadEntries,
   filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  canArchiveSettledThread,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
@@ -794,6 +801,7 @@ function SidebarSectionHeader(props: {
   // accent while the lifted row is over it.
   dragging?: boolean;
   isDropTarget?: boolean;
+  action?: ReactNode;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const shelf =
@@ -807,7 +815,7 @@ function SidebarSectionHeader(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("mx-0.5 h-8", props.className)}
+      className={cn("mx-0.5 flex h-8 items-center", props.className)}
     >
       <CollapsibleSectionHeader
         onClick={props.toggle.onToggle}
@@ -819,6 +827,7 @@ function SidebarSectionHeader(props: {
       >
         {props.label}
       </CollapsibleSectionHeader>
+      {props.action ? <span className="mr-2 shrink-0">{props.action}</span> : null}
     </SortableSidebarMarker>
   );
 }
@@ -2473,6 +2482,10 @@ export default function Sidebar() {
     [],
   );
   const environments = useEnvironmentIdentities();
+  const operableEnvironmentIds = useEnvironmentsWithScope(
+    environments,
+    AuthOrchestrationOperateScope,
+  );
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
@@ -4239,6 +4252,78 @@ export default function Sidebar() {
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
+  const [isArchivingSettled, setIsArchivingSettled] = useState(false);
+  const handleArchiveAllSettled = useCallback(async () => {
+    const api = readLocalApi();
+    if (!api || isArchivingSettled) return;
+    const now = new Date().toISOString();
+    const entries = settledThreads
+      .filter((thread) =>
+        canArchiveSettledThread(
+          thread,
+          now,
+          readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+        ),
+      )
+      .map((thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        return { threadRef, threadKey: scopedThreadKey(threadRef) };
+      });
+    if (entries.length === 0) return;
+    setIsArchivingSettled(true);
+    try {
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Archive ${entries.length} settled thread${entries.length === 1 ? "" : "s"}?`,
+          "This includes hidden settled threads in the current project view.",
+          "You can restore them from Archived threads in Settings.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+      const { archivedThreadKeys, mutationFailure, followupFailures } =
+        await archiveSelectedThreadEntries({
+          entries,
+          archive: ({ threadRef }, onArchived) => {
+            // Check each thread again: it can become active during confirmation or the batch.
+            if (
+              !canArchiveSettledThread(
+                readThreadShell(threadRef),
+                new Date().toISOString(),
+                readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+              )
+            ) {
+              return Promise.resolve(null);
+            }
+            return archiveThread(threadRef, { onArchived });
+          },
+        });
+      removeFromSelection(archivedThreadKeys);
+      const failure = mutationFailure ?? followupFailures[0];
+      if (failure && !isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: mutationFailure
+              ? "Failed to archive all settled threads"
+              : "Threads archived, but navigation failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to archive all settled threads",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setIsArchivingSettled(false);
+    }
+  }, [archiveThread, isArchivingSettled, removeFromSelection, settledThreads]);
+
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -5499,6 +5584,37 @@ export default function Sidebar() {
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
+                                action={
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <Button
+                                          variant="ghost-muted"
+                                          size="icon-xs"
+                                          data-testid="sidebar-archive-all-settled"
+                                          data-thread-selection-safe
+                                          aria-label="Archive all settled"
+                                          aria-busy={isArchivingSettled}
+                                          disabled={
+                                            isArchivingSettled ||
+                                            from !== null ||
+                                            !settledThreads.some((thread) =>
+                                              canArchiveSettledThread(
+                                                thread,
+                                                snoozeNow,
+                                                operableEnvironmentIds.has(thread.environmentId),
+                                              ),
+                                            )
+                                          }
+                                          onClick={() => void handleArchiveAllSettled()}
+                                        />
+                                      }
+                                    >
+                                      <ArchiveIcon aria-hidden />
+                                    </TooltipTrigger>
+                                    <TooltipPopup>Archive all settled</TooltipPopup>
+                                  </Tooltip>
+                                }
                                 toggle={{
                                   expanded: settledShelfExpanded,
                                   onToggle: toggleSettledShelf,

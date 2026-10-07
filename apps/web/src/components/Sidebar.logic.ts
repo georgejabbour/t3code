@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeCanArchive,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -516,12 +519,27 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
+export function canArchiveSettledThread(
+  thread: SidebarThreadSummary | null,
+  now: string,
+  canOperate: boolean,
+): boolean {
+  return (
+    canOperate &&
+    thread !== null &&
+    thread.archivedAt === null &&
+    thread.settledOverride === "settled" &&
+    !effectiveSnoozed(thread, { now }) &&
+    threadRuntimeCanArchive(thread.runtime)
+  );
+}
+
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
   TResult extends { readonly _tag: "Success" | "Failure" },
 >(input: {
   entries: readonly TEntry[];
-  archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+  archive: (entry: TEntry, onArchived: () => void) => Promise<TResult | null>;
 }): Promise<{
   archivedThreadKeys: readonly string[];
   mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
@@ -535,6 +553,7 @@ export async function archiveSelectedThreadEntries<
     const result = await input.archive(entry, () => {
       didArchive = true;
     });
+    if (result === null) continue;
     if (didArchive || result._tag === "Success") archivedThreadKeys.push(entry.threadKey);
     if (result._tag === "Success") continue;
     const failure = result as Extract<TResult, { readonly _tag: "Failure" }>;

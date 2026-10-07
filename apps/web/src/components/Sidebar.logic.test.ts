@@ -11,6 +11,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  canArchiveSettledThread,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
@@ -242,6 +243,55 @@ describe("deleteSelectedThreadEntries", () => {
   });
 });
 
+describe("canArchiveSettledThread", () => {
+  const now = "2026-10-07T12:00:00.000Z";
+  const thread = makeThreadFixture({ settledOverride: "settled" });
+
+  it("allows an idle settled thread", () => {
+    expect(canArchiveSettledThread(thread, now, true)).toBe(true);
+  });
+
+  it("skips a settled thread on a read-only connection", () => {
+    expect(canArchiveSettledThread(thread, now, false)).toBe(false);
+  });
+
+  it("skips missing, archived, unsettled, and snoozed threads", () => {
+    expect(canArchiveSettledThread(null, now, true)).toBe(false);
+    expect(canArchiveSettledThread({ ...thread, archivedAt: now }, now, true)).toBe(false);
+    expect(canArchiveSettledThread({ ...thread, settledOverride: null }, now, true)).toBe(false);
+    expect(
+      canArchiveSettledThread(
+        { ...thread, snoozedAt: now, snoozedUntil: "2026-10-08T12:00:00.000Z" },
+        now,
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it.each(["preparing", "starting", "running", "queued"] as const)(
+    "skips a settled thread with a %s provider turn",
+    (status) => {
+      expect(
+        canArchiveSettledThread(
+          {
+            ...thread,
+            runtime: {
+              status,
+              activeRunId: RunId.make("active-run"),
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              providerName: "Codex",
+              lastError: null,
+              updatedAt: now,
+            },
+          },
+          now,
+          true,
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("archiveSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
   const success = { _tag: "Success" } as const;
@@ -258,6 +308,23 @@ describe("archiveSelectedThreadEntries", () => {
 
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      mutationFailure: null,
+      followupFailures: [],
+    });
+  });
+
+  it("skips a changed thread and archives the remaining entries", async () => {
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive: async (entry, onArchived) => {
+        if (entry.threadKey === "two") return null;
+        onArchived();
+        return success;
+      },
+    });
+
+    expect(outcome).toEqual({
+      archivedThreadKeys: ["one", "three"],
       mutationFailure: null,
       followupFailures: [],
     });
