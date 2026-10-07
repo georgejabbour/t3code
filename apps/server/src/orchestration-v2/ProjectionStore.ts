@@ -449,11 +449,10 @@ export interface ProjectionStoreV2Shape {
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
   /**
-   * Active (not deleted, not archived) threads that have a worktree path, the
-   * same threads as the shell snapshot's `threads`. Reads only the thread rows,
-   * so callers can check who uses a path without a shell snapshot.
+   * Active threads with a worktree path, or all undeleted owners when
+   * includeArchived is true. Reads only thread rows, without a shell snapshot.
    */
-  readonly getThreadWorktreePaths: () => Effect.Effect<
+  readonly getThreadWorktreePaths: (includeArchived?: boolean) => Effect.Effect<
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
     ProjectionStoreV2Error
   >;
@@ -5754,12 +5753,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
       }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
-    const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = () =>
+    const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (
+      includeArchived = false,
+    ) =>
       sql<{ readonly thread_id: string; readonly worktree_path: string }>`
         SELECT thread_id, json_extract(payload_json, '$.worktreePath') AS worktree_path
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL
-          AND json_extract(payload_json, '$.archivedAt') IS NULL
+          AND (${includeArchived ? 1 : 0} = 1 OR json_extract(payload_json, '$.archivedAt') IS NULL)
           AND json_extract(payload_json, '$.worktreePath') IS NOT NULL
       `.pipe(
         Effect.map((rows) =>
@@ -6257,12 +6258,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 left.id.localeCompare(right.id),
             );
         }),
-      getThreadWorktreePaths: () =>
+      getThreadWorktreePaths: (includeArchived = false) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>
             [...state.projections.values()].flatMap(({ thread }) =>
               thread.deletedAt === null &&
-              thread.archivedAt === null &&
+              (includeArchived || thread.archivedAt === null) &&
               thread.worktreePath !== null
                 ? [{ threadId: thread.id, worktreePath: thread.worktreePath }]
                 : [],

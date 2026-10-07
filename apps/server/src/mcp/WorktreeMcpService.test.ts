@@ -1,3 +1,5 @@
+import * as WorktreeRemoval from "../project/WorktreeRemoval.ts";
+import { WorktreeArchiveScriptRunner } from "../project/WorktreeArchiveScriptRunner.ts";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -334,6 +336,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
+        WorktreeRemoval.layer.pipe(
+          Layer.provide(
+            Layer.mock(WorktreeArchiveScriptRunner)({
+              run: () => Effect.die("no setup starts before MCP rollback"),
+            }),
+          ),
+          Layer.provide(Path.layer),
+        ),
         NodeServices.layer,
       ),
     ),

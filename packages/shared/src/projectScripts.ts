@@ -86,3 +86,14 @@ export function projectScriptMenuLabel(script: ProjectScript): string {
 export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnSettle === true) ?? null;
 }
+
+/**
+ * The flagged teardown script, from either script shape — a checked-in
+ * `t3.json` entry or one of the project's imported scripts. Callers decide the
+ * precedence between the two sources; this only answers "which one opted in".
+ */
+export function worktreeRemoveScript<
+  T extends { readonly runOnWorktreeRemove?: boolean | undefined },
+>(scripts: readonly T[]): T | null {
+  return scripts.find((script) => script.runOnWorktreeRemove === true) ?? null;
+}

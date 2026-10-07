@@ -236,6 +236,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
+    Layer.provideMerge(
+      Layer.effect(
+        HostProcess.HomeDirectory,
+        Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
+          fileSystem.makeTempDirectoryScoped({ prefix: "t3-provider-home-" }),
+        ),
+      ).pipe(Layer.provide(NodeServices.layer)),
+    ),
   );
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(

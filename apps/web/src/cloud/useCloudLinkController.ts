@@ -16,6 +16,7 @@ import {
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -99,7 +100,15 @@ export function useCloudLinkController() {
         ? {
             secondaryActionProps: {
               children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
+              onClick: () => {
+                void writeTextToClipboard(traceId, "trace ID").catch((failure: unknown) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Could not copy trace ID",
+                    description: failure instanceof Error ? failure.message : "An error occurred.",
+                  });
+                });
+              },
             },
           }
         : undefined,

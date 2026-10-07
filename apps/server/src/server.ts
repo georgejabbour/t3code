@@ -54,6 +54,8 @@ import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRunt
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import { ArchivedThreadReaperLive } from "./orchestration/Layers/ArchivedThreadReaper.ts";
+import * as ArchivedThreadReaper from "./orchestration/Services/ArchivedThreadReaper.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -92,6 +94,7 @@ import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIng
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as SubscriptionUsageHistoryStore from "./provider/SubscriptionUsageHistoryStore.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -110,6 +113,9 @@ import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as WorktreeBranchDrift from "./orchestration-v2/WorktreeBranchDrift.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
+import * as WorktreeRemoval from "./project/WorktreeRemoval.ts";
 import * as Observability from "./observability/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
@@ -448,6 +454,12 @@ const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const layerWorktreeArchiveScriptRunner = WorktreeArchiveScriptRunner.layer.pipe(
+  Layer.provide(RuntimeLayer.layerProjectService),
+  Layer.provide(T3ProjectFileLoader.layer),
+  Layer.provide(ProcessRunner.layer),
+);
+
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   layerRelayClient,
   CloudManagedEndpointRuntime.layer.pipe(
@@ -549,6 +561,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  WorktreeBranchDrift.layer,
+  Layer.effectDiscard(
+    Effect.flatMap(ArchivedThreadReaper.ArchivedThreadReaper, (service) => service.start()),
+  ).pipe(Layer.provide(ArchivedThreadReaperLive)),
   layerThreadSettlementWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,
@@ -655,9 +671,17 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       ),
     ),
   ),
+  Layer.provideMerge(WorktreeRemoval.layer),
+  Layer.provideMerge(layerWorktreeArchiveScriptRunner),
   Layer.provideMerge(layerWorkspace),
   Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      NativeAppIconResolver.layer,
+      layerProjectFaviconResolver,
+      SubscriptionUsageHistoryStore.layer,
+    ),
+  ),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),

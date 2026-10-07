@@ -3353,6 +3353,11 @@ export default function ChatView(props: ChatViewProps) {
           activeRuntime?.providerInstanceId,
           activeThread?.modelSelection.instanceId,
           activeProjectDefaultModelSelection?.instanceId,
+          // Added by this fork. Use the selected Claude subscription when the thread has no selection.
+          // The resolver ignores disabled or unavailable provider instances.
+          providerInstanceEntries.find(
+            (entry) => entry.instanceId === settings.activeSubscriptionInstanceId,
+          )?.instanceId,
         ],
         lockedProvider,
         lockedInstanceId:
@@ -3365,6 +3370,7 @@ export default function ChatView(props: ChatViewProps) {
       lockedProvider,
       providerInstanceEntries,
       selectedProviderByThreadId,
+      settings.activeSubscriptionInstanceId,
     ],
   );
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
@@ -6104,19 +6110,9 @@ export default function ChatView(props: ChatViewProps) {
   };
   const moveRightPanelSurfaceStable = useStableCallback(moveRightPanelSurface);
   const copyRightPanelFilePath = (relativePath: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    void navigator.clipboard.writeText(relativePath).then(
-      () => {
+    void writeTextToClipboard(relativePath, "path").then(
+      (didCopy) => {
+        if (!didCopy) return;
         toastManager.add({
           type: "success",
           title: "Path copied",

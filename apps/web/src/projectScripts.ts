@@ -14,6 +14,7 @@ export interface ProjectScriptInput {
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
   readonly runOnSettle: boolean;
+  readonly runOnWorktreeRemove: Exclude<ProjectScript["runOnWorktreeRemove"], undefined>;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
@@ -27,6 +28,9 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.runOnWorktreeCreate && input.waitForSetup ? { async: false } : {}),
     ...(input.runOnSettle ? { runOnSettle: true } : {}),
+    // Omitted when false so a script that never opts in keeps the shape it had
+    // before the flag existed.
+    ...(input.runOnWorktreeRemove ? { runOnWorktreeRemove: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
@@ -36,21 +40,20 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
   };
 }
 
-/**
- * A project runs at most one setup script and one settle script, so saving a
- * script that claims either role takes it from the script that held it.
- */
+/** Saving an action releases each claimed lifecycle role from the action that previously held it. */
 export function releaseClaimedRoles(
   script: ProjectScript,
   saved: ProjectScriptInput,
 ): ProjectScript {
   const releaseSetup = saved.runOnWorktreeCreate && script.runOnWorktreeCreate;
   const releaseSettle = saved.runOnSettle && script.runOnSettle === true;
-  if (!releaseSetup && !releaseSettle) return script;
+  const releaseRemove = saved.runOnWorktreeRemove && script.runOnWorktreeRemove === true;
+  if (!releaseSetup && !releaseSettle && !releaseRemove) return script;
   return {
     ...script,
     ...(releaseSetup ? { runOnWorktreeCreate: false } : {}),
     ...(releaseSettle ? { runOnSettle: false } : {}),
+    ...(releaseRemove ? { runOnWorktreeRemove: false } : {}),
   };
 }
 

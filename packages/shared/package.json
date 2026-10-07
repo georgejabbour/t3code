@@ -59,6 +59,10 @@
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"
     },
+    "./subscriptionUsage": {
+      "types": "./src/subscriptionUsage.ts",
+      "import": "./src/subscriptionUsage.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
@@ -490,6 +494,10 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {

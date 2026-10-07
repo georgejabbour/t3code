@@ -35,6 +35,8 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 
 // A root that does not exist never overlaps, so other owners decide isolation.
 const unrelatedProject = Option.some({
@@ -44,7 +46,6 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
-      Layer.mock(GitWorkflow.GitWorkflowService)({}),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
     ),
   ),
@@ -401,8 +402,8 @@ it.effect.each([
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rollback-" });
-    const worktreePath = path.join(workspaceRoot, "worktree");
-    yield* fileSystem.makeDirectory(worktreePath);
+    const worktreePath = path.join(workspaceRoot, "worktrees", "worktree");
+    yield* fileSystem.makeDirectory(worktreePath, { recursive: true });
     const threadId = ThreadId.make("rollback-worktree");
     const projectId = ProjectId.make("rollback-worktree-project");
     const providerThreadId = ProviderThreadId.make("rollback-worktree-provider-thread");
@@ -420,6 +421,7 @@ it.effect.each([
       thread: {
         id: threadId,
         projectId,
+        deletedAt: null,
         worktreePath,
         branch,
         activeProviderThreadId: providerThreadId,
@@ -439,6 +441,12 @@ it.effect.each([
         Layer.mergeAll(
           ThreadCommandExecutor.layer,
           NodeServices.layer,
+          ServerConfig.layerTest(workspaceRoot, workspaceRoot).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeed(Option.some({ workspaceRoot } as never)),
+          }),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id) => {
               assert.equal(id, projectId);
@@ -471,14 +479,23 @@ it.effect.each([
               }),
           }),
           Layer.mock(EventSink.EventSinkV2)({
-            write: () =>
+            write: ({ events }) =>
               Effect.sync(() => {
-                calls.push("projection");
+                calls.push(
+                  events.some(
+                    (event) =>
+                      event.type === "turn-item.updated" && event.payload.type === "system_notice",
+                  )
+                    ? "notice"
+                    : "projection",
+                );
                 return [];
               }),
           }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(projection.thread),
+            getNextTurnItemOrdinal: () => Effect.succeed(0),
             getThreadRecords: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({
@@ -545,7 +562,7 @@ it.effect.each([
       assert.deepEqual(
         calls,
         order === "cleanup-first"
-          ? ["cleanup", "prune", "create", ...rollbackCalls]
+          ? ["cleanup", "prune", "create", "notice", ...rollbackCalls]
           : order === "rollback-first"
             ? [...rollbackCalls, "cleanup"]
             : rollbackCalls,
@@ -563,9 +580,10 @@ it.effect.each([
   { restoreFiles: true, shared: "historical" },
   { restoreFiles: false, shared: "none", targetOrdinal: 1 },
   { restoreFiles: false, shared: "none", targetOrdinal: 1, multipleTurns: true },
+  { restoreFiles: false, shared: "none", recoverMissing: true },
 ])(
   "rewinds safely with %s",
-  ({ restoreFiles, shared, targetOrdinal = 0, multipleTurns = false }) => {
+  ({ restoreFiles, shared, targetOrdinal = 0, multipleTurns = false, recoverMissing = false }) => {
     const threadId = ThreadId.make("rewind-files");
     const providerThreadId = ProviderThreadId.make("rewind-provider");
     const providerSessionId = ProviderSessionId.make("rewind-session");
@@ -582,6 +600,7 @@ it.effect.each([
         }),
       ),
     );
+    const recoveryPath = "/tmp/t3-rollback-recovery-home/worktrees/feature";
     const providerThread = {
       id: providerThreadId,
       providerSessionId,
@@ -589,7 +608,11 @@ it.effect.each([
     };
     const projection = {
       thread: {
-        worktreePath: shared === "root" ? null : process.cwd(),
+        id: threadId,
+        projectId: ProjectId.make("project-rollback-recovery"),
+        branch: recoverMissing ? "feature/recovery" : null,
+        deletedAt: null,
+        worktreePath: recoverMissing ? recoveryPath : shared === "root" ? null : process.cwd(),
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId, model: "test" },
       },
@@ -634,6 +657,30 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           layerThreadCommands,
+          recoverMissing
+            ? Layer.mergeAll(
+                ServerConfig.layerTest(process.cwd(), "/tmp/t3-rollback-recovery-home").pipe(
+                  Layer.provide(
+                    Layer.merge(
+                      Path.layer,
+                      FileSystem.layerNoop({ makeDirectory: () => Effect.void }),
+                    ),
+                  ),
+                ),
+                Layer.mock(GitWorkflow.GitWorkflowService)({
+                  pruneWorktrees: () => Effect.void,
+                  createWorktree: () =>
+                    Effect.sync(() => {
+                      calls.push("recover");
+                      return {} as never;
+                    }),
+                }),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: () =>
+                    Effect.succeed(Option.some({ workspaceRoot: process.cwd() } as never)),
+                }),
+              )
+            : Layer.empty,
           Layer.mock(CheckpointService.CheckpointServiceV2)({
             restore: () =>
               Effect.sync(() => {
@@ -643,6 +690,15 @@ it.effect.each([
           Layer.mock(EventSink.EventSinkV2)({
             write: ({ events }) =>
               Effect.map(lockedThreads, (locked) => {
+                if (
+                  events.some(
+                    (event) =>
+                      event.type === "turn-item.updated" && event.payload.type === "system_notice",
+                  )
+                ) {
+                  calls.push("notice");
+                  return [];
+                }
                 // A thread command that planned against the old provider thread
                 // must not commit after this and undo the rollback.
                 assert.include(locked, threadId);
@@ -658,6 +714,8 @@ it.effect.each([
           }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(projection.thread),
+            getNextTurnItemOrdinal: () => Effect.succeed(0),
             getThreadRecords: () => Effect.succeed(projection),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
             getCheckpointContext: () =>
@@ -684,8 +742,9 @@ it.effect.each([
               }),
           }),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-            open: () =>
-              Effect.succeed({
+            open: () => {
+              if (recoverMissing) assert.deepEqual(calls, ["recover", "notice"]);
+              return Effect.succeed({
                 rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                   Effect.gen(function* () {
                     const count = yield* resolveCodexRollbackTurnCount(input);
@@ -693,9 +752,12 @@ it.effect.each([
                     calls.push("provider");
                     return { providerThread };
                   }),
-              } as never),
+              } as never);
+            },
           }),
-          Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+            resolve: () => Effect.succeed({ cwd: recoverMissing ? recoveryPath : null } as never),
+          }),
         ),
       ),
     );
@@ -712,7 +774,11 @@ it.effect.each([
       yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
       assert.deepEqual(
         calls,
-        restoreFiles ? ["provider", "files", "projection"] : ["provider", "projection"],
+        recoverMissing
+          ? ["recover", "notice", "provider", "projection"]
+          : restoreFiles
+            ? ["provider", "files", "projection"]
+            : ["provider", "projection"],
       );
     }).pipe(Effect.provide(layerTest));
   },

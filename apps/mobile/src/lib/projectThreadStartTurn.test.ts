@@ -45,7 +45,6 @@ describe("project thread title", () => {
       branch: null,
       worktreePath: null,
       startFromOrigin: false,
-      worktreeBranchName: "unused",
     });
 
     expect(input.titleSeed).toBe("Image: photo.png");
@@ -92,7 +91,6 @@ describe("project thread title", () => {
       branch: null,
       worktreePath: null,
       startFromOrigin: false,
-      worktreeBranchName: "unused",
     });
 
     expect(input.titleSeed).toBe(title);
@@ -121,7 +119,6 @@ describe("new thread on an existing branch", () => {
         branch: "feature/existing",
         worktreePath,
         startFromOrigin: false,
-        worktreeBranchName: "unused",
       });
 
       expect(input.bootstrap.createThread).toMatchObject({
@@ -132,6 +129,38 @@ describe("new thread on an existing branch", () => {
       expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
       expect(input.bootstrap).not.toHaveProperty("runSetupScript");
       expect(input.threadId).toBe("new-thread");
+    },
+  );
+});
+
+describe("new worktree naming", () => {
+  it.each([false, true])(
+    "defers naming to the server and preserves origin choice %s",
+    (startFromOrigin) => {
+      const input = buildProjectThreadStartTurnInput({
+        projectId: ProjectId.make("project"),
+        projectCwd: "/workspace",
+        threadId: "new-worktree",
+        commandId: "command",
+        messageId: "message",
+        createdAt: "2026-10-06T00:00:00Z",
+        text: "Fix login",
+        uploadedAttachments: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceMode: "worktree",
+        branch: "feature/base",
+        worktreePath: null,
+        startFromOrigin,
+      });
+      expect(input.bootstrap.prepareWorktree).toEqual({
+        projectCwd: "/workspace",
+        baseBranch: "feature/base",
+        ...(startFromOrigin ? { startFromOrigin: true } : {}),
+      });
+      expect(input.bootstrap.runSetupScript).toBe(true);
+      expect(input.bootstrap.createThread.branch).toBe("feature/base");
     },
   );
 });

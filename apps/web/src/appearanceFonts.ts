@@ -25,6 +25,18 @@ export const DEFAULT_SANS_FONT_STACK =
 export const DEFAULT_CODE_FONT_STACK =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
 
+export const BUNDLED_FONT_FAMILIES = ["iA Writer Quattro", "iA Writer Duo"] as const;
+
+function bundledFontFamily(name: string): string | undefined {
+  const unquoted = name
+    .trim()
+    .replace(/^(['"])(.*)\1$/, "$2")
+    .toLowerCase();
+  return BUNDLED_FONT_FAMILIES.find(
+    (family) => unquoted === family.toLowerCase() || unquoted === `${family} S`.toLowerCase(),
+  );
+}
+
 export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
 
 /**
@@ -51,7 +63,7 @@ export function resolveTerminalFontSizePreference(input: {
 }
 
 function quoteFontFamilyName(name: string): string {
-  const bare = name.trim();
+  const bare = bundledFontFamily(name) ?? name.trim();
   if (bare.length === 0) return "";
   // Already quoted, or a single ident that needs no quoting.
   if (/^(['"]).*\1$/.test(bare)) return bare;
@@ -176,6 +188,8 @@ function probeWidth(fontList: string): number | null {
 export function isFontFamilyAvailable(family: string): boolean {
   const families = cssFontFamilies(family);
   if (families === null) return false;
+  // Bundled fonts are available before the browser downloads their files.
+  if (families.split(",").some((name) => bundledFontFamily(name) !== undefined)) return true;
   if (/^(system-ui|sans-serif|serif|monospace|ui-monospace)$/i.test(families)) return true;
   try {
     for (const generic of ["monospace", "serif", "sans-serif"]) {
@@ -218,6 +232,8 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
 export function isMonospaceFamily(family: string): boolean {
   const families = cssFontFamilies(family);
   if (families === null) return true;
+  // Duo and Quattro use multiple character widths, including before font loading finishes.
+  if (families.split(",").some((name) => bundledFontFamily(name) !== undefined)) return false;
   try {
     if (fontProbeContext === undefined) {
       fontProbeContext = document.createElement("canvas").getContext("2d");

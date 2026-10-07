@@ -165,6 +165,23 @@ describe("getProviderSkillsForSlashMenu", () => {
 });
 
 describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("keeps the first native command and removes duplicate and empty menu entries", () => {
+    const preferred = { name: "review", description: "Native command with provider precedence" };
+    const distinct = { name: "nested:review", description: "Namespaced command" };
+
+    expect(
+      getProviderSlashCommandsForSlashMenu(
+        [
+          preferred,
+          { name: " REVIEW ", description: "Duplicate command" },
+          distinct,
+          { name: " " },
+        ],
+        [],
+      ),
+    ).toEqual([preferred, distinct]);
+  });
+
   const commands = [
     { name: "ask-matt", description: "Ask which skill fits your situation." },
     { name: "compact", description: "Compact the conversation." },
