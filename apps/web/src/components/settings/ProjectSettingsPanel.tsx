@@ -297,17 +297,20 @@ function ProjectDetail({
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = async (input: {
+  async function setProjectIcon(input: {
     faviconPath: string | null;
     projectIcon: ProjectIconOverride | null;
-  }) => {
+  }) {
     if (savingFaviconRef.current) return;
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, "Failed to update project icon");
-    savingFaviconRef.current = false;
-    setIsSavingFavicon(false);
-  };
+    try {
+      await updateAllMembers(input, "Failed to update project icon");
+    } finally {
+      savingFaviconRef.current = false;
+      setIsSavingFavicon(false);
+    }
+  }
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
 

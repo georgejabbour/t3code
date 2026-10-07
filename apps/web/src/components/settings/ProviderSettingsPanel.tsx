@@ -120,6 +120,8 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
+import { SubscriptionSelectorPanel } from "../subscriptions/SubscriptionSelectorPanel";
+import { OpenAddProviderDialogFromSearch } from "../subscriptions/useOpenAddProviderDialogFromSearch";
 import {
   buildProviderEnvironmentOptions,
   buildProviderInstanceOverridePatch,
@@ -987,6 +989,23 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      <OpenAddProviderDialogFromSearch onOpen={setIsAddInstanceDialogOpen} />
+      <SettingsSection title="Subscriptions">
+        <SubscriptionSelectorPanel
+          environmentId={environmentId}
+          activeInstanceId={
+            settings.activeSubscriptionInstanceId.trim().length > 0
+              ? settings.activeSubscriptionInstanceId
+              : null
+          }
+          onSelect={(instanceId) => {
+            if (readOnly) {
+              return;
+            }
+            updateSettings({ activeSubscriptionInstanceId: instanceId });
+          }}
+        />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"

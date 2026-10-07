@@ -1,3 +1,10 @@
+import * as Orchestrator from "./Orchestrator.ts";
+import { formatGeneratedBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as WorktreeBranchDrift from "./WorktreeBranchDrift.ts";
+import * as WorktreeRemoval from "../project/WorktreeRemoval.ts";
+import { WorktreeArchiveScriptRunner } from "../project/WorktreeArchiveScriptRunner.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -23,7 +30,9 @@ import {
   OrchestrationV2ThreadProjectionJson,
   ScheduledTaskId,
   type ServerProvider,
+  type T3ProjectFile,
   ThreadId,
+  WorktreeArchiveScriptError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -33,6 +42,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -58,7 +68,6 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -84,6 +93,8 @@ const project = {
   updatedAt: "2026-06-20T00:00:00.000Z",
   deletedAt: null,
 } as const;
+
+const projectFixture = project;
 
 const otherProject = {
   ...project,
@@ -115,12 +126,18 @@ const claudeAdapter = {
 interface HarnessOptions {
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
+  readonly workspaceRoot?: string;
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
+  readonly projectFile?: T3ProjectFile | undefined;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
+  readonly runArchiveScript?: WorktreeArchiveScriptRunner["Service"]["run"];
+  readonly closeAndWait?: TerminalManager.TerminalManager["Service"]["closeAndWait"];
+  readonly removeWorktree?: GitWorkflow.GitWorkflowService["Service"]["removeWorktree"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
@@ -130,6 +147,10 @@ interface HarnessOptions {
 }
 
 function makeHarness(options: HarnessOptions = {}) {
+  const project = {
+    ...projectFixture,
+    workspaceRoot: options.workspaceRoot ?? projectFixture.workspaceRoot,
+  };
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
@@ -156,8 +177,9 @@ function makeHarness(options: HarnessOptions = {}) {
     options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
   );
   const removeWorktree = vi.fn(
-    (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["removeWorktree"]>[0]) =>
-      Effect.void,
+    options.removeWorktree ??
+      ((_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["removeWorktree"]>[0]) =>
+        Effect.void),
   );
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
@@ -169,10 +191,18 @@ function makeHarness(options: HarnessOptions = {}) {
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
+  const runArchiveScript = vi.fn(
+    options.runArchiveScript ?? (() => Effect.succeed({ status: "no-script" as const })),
+  );
+  const closeAndWait = vi.fn(options.closeAndWait ?? closeTerminal);
   const layerExternalServices = Layer.mergeAll(
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
-    Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
+    Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal, closeAndWait }),
+    WorktreeRemoval.layer.pipe(
+      Layer.provide(Layer.mock(WorktreeArchiveScriptRunner)({ run: runArchiveScript })),
+      Layer.provide(Path.layer),
+    ),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -229,6 +259,17 @@ function makeHarness(options: HarnessOptions = {}) {
         IdAllocator.layer,
       ),
     ),
+    Layer.provide(
+      Layer.merge(
+        options.fileSystem ??
+          FileSystem.layerNoop(
+            options.projectFile
+              ? { readFileString: () => Effect.succeed(JSON.stringify(options.projectFile)) }
+              : {},
+          ),
+        Path.layer,
+      ),
+    ),
   );
   const layerProjectedProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
     get: (requestedProjectId) =>
@@ -258,6 +299,7 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   return {
     layer: Layer.mergeAll(
+      layerOrchestrator,
       layerLaunch,
       layerRegistry,
       layerThreadManagement,
@@ -273,6 +315,8 @@ function makeHarness(options: HarnessOptions = {}) {
     generateThreadTitle,
     runSetup,
     closeTerminal,
+    runArchiveScript,
+    closeAndWait,
   };
 }
 

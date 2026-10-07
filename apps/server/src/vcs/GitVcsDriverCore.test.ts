@@ -494,6 +494,63 @@ describe("pullCurrentBranch", () => {
     ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 });
+it.effect("waits for a slow pre-push hook instead of stopping at the default timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const pushSpawned = yield* Deferred.make<void>();
+      // Stands in for a pre-push hook that runs a test suite. The clock is
+      // virtual here, so five minutes of hook cost no real time.
+      const slowHookSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("push")) {
+            yield* Deferred.succeed(pushSpawned, undefined);
+            yield* Effect.sleep("5 minutes");
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowHookSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-slow-push-remote-");
+      const runGit = (args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.slowPrePushHook",
+          cwd,
+          args,
+          timeoutMs: 10_000,
+        });
+
+      yield* driver.initRepo({ cwd });
+      yield* runGit(["config", "user.email", "test@test.com"]);
+      yield* runGit(["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(["add", "."]);
+      yield* runGit(["commit", "-m", "initial commit"]);
+      yield* driver.execute({
+        operation: "GitVcsDriver.test.slowPrePushHook.initRemote",
+        cwd: remote,
+        args: ["init", "--bare"],
+        timeoutMs: 10_000,
+      });
+      yield* runGit(["remote", "add", "origin", remote]);
+
+      const push = yield* driver
+        .pushCurrentBranch(cwd, null)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(pushSpawned);
+      // Past the 30 second default, and well short of the push allowance.
+      yield* TestClock.adjust("5 minutes");
+
+      assert.deepInclude(yield* Fiber.join(push), { status: "pushed" });
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
   Effect.scoped(
@@ -1267,6 +1324,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("does not read hook output as a git failure reason", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const remote = pathService.join(parent, "origin.git");
+        const cwd = pathService.join(parent, "work");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* fileSystem.makeDirectory(cwd);
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["init", "--bare", remote]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/pre-push",
+          '#!/bin/sh\necho "authentication failed" >&2\nexit 1\n',
+        );
+        yield* fileSystem.chmod(pathService.join(cwd, ".git/hooks/pre-push"), 0o755);
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.hookOutput",
+            cwd,
+            args: ["push", "origin", "HEAD"],
+            env: { LC_ALL: "C" },
+          })
+          .pipe(Effect.flip);
+
+        assert.notProperty(error, "reason");
+        assert.notInclude(error.message, "(authentication_failed)");
+        const pushError = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(pushError.message, "A pre-push hook may have rejected it.");
+        assert.notProperty(pushError, "reason");
+        assert.notInclude(pushError.message, "authentication failed");
+      }),
+    );
+
     it.effect("leaves a tag collision unclassified rather than calling it a path", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1775,6 +1869,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
+        if ((yield* HostProcessPlatform) !== "win32") {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.chmod(path.join(cwd, "mode-only.sh"), 0o755);
+        }
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
         const preview = yield* driver.getReviewDiffPreview({
           cwd,
@@ -3642,6 +3741,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(Result.isFailure(result));
         assert.isTrue(NodeFS.lstatSync(link).isSymbolicLink());
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), ["linked"]);
+      }),
+    );
+
+    it.effect("names the folder after the branch when no folder name is given", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/derived-name",
+        });
+
+        assert.equal(pathService.basename(created.worktree.path), "feature-derived-name");
+
+        yield* driver.removeWorktree({ cwd, path: created.worktree.path });
+      }),
+    );
+
+    it.effect("uses the given folder name instead of the branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        // A thread's branch starts as a placeholder that the first turn
+        // renames, so the folder takes the thread's name and stays correct.
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "t3code/deadbeef",
+          directoryName: "thread-11111111-2222-4333-8444-555555555555",
+        });
+
+        assert.equal(
+          pathService.basename(created.worktree.path),
+          "thread-11111111-2222-4333-8444-555555555555",
+        );
+        assert.equal(created.worktree.refName, "t3code/deadbeef");
+
+        yield* driver.removeWorktree({ cwd, path: created.worktree.path });
       }),
     );
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   MAX_CODE_FONT_SIZE,
@@ -17,6 +17,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { isMacPlatform } from "../../lib/utils";
 import { Input } from "../ui/input";
 import {
+  BUNDLED_FONT_FAMILIES,
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
   isFontFamilyAvailable,
@@ -369,6 +370,7 @@ function FontFamilySettingsRow({
     onChange: (v: number) => void;
   };
 }) {
+  const suggestionsId = useId();
   const trimmed = value.trim();
   const [draft, setDraft] = useState(value);
   const [draftSettled, setDraftSettled] = useState(true);
@@ -439,6 +441,7 @@ function FontFamilySettingsRow({
         autoCapitalize="off"
         autoComplete="off"
         className="min-w-0 flex-1"
+        list={requireMonospace ? undefined : suggestionsId}
         maxLength={200}
         onFocus={() => {
           setInputFocused(true);
@@ -483,6 +486,13 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
+      {!requireMonospace && (
+        <datalist id={suggestionsId}>
+          {BUNDLED_FONT_FAMILIES.map((family) => (
+            <option key={family} value={family} />
+          ))}
+        </datalist>
+      )}
       <Select
         value={String(size.value)}
         onValueChange={(next) => {

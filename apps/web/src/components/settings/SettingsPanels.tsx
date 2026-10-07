@@ -22,6 +22,7 @@ import {
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
@@ -74,6 +75,13 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -84,6 +92,7 @@ import {
   getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
+  normalizeIntervalSeconds,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
@@ -512,6 +521,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
       ? ["Archive confirmation"]
       : []),
+    ...(settings.deleteArchivedThreadsNightly !== DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly
+      ? ["Delete archived threads daily"]
+      : []),
+    ...(Duration.toMillis(settings.providerSessionIdleTimeout) !==
+    Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout)
+      ? ["Agent idle timeout"]
+      : []),
     ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
       ? ["Delete confirmation"]
       : []),
@@ -628,6 +644,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      deleteArchivedThreadsNightly: DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+      providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -1735,6 +1753,76 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Confirm thread archiving"
             />
+          }
+        />
+
+        <SettingsRow
+          className="bg-muted/20 sm:pl-9"
+          title={searchableSetting("delete-archived-nightly").title}
+          description="Deletes idle archived conversations once a day. Worktree removal follows your separate cleanup rules and safety checks. Conversation deletion cannot be undone."
+          resetAction={
+            settings.deleteArchivedThreadsNightly !==
+            DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly ? (
+              <SettingResetButton
+                label="delete archived threads daily"
+                onClick={() =>
+                  updateSettings({
+                    deleteArchivedThreadsNightly:
+                      DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.deleteArchivedThreadsNightly}
+              onCheckedChange={(checked) =>
+                updateSettings({ deleteArchivedThreadsNightly: Boolean(checked) })
+              }
+              aria-label="Delete archived threads daily"
+            />
+          }
+        />
+
+        <SettingsRow
+          title={searchableSetting("agent-idle-timeout").title}
+          description="Stop the agent behind a thread once it has been idle this long, so it stops holding memory. Set 0 to keep idle agents running. A thread with a turn in progress, or with subagents or workflows still working, is never stopped."
+          resetAction={
+            Duration.toMillis(settings.providerSessionIdleTimeout) !==
+            Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout) ? (
+              <SettingResetButton
+                label="agent idle timeout"
+                onClick={() =>
+                  updateSettings({
+                    providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={Math.round(Duration.toMillis(settings.providerSessionIdleTimeout) / 60_000)}
+                min={0}
+                step={5}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings({
+                    providerSessionIdleTimeout: Duration.minutes(normalizeIntervalSeconds(value)),
+                  })
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease agent idle timeout" />
+                  <NumberFieldInput aria-label="Agent idle timeout in minutes" />
+                  <NumberFieldIncrement aria-label="Increase agent idle timeout" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">minutes</span>
+            </div>
           }
         />
 

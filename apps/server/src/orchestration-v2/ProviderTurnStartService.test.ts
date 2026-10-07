@@ -48,7 +48,6 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
-
 const managedWorktreesDir = "/tmp/provider-turn-start-worktrees";
 // fs.realpath applies `..` and `.` before following symlinks.
 const normalize = (target: string) => {
@@ -94,6 +93,7 @@ function startWithMissingWorktree(
       projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
       branch: "feature/restore",
       worktreePath,
+      deletedAt: null,
     },
     runs: [
       {
@@ -126,10 +126,22 @@ function startWithMissingWorktree(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: () => Effect.succeed({} as never),
+        }),
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
+          readLink: (target: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "readLink",
+                pathOrDescriptor: target,
+              }),
+            ),
           // Paths that exist on the fake disk, mapped to where their symlinks lead.
           realPath: (target: string) =>
             normalize(target) in realPaths
@@ -156,6 +168,8 @@ function startWithMissingWorktree(
             projectionReadCount += 1;
             return Effect.succeed(projection);
           },
+          getThread: () => Effect.succeed(projection.thread),
+          getNextTurnItemOrdinal: () => Effect.succeed(0),
           getTurnStartContext: () => {
             projectionReadCount += 1;
             return Effect.succeed({
@@ -201,6 +215,26 @@ function startWithMissingWorktree(
     projectionReads: () => projectionReadCount,
   };
 }
+
+it("does not commit running state when inherited background routing cannot be read", async () => {
+  const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+  const harness = startWithMissingWorktree(worktreePath);
+  const error = await harness.start;
+
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(harness.projectionReads()).toBe(3);
+  expect(harness.pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
+  expect(harness.createWorktree).toHaveBeenCalledWith(
+    {
+      cwd: "/tmp/provider-turn-start-project",
+      refName: "feature/restore",
+      path: worktreePath,
+    },
+    { submodules: null },
+  );
+  expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+  expect(harness.startRootRun).not.toHaveBeenCalled();
+});
 
 it.each([
   {
@@ -262,6 +296,7 @@ function makeLocalCommandHarness(input: {
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly recoveryHome?: string;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -280,6 +315,7 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
   };
+  readonly recovery?: { readonly resumed: boolean };
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -346,6 +382,7 @@ function makeLocalCommandHarness(input: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
       projectId: ProjectId.make("project-native-account-command"),
+      deletedAt: null,
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
     } as OrchestrationV2ThreadProjection["thread"],
@@ -533,6 +570,53 @@ function makeLocalCommandHarness(input: {
       if (input.previousTurn?.interruptCurrentRun) interruptRun();
     }),
   );
+  const managedRoot = "/tmp/t3-turn-recovery-managed/worktrees";
+  let workspaceExists = false;
+  const createWorktree = vi.fn(() =>
+    Effect.sync(() => {
+      workspaceExists = true;
+      return {} as never;
+    }),
+  );
+  if (input.recovery !== undefined) {
+    projection = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        projectId: ProjectId.make("project-turn-recovery"),
+        deletedAt: null,
+        branch: "feature/recovery",
+        worktreePath: `${managedRoot}/repo/feature`,
+      },
+    };
+    if (input.recovery.resumed) {
+      projection = {
+        ...projection,
+        providerThreads: projection.providerThreads.map((candidate) => ({
+          ...candidate,
+          nativeThreadRef: {
+            driver: candidate.driver,
+            nativeId: "native-recovery-session",
+            strength: "strong" as const,
+          },
+        })),
+        providerSessions: [
+          {
+            id: providerSessionId,
+            driver: providerThread.driver,
+            providerInstanceId: newInstanceId,
+            status: "stopped",
+            cwd: `${managedRoot}/repo/feature`,
+            model: null,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+        ],
+      };
+    }
+  }
   const events: Array<OrchestrationV2DomainEvent> = [];
   const interruptRun = () => {
     projection = {
@@ -571,46 +655,47 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
-  const open = vi.fn(() =>
-    input.interruptOpen === true
-      ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
-        ? Effect.succeed(resumeFallbackSession as never)
-        : "ensureThreadFailure" in input
-          ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-          : "openFailure" in input
-            ? Effect.sync(() => {
-                if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-              }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProviderSessionManager.ProviderSessionOpenError({
-                      instanceId: newInstanceId,
-                      providerSessionId,
-                      cause: input.openFailure,
-                    }),
+  const open = vi.fn(
+    (_request: Parameters<ProviderSessionManager.ProviderSessionManagerV2Shape["open"]>[0]) =>
+      input.interruptOpen === true
+        ? Effect.interrupt
+        : "historyReadFailureAfterFallback" in input
+          ? Effect.succeed(resumeFallbackSession as never)
+          : "ensureThreadFailure" in input
+            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+            : "openFailure" in input
+              ? Effect.sync(() => {
+                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderSessionManager.ProviderSessionOpenError({
+                        instanceId: newInstanceId,
+                        providerSessionId,
+                        cause: input.openFailure,
+                      }),
+                    ),
                   ),
-                ),
-              )
-            : input.failReadsAfterRunning === true || input.previousTurn !== undefined
-              ? Effect.succeed({
-                  driver: providerThread.driver,
-                  providerSession: {
-                    id: providerSessionId,
+                )
+              : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+                ? Effect.succeed({
                     driver: providerThread.driver,
-                    providerInstanceId: newInstanceId,
-                    status: "ready",
-                    cwd: "/tmp/native-account-command",
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
-                  ensureThread: () => Effect.succeed(providerThread),
-                  resumeThread: () => Effect.succeed(projection.providerThreads[0]),
-                } as never)
-              : Effect.die("A local command must not open a native session."),
+                    providerSession: {
+                      id: providerSessionId,
+                      driver: providerThread.driver,
+                      providerInstanceId: newInstanceId,
+                      status: "ready",
+                      cwd: "/tmp/native-account-command",
+                      model: null,
+                      capabilities: CodexProviderCapabilitiesV2,
+                      createdAt: now,
+                      updatedAt: now,
+                      lastError: null,
+                    },
+                    ensureThread: () => Effect.succeed(providerThread),
+                    resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                  } as never)
+                : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -668,7 +753,6 @@ function makeLocalCommandHarness(input: {
     ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
       Effect.succeed({ cwd: thread.worktreePath ?? "/tmp/native-account-command" } as never),
   );
-  const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const getThreadRecords = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"]>(() =>
     Effect.succeed(projection),
   );
@@ -688,11 +772,37 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: ({ events: incoming }) =>
+            Effect.sync(() => {
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
+              return {} as never;
+            }),
+        }),
         IdAllocator.layer,
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(
+          input.worktreesDir ??
+            (input.recovery === undefined ? managedWorktreesDir : managedRoot),
+        ),
+        ServerSettings.layerTest(
+          input.recovery === undefined && input.recoveryHome === undefined
+            ? {}
+            : {
+                projectSettingsOverrides: {
+                  [projection.thread.projectId]: { worktreeSubmodules: "none" },
+                },
+              },
+        ),
         input.fileSystem === undefined
-          ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
+          ? FileSystem.layerNoop({
+              exists: () => Effect.succeed(input.recovery === undefined || workspaceExists),
+              realPath: (target) => Effect.succeed(normalize(target)),
+            })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees: () => Effect.void,
@@ -700,11 +810,20 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+            Effect.succeed(
+              Option.some({
+                workspaceRoot:
+                  input.recovery === undefined
+                    ? "/tmp/native-account-project"
+                    : "/tmp/t3-turn-recovery-repo",
+              } as never),
+            ),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
           getTurnStartContext,
+          getThread: () => Effect.succeed(projection.thread),
+          getNextTurnItemOrdinal: () => Effect.succeed(projection.turnItems.length),
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
               ...projection,
@@ -890,6 +1009,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         worktreePath,
         worktreesDir: workspaceRoot,
         fileSystem,
+        recoveryHome: workspaceRoot,
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementation(() =>
@@ -934,11 +1054,14 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
       yield* Fiber.join(startup);
       if (laterCleanup !== undefined) yield* Fiber.join(laterCleanup);
       if (order === "cleanup-first") {
-        expect(harness.createWorktree).toHaveBeenCalledWith({
-          cwd: "/tmp/native-account-project",
-          refName: "feature/restore",
-          path: worktreePath,
-        });
+        expect(harness.createWorktree).toHaveBeenCalledWith(
+          {
+            cwd: "/tmp/native-account-project",
+            refName: "feature/restore",
+            path: worktreePath,
+          },
+          { submodules: "none" },
+        );
       }
       expect(harness.resolveRuntimePolicy).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1243,3 +1366,42 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+it.each([false, true])(
+  "recovers a missing managed worktree before opening a session (resumed: %s)",
+  async (resumed) => {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      recovery: { resumed },
+      openFailure: "stop after session open",
+    });
+    await harness.startWithRetry.pipe(Effect.flip, Effect.runPromise);
+    expect(harness.createWorktree).toHaveBeenCalledWith(
+      {
+        cwd: "/tmp/t3-turn-recovery-repo",
+        refName: "feature/recovery",
+        path: "/tmp/t3-turn-recovery-managed/worktrees/repo/feature",
+      },
+      { submodules: "none" },
+    );
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.createWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.open.mock.invocationCallOrder[0]!,
+    );
+    const request = harness.open.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
+      runtimePolicy: { cwd: "/tmp/t3-turn-recovery-managed/worktrees/repo/feature" },
+    });
+    if (resumed)
+      expect(request).toMatchObject({
+        initialNativeThreadId: "native-recovery-session",
+        resumeFromSession: { status: "stopped" },
+      });
+    else expect(request).not.toHaveProperty("resumeFromSession");
+    expect(
+      harness.events.filter(
+        (event) => event.type === "turn-item.updated" && event.payload.type === "system_notice",
+      ),
+    ).toHaveLength(1);
+  },
+);

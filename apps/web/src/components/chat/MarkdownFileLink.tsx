@@ -1,3 +1,4 @@
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
   isAtomCommandInterrupted,
@@ -195,29 +196,22 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   };
 
   const handleCopy = (resolveValue: () => Promise<string>, title: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Failed to copy ${title.toLowerCase()}`,
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
     const value = resolveValue().then((text) => formatFilePathForClipboard(text, targetPath));
     // Start the write before workspace lookup finishes so Safari retains the user gesture.
+    const fallbackWrite = () => value.then((text) => writeTextToClipboard(text, title.toLowerCase()));
     const write =
-      typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined"
+      typeof navigator !== "undefined" &&
+      typeof navigator.clipboard?.write === "function" &&
+      typeof ClipboardItem !== "undefined"
         ? navigator.clipboard.write([
             new ClipboardItem({
               "text/plain": value.then((text) => new Blob([text], { type: "text/plain" })),
             }),
-          ])
-        : value.then((text) => navigator.clipboard.writeText(text));
+          ]).catch(fallbackWrite)
+        : fallbackWrite();
     void Promise.all([write, value]).then(
-      ([, text]) => {
+      ([didCopy, text]) => {
+        if (didCopy === false) return;
         toastManager.add({
           type: "success",
           title: `${title} copied`,

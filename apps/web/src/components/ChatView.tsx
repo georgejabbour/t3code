@@ -1250,6 +1250,7 @@ export default function ChatView(props: ChatViewProps) {
       activeRuntime?.providerInstanceId,
       activeThreadModelInstanceId,
       activeProjectDefaultModelSelection?.instanceId,
+      settings.activeSubscriptionInstanceId ?? undefined,
     ],
     lockedProvider,
     lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,

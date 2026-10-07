@@ -61,13 +61,24 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
 
   // Where git would create `target`: the real path of its nearest existing
   // ancestor plus the missing rest, since git follows symlinks on the way.
-  const realLocation = (target: string): Effect.Effect<string> =>
+  const realLocation = (target: string): Effect.Effect<string | null> =>
     fileSystem.realPath(target).pipe(
-      Effect.catch(() => {
-        const parent = path.dirname(target);
-        return parent === target
-          ? Effect.succeed(target)
-          : Effect.map(realLocation(parent), (real) => path.join(real, path.basename(target)));
+      Effect.catch((error) => {
+        if (error.reason._tag !== "NotFound") return Effect.succeed(null);
+        // A dangling link is not a missing path that Git can safely recreate.
+        return fileSystem.readLink(target).pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed(null),
+            onFailure: (error) => {
+              const parent = path.dirname(target);
+              if (error.reason._tag !== "NotFound" || parent === target)
+                return Effect.succeed(null);
+              return Effect.map(realLocation(parent), (real) =>
+                real === null ? null : path.join(real, path.basename(target)),
+              );
+            },
+          }),
+        );
       }),
     );
 
@@ -93,8 +104,9 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
       realLocation,
     );
     const candidate = yield* realLocation(worktreePath);
+    if (candidate === null) return false;
     return roots.some((root) => {
-      if (isFilesystemRoot(root, path)) return false;
+      if (root === null || isFilesystemRoot(root, path)) return false;
       const relative = path.relative(root, candidate);
       const segments = relative.split(path.sep);
       return (

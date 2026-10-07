@@ -1,3 +1,4 @@
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
@@ -69,16 +70,16 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
 
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
+    if (!table) {
       return;
     }
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    void writeTextToClipboard(text, "table")
+      .then((didCopy) => {
+        if (!didCopy) return;
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }

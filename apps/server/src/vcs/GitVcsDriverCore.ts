@@ -483,10 +483,12 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
     "The remote has commits this branch doesn't have. Pull or rebase, then push again.",
 };
 
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
+function gitFailureDetail(
+  reason: GitCommandFailureReason | null,
+  fallbackDetail = "Git command exited with a non-zero status.",
+): string {
   return (
-    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
+    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ?? fallbackDetail
   );
 }
 
@@ -1159,7 +1161,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail:
+              options.fallbackErrorDetail ??
+              gitFailureDetail(
+                reason,
+                args[0] === "push"
+                  ? "Git push failed. A pre-push hook may have rejected it."
+                  : undefined,
+              ),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -3726,7 +3735,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
+    const directoryName = input.directoryName ?? targetBranch.replace(/\//g, "-");
     // resolve: a cwd like `<repo>/sub/..` must not name the folder `..`.
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
@@ -3745,7 +3754,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
         });
       }
-      worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+      worktreePath = path.join(parentDir, repoName, directoryName);
     }
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, "--", worktreePath, input.refName]

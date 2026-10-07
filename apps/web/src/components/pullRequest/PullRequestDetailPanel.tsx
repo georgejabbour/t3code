@@ -418,13 +418,6 @@ export function PullRequestDetailPanel({
     reference.projectId,
   );
   const projectDefaultMergeMethod = resolveProjectDefaultMergeMethod();
-  const [mergeMethodSelection, setMergeMethodSelection] = useState<{
-    readonly pullRequestKey: string;
-    readonly method: PullRequestMergeMethod;
-  } | null>(null);
-  const setMergeMethod = (method: PullRequestMergeMethod) => {
-    setMergeMethodSelection({ pullRequestKey, method });
-  };
   const [handoff, setHandoff] = useState<string | null>(null);
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const {
@@ -466,12 +459,31 @@ export function PullRequestDetailPanel({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
-  const autoMergeKey = `${pullRequestKey}:${detail?.autoMergeMethod ?? ""}`;
-  const [seenAutoMergeKey, setSeenAutoMergeKey] = useState<string | null>(null);
-  if (seenAutoMergeKey !== autoMergeKey) {
-    setSeenAutoMergeKey(autoMergeKey);
-    if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
+  const hostMergeMethod = detail?.autoMergeMethod;
+  const [mergeMethodSelection, setMergeMethodSelection] = useState<{
+    readonly key: string;
+    readonly method: PullRequestMergeMethod | null;
+    readonly hostMethod: PullRequestMergeMethod | undefined;
+  }>(() => ({ key: tabScopeKey, method: hostMergeMethod ?? null, hostMethod: hostMergeMethod }));
+  let currentMergeMethod = mergeMethodSelection.method;
+  if (mergeMethodSelection.key !== tabScopeKey) {
+    currentMergeMethod = hostMergeMethod ?? null;
+    setMergeMethodSelection({
+      key: tabScopeKey,
+      method: currentMergeMethod,
+      hostMethod: hostMergeMethod,
+    });
+  } else if (mergeMethodSelection.hostMethod !== hostMergeMethod) {
+    currentMergeMethod = hostMergeMethod ?? mergeMethodSelection.method;
+    setMergeMethodSelection({
+      key: tabScopeKey,
+      method: currentMergeMethod,
+      hostMethod: hostMergeMethod,
+    });
   }
+  const setMergeMethod = (method: PullRequestMergeMethod) => {
+    setMergeMethodSelection({ key: tabScopeKey, method, hostMethod: hostMergeMethod });
+  };
   const repositoryUrl =
     detail === null
       ? null
@@ -1079,8 +1091,6 @@ export function PullRequestDetailPanel({
   const allowedMergeMethods = detail
     ? detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method])
     : [];
-  const currentMergeMethod =
-    mergeMethodSelection?.pullRequestKey === pullRequestKey ? mergeMethodSelection.method : null;
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedMergeMethods,
     currentMergeMethod,

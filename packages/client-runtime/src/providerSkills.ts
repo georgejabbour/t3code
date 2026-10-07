@@ -51,8 +51,13 @@ export function getProviderSlashCommandsForSlashMenu(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
   visibleSkills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
-  const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
-  return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+  const seenNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
+  return slashCommands.filter((command) => {
+    const normalizedName = command.name.trim().toLowerCase();
+    if (!normalizedName || seenNames.has(normalizedName)) return false;
+    seenNames.add(normalizedName);
+    return true;
+  });
 }
 
 export function resolveProviderSkillSourceKind(

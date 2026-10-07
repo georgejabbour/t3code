@@ -51,6 +51,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./subscriptionUsage": {
+      "types": "./src/subscriptionUsage.ts",
+      "import": "./src/subscriptionUsage.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
@@ -490,6 +494,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./subscriptionUsageHistory": {
+      "types": "./src/subscriptionUsageHistory.ts",
+      "import": "./src/subscriptionUsageHistory.ts"
     }
   },
   "scripts": {

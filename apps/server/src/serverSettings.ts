@@ -210,8 +210,12 @@ export class ServerSettingsService extends Context.Service<
 const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   overrides: DeepPartial<ServerSettings> = {},
 ) {
-  const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
-    overrides;
+  const {
+    automaticGitFetchInterval,
+    providerHealthRefreshInterval,
+    providerSessionIdleTimeout,
+    ...overridesForMerge
+  } = overrides;
   const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
   const initialSettings = yield* normalizeServerSettings({
     ...merged,
@@ -220,6 +224,9 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       : {}),
     ...(providerHealthRefreshInterval !== undefined
       ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
+      : {}),
+    ...(providerSessionIdleTimeout !== undefined
+      ? { providerSessionIdleTimeout: providerSessionIdleTimeout as Duration.Duration }
       : {}),
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
@@ -439,13 +446,27 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
 
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
-  "automaticGitFetchInterval",
-  "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
 ]);
+
+/**
+ * Answer whether a value is an object literal, and so safe to take apart key by
+ * key.
+ *
+ * A `Duration` is not one. It is built from a class, and its one own key holds
+ * private parts. Copying those keys into a new object literal produces a value
+ * the settings schema rejects with "Expected Duration". The whole settings file
+ * is written at once, so that one field then blocks every settings write, and
+ * the user sees a toggle that does nothing. This guard keeps such a value whole
+ * and compares it with `Equal.equals` instead.
+ */
+function isPlainRecord(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -458,6 +479,10 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
     typeof current === "object" &&
     typeof defaults === "object"
   ) {
+    if (!isPlainRecord(current) || !isPlainRecord(defaults)) {
+      return Equal.equals(current, defaults) ? undefined : current;
+    }
+
     const currentRecord = current as Record<string, unknown>;
     const defaultsRecord = defaults as Record<string, unknown>;
     const next: Record<string, unknown> = {};
@@ -1041,6 +1066,16 @@ const make = Effect.gen(function* () {
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
+    ).pipe(
+      Effect.tapError((error: ServerSettingsError) =>
+        Effect.logError("failed to update settings, no setting was saved", {
+          path: error.settingsPath,
+          operation: error.operation,
+          providerInstanceId: error.providerInstanceId,
+          environmentVariable: error.environmentVariable,
+          cause: error.cause,
+        }),
+      ),
     );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>

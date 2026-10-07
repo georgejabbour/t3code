@@ -201,7 +201,30 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
     assert.equal(update, null);
   });
+
+  it.each(["team/george/deadbeef", "team-george-deadbeef", "t3/deadbeef", "t3code/deadbeef"])(
+    "rejects the temporary checkout %s with project settings",
+    (branch) => {
+      assert.isNull(
+        resolveLiveThreadBranchUpdate({
+          threadBranch: "feature/login",
+          gitStatus: status({ refName: branch }),
+          branchPrefix: "team/george",
+        }),
+      );
+      assert.deepEqual(
+        resolveLiveThreadBranchUpdate({
+          threadBranch: branch,
+          gitStatus: status({ refName: "feature/login" }),
+          branchPrefix: "team/george",
+        }),
+        { branch: "feature/login" },
+      );
+    },
+  );
+
 });
+
 
 describe("resolveAutoFeatureBranchName", () => {
   it("increments suffix when the preferred ref name already exists", () => {

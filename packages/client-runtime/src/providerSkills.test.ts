@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
@@ -84,6 +85,26 @@ describe("getProviderSkillsForSlashMenu", () => {
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
   });
+});
+
+describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("keeps the first native command and removes duplicate and empty menu entries", () => {
+    const preferred = { name: "review", description: "Native command with provider precedence" };
+    const distinct = { name: "nested:review", description: "Namespaced command" };
+
+    expect(
+      getProviderSlashCommandsForSlashMenu(
+        [
+          preferred,
+          { name: " REVIEW ", description: "Duplicate command" },
+          distinct,
+          { name: " " },
+        ],
+        [],
+      ),
+    ).toEqual([preferred, distinct]);
+  });
+
 });
 
 describe("workspace provider snapshots", () => {

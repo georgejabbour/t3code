@@ -1,3 +1,4 @@
+import { WorktreeRemoval } from "../project/WorktreeRemoval.ts";
 import {
   CommandId,
   MessageId,
@@ -60,6 +61,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+  const worktreeRemoval = yield* WorktreeRemoval;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
@@ -259,17 +261,24 @@ const make = Effect.gen(function* () {
           });
 
         const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
-            Effect.andThen(
-              Effect.suspend(() =>
-                gitWorkflow.deleteLocalBranch({
-                  cwd: projectCwd,
-                  refName: worktree.worktree.refName,
-                  force: true,
-                }),
+          worktreeRemoval
+            .remove(
+              { cwd: projectCwd, path: worktreePath, force: true, skipArchiveScript: true },
+              Effect.succeed(
+                gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }),
+              ),
+            )
+            .pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  gitWorkflow.deleteLocalBranch({
+                    cwd: projectCwd,
+                    refName: worktree.worktree.refName,
+                    force: true,
+                  }),
+                ),
               ),
             ),
-          ),
         ).pipe(Effect.ignoreCause({ log: true }));
 
         const recheckAndBind = Effect.gen(function* () {
@@ -460,4 +469,5 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | WorktreeRemoval
 > = Layer.effect(WorktreeMcpService, make);

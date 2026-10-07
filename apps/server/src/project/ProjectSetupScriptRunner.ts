@@ -429,7 +429,7 @@ export const make = Effect.gen(function* () {
     const completion = observed?.completion.pipe(
       Effect.tap(({ exitCode }) =>
         exitCode === 0
-          ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
+          ? terminalManager.closeIdle({ threadId: input.threadId, terminalId, confirmExit: true })
           : Effect.void,
       ),
     );

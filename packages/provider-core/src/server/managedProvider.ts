@@ -158,10 +158,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         // A failed read keeps the last good limits only for the same account,
         // and they keep the workspace they were read for.
         const previous = state.snapshot.auth;
-        const differs = (a: string | undefined, b: string | undefined) =>
-          a !== undefined && b !== undefined && a !== b;
+        // Limits read without a workspace cannot be attributed to a new one.
         const switchedAccount =
-          differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+          state.snapshot.driver !== probedSnapshot.driver ||
+          probedSnapshot.auth.status !== previous.status ||
+          probedSnapshot.auth.type !== previous.type ||
+          probedSnapshot.auth.email?.trim().toLowerCase() !==
+            previous.email?.trim().toLowerCase() ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
