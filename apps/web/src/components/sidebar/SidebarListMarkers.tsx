@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -105,6 +106,7 @@ export function SidebarSectionHeader(props: {
   className?: string;
   dragging?: boolean;
   isDropTarget?: boolean;
+  action?: ReactNode;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const shelf =
@@ -118,7 +120,7 @@ export function SidebarSectionHeader(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("mx-0.5 h-8", props.className)}
+      className={cn("mx-0.5 flex h-8 items-center", props.className)}
     >
       <CollapsibleSectionHeader
         onClick={props.toggle.onToggle}
@@ -130,6 +132,7 @@ export function SidebarSectionHeader(props: {
       >
         {props.label}
       </CollapsibleSectionHeader>
+      {props.action ? <span className="mr-2 shrink-0">{props.action}</span> : null}
     </SortableSidebarMarker>
   );
 }

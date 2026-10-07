@@ -54,7 +54,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import { FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { ArchiveIcon, FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -131,7 +131,7 @@ import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope } from "../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../state/session";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -144,9 +144,11 @@ import {
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
+  archiveSelectedThreadEntries,
   filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  canArchiveSettledThread,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
@@ -206,7 +208,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { TooltipProvider } from "./ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import {
@@ -846,6 +848,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   });
   const newThreadContext = useHandleNewThread();
+  const environments = useEnvironmentIdentities();
+  const operableEnvironmentIds = useEnvironmentsWithScope(
+    environments,
+    AuthOrchestrationOperateScope,
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
@@ -2022,6 +2029,78 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
+  const [isArchivingSettled, setIsArchivingSettled] = useState(false);
+  const handleArchiveAllSettled = useStableCallback(async () => {
+    const api = readLocalApi();
+    if (!api || isArchivingSettled) return;
+    const now = new Date().toISOString();
+    const entries = settledThreads
+      .filter((thread) =>
+        canArchiveSettledThread(
+          thread,
+          now,
+          readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+        ),
+      )
+      .map((thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        return { threadRef, threadKey: scopedThreadKey(threadRef) };
+      });
+    if (entries.length === 0) return;
+    setIsArchivingSettled(true);
+    try {
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Archive ${entries.length} settled thread${entries.length === 1 ? "" : "s"}?`,
+          "This includes hidden settled threads in the current project view.",
+          "You can restore them from Archived threads in Settings.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+      const { archivedThreadKeys, mutationFailure, followupFailures } =
+        await archiveSelectedThreadEntries({
+          entries,
+          archive: ({ threadRef }, onArchived) => {
+            // Check each thread again: it can become active during confirmation or the batch.
+            if (
+              !canArchiveSettledThread(
+                readThreadShell(threadRef),
+                new Date().toISOString(),
+                readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+              )
+            ) {
+              return Promise.resolve(null);
+            }
+            return archiveThread(threadRef, { onArchived });
+          },
+        });
+      removeFromSelection(archivedThreadKeys);
+      const failure = mutationFailure ?? followupFailures[0];
+      if (failure && !isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: mutationFailure
+              ? "Failed to archive all settled threads"
+              : "Threads archived, but navigation failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to archive all settled threads",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setIsArchivingSettled(false);
+    }
+  });
+
   const handleMultiSelectContextMenu = useStableCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -3156,6 +3235,37 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
+                                action={
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <Button
+                                          variant="ghost-muted"
+                                          size="icon-xs"
+                                          data-testid="sidebar-archive-all-settled"
+                                          data-thread-selection-safe
+                                          aria-label="Archive all settled"
+                                          aria-busy={isArchivingSettled}
+                                          disabled={
+                                            isArchivingSettled ||
+                                            from !== null ||
+                                            !settledThreads.some((thread) =>
+                                              canArchiveSettledThread(
+                                                thread,
+                                                snoozeNow,
+                                                operableEnvironmentIds.has(thread.environmentId),
+                                              ),
+                                            )
+                                          }
+                                          onClick={() => void handleArchiveAllSettled()}
+                                        />
+                                      }
+                                    >
+                                      <ArchiveIcon aria-hidden />
+                                    </TooltipTrigger>
+                                    <TooltipPopup>Archive all settled</TooltipPopup>
+                                  </Tooltip>
+                                }
                                 toggle={{
                                   expanded: settledShelfExpanded,
                                   onToggle: toggleSettledShelf,
