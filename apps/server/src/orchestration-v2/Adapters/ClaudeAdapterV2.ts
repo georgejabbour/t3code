@@ -6609,6 +6609,19 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          if (
+            message.type === "result" &&
+            message.terminal_reason === "api_error" &&
+            /not logged in|please run \/login|oauth token (?:has )?(?:expired|been revoked)|authentication_error|invalid[_ ]api[_ ]key|unauthorized/i.test(
+              message.subtype === "success" ? message.result : message.errors.join("\n"),
+            )
+          ) {
+            context.authenticationFailureMessage = claudeSignedOutMessage({
+              configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
+              cwd: path.resolve(context.input.runtimePolicy.cwd ?? "."),
+            });
+          }
+
           // Failed result text belongs on the terminal-failure item, including
           // structured failures whose SDK result still has is_error=false.
           const resultText =
@@ -6672,6 +6685,15 @@ export function makeClaudeAdapterV2(
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
             });
+            if (context.authenticationFailureMessage !== undefined) {
+              const expiredQuery = yield* Ref.modify(queryContext, (current) =>
+                current?.query === input.query ? [current, null] : [null, current],
+              );
+              if (expiredQuery !== null) {
+                expiredQuery.stopping = true;
+                yield* Effect.forkDetach(expiredQuery.query.close.pipe(Effect.ignore));
+              }
+            }
           }
         });
 

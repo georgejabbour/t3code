@@ -157,6 +157,15 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  /**
+   * Folder name to create inside the worktrees directory, when `path` is null.
+   * Defaults to the branch name with each `/` turned into `-`.
+   *
+   * A thread's worktree passes its own name here. Its branch starts as a
+   * placeholder that the first turn renames, so a folder named after that
+   * branch would disagree with the branch for the life of the worktree.
+   */
+  directoryName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 
@@ -174,10 +183,35 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
 
+/**
+ * Run a project's `runOnWorktreeRemove` script WITHOUT removing the worktree.
+ * Archiving a thread retires it while leaving the checkout on disk, so the
+ * script has to be invoked on its own for the workspace's services to stop.
+ */
+export const VcsRunWorktreeArchiveScriptInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  path: TrimmedNonEmptyStringSchema,
+});
+export type VcsRunWorktreeArchiveScriptInput = typeof VcsRunWorktreeArchiveScriptInput.Type;
+
+/**
+ * Whether the archive script ran.
+ *
+ * `ran` is false when the project has no such script, and when the worktree
+ * folder is already gone. Nothing stopped in either case, so the client says
+ * nothing rather than reporting that the workspace's services went down.
+ */
+export const VcsRunWorktreeArchiveScriptResult = Schema.Struct({
+  ran: Schema.Boolean,
+});
+export type VcsRunWorktreeArchiveScriptResult = typeof VcsRunWorktreeArchiveScriptResult.Type;
+
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
+  /** Skip the project's `runOnWorktreeRemove` script. Set when the user chooses to remove the worktree after that script failed. */
+  skipArchiveScript: Schema.optional(Schema.Boolean),
 });
 export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
@@ -396,6 +430,29 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   override get message(): string {
     const reason = this.reason === undefined ? "" : ` (${this.reason})`;
     return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}${reason}`;
+  }
+}
+
+/**
+ * A project's `runOnWorktreeRemove` script did not succeed, so the worktree was
+ * left in place. Carries the script output so the client can show why before
+ * offering to remove the worktree anyway.
+ */
+export class WorktreeArchiveScriptError extends Schema.TaggedError<WorktreeArchiveScriptError>()(
+  "WorktreeArchiveScriptError",
+  {
+    scriptName: Schema.String,
+    command: Schema.String,
+    worktreePath: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    timedOut: Schema.Boolean,
+    stdout: Schema.String,
+    stderr: Schema.String,
+  },
+) {
+  override get message(): string {
+    const reason = this.timedOut ? "timed out" : `exited with ${this.exitCode ?? "no status"}`;
+    return `Worktree archive script '${this.scriptName}' ${reason} in ${this.worktreePath}.`;
   }
 }
 

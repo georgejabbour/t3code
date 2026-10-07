@@ -95,6 +95,7 @@ export interface NewProjectScriptInput {
   runOnSettle: boolean;
   /** Omit to preserve the current shortcut when the form did not edit it. */
   keybinding?: string | null;
+  runOnWorktreeRemove: boolean;
   /** Optional URL to open in the in-app preview when this script runs. */
   previewUrl: string | null;
   /** When true, automatically open the preview panel pointed at `previewUrl`. */
@@ -110,6 +111,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   runOnWorktreeCreate: false,
   waitForSetup: false,
   runOnSettle: false,
+  runOnWorktreeRemove: false,
   keybinding: null,
   previewUrl: null,
   autoOpenPreview: false,
@@ -136,6 +138,7 @@ export function editorRequestForScript(
       runOnWorktreeCreate: script.runOnWorktreeCreate,
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
       runOnSettle: script.runOnSettle ?? false,
+      runOnWorktreeRemove: script.runOnWorktreeRemove ?? false,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
@@ -179,6 +182,7 @@ export function ProjectScriptEditorDialog({
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [waitForSetup, setWaitForSetup] = useState(false);
   const [runOnSettle, setRunOnSettle] = useState(false);
+  const [runOnWorktreeRemove, setRunOnWorktreeRemove] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
@@ -211,6 +215,7 @@ export function ProjectScriptEditorDialog({
     setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
     setWaitForSetup(request.initial.waitForSetup);
     setRunOnSettle(request.initial.runOnSettle);
+    setRunOnWorktreeRemove(request.initial.runOnWorktreeRemove);
     setKeybinding(request.initial.keybinding ?? "");
     setPreviewUrl(request.initial.previewUrl ?? "");
     setAutoOpenPreview(request.initial.autoOpenPreview);
@@ -288,6 +293,7 @@ export function ProjectScriptEditorDialog({
         ...((request.scriptId === null && canChangeKeybinding) || changesKeybinding
           ? { keybinding: keybindingRule?.key ?? null }
           : {}),
+        runOnWorktreeRemove,
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
@@ -435,6 +441,13 @@ export function ProjectScriptEditorDialog({
                   <Switch
                     checked={runOnWorktreeCreate}
                     onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run automatically before the worktree is archived or removed</span>
+                  <Switch
+                    checked={runOnWorktreeRemove}
+                    onCheckedChange={(checked) => setRunOnWorktreeRemove(Boolean(checked))}
                   />
                 </label>
                 <label

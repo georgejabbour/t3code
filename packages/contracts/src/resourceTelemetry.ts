@@ -13,6 +13,18 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  // Older servers omit memory details.
+  memory: Schema.optionalKey(
+    Schema.Struct({
+      pressure: Schema.NullOr(Schema.Literals(["normal", "warning", "critical"])),
+      compressedBytes: Schema.NullOr(NonNegativeInt),
+      wiredBytes: Schema.NullOr(NonNegativeInt),
+      swapUsedBytes: Schema.NullOr(NonNegativeInt),
+      swapTotalBytes: Schema.NullOr(NonNegativeInt),
+      swapReadBytesPerSecond: Schema.NullOr(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+      swapWriteBytesPerSecond: Schema.NullOr(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+  ),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

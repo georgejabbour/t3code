@@ -2480,6 +2480,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.expectedBranch !== undefined &&
+      command.expectedBranch !== thread.branch
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
+      });
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -10190,19 +10201,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "thread.delete": {
         const projection = yield* projectionStore
-          .getThreadRecords(command.threadId, [
-            "runs",
-            "attempts",
-            "nodes",
-            "runtimeRequests",
-            "subagents",
-            "providerSessions",
-          ])
+          .getThreadRecords(
+            command.threadId,
+            [
+              "runs",
+              "attempts",
+              "nodes",
+              "runtimeRequests",
+              "subagents",
+              "providerSessions",
+              "providerThreads",
+              ...(command.expectedArchivedAt === undefined ? [] : ["turnItems" as const]),
+            ],
+            {
+              turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          )
           .pipe(
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        if (
+          command.expectedArchivedAt !== undefined &&
+          (projection.thread.archivedAt === null ||
+            DateTime.toEpochMillis(projection.thread.archivedAt) !==
+              DateTime.toEpochMillis(command.expectedArchivedAt) ||
+            projection.thread.deletedAt !== null ||
+            projection.runs.some((run) =>
+              ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+            ) ||
+            projection.runtimeRequests.some((request) => request.status === "pending") ||
+            projection.providerSessions.some((session) =>
+              ["starting", "running", "waiting"].includes(session.status),
+            ) ||
+            projection.providerThreads.some(
+              (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+            ) ||
+            projection.subagents.some((task) =>
+              ["pending", "running", "waiting"].includes(task.status),
+            ) ||
+            derivePendingBackgroundWork({
+              latestRun: projection.runs.findLast((run) => run.status !== "queued"),
+              providerThreads: projection.providerThreads,
+              turnItems: projection.turnItems,
+              activeProviderThreadId: projection.thread.activeProviderThreadId,
+              runs: projection.runs,
+              pullRequests: projection.thread.pullRequests,
+            }).length > 0)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is no longer idle in the expected archive state.`,
+          });
+        }
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,

@@ -591,16 +591,16 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
 
   const handleCopy = useCallback((format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
+    if (!table) {
       return;
     }
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    void writeTextToClipboard(text, "table")
+      .then((didCopy) => {
+        if (!didCopy) return;
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }
@@ -881,12 +881,9 @@ function MarkdownCodeBlock({
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
   const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
+    void writeTextToClipboard(code, "code")
+      .then((didCopy) => {
+        if (!didCopy) return;
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }
@@ -2014,19 +2011,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
-      if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: "Clipboard API unavailable.",
-          }),
-        );
-        return;
-      }
-
-      void navigator.clipboard.writeText(value).then(
-        () => {
+      void writeTextToClipboard(value, title.toLowerCase()).then(
+        (didCopy) => {
+          if (!didCopy) return;
           toastManager.add({
             type: "success",
             title: `${title} copied`,

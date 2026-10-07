@@ -363,7 +363,7 @@ describe("project query refresh", () => {
     }
   });
 
-  it("revalidates cached entries when a workspace mutation is observed after mounting", async () => {
+  it("refreshes cached entries after a workspace change", async () => {
     const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
     const entriesAtom = Atom.make(
       Effect.promise(() => {
@@ -404,6 +404,10 @@ describe("project query refresh", () => {
       await flushEffects();
       render("mutation-1");
       expect(renderedPaths).toEqual(["src/new.ts"]);
+      expect(projectMocks.listEntries).toHaveBeenCalledWith({
+        environmentId,
+        input: { cwd: "/repo" },
+      });
       expect(requests).toHaveLength(2);
     } finally {
       unmount();

@@ -1,7 +1,11 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import {
+  BUNDLED_FONT_FAMILIES,
+  isMonospaceFamily,
+  queryInstalledFontFamilies,
+} from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
@@ -142,7 +146,7 @@ export function FontFamilyPicker({
 
   const families = useMemo(() => {
     if (enumeration.status !== "granted") return [];
-    return enumeration.families;
+    return [...new Set([...BUNDLED_FONT_FAMILIES, ...enumeration.families])];
   }, [enumeration]);
 
   const items = useMemo(() => {

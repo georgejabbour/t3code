@@ -29,6 +29,8 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { SubscriptionSidebarButton } from "../subscriptions/SubscriptionSidebarButton";
+import { MemorySidebarButton } from "./MemorySidebarButton";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -229,6 +231,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          <SubscriptionSidebarButton />
+          <MemorySidebarButton />
         </>
       )}
       <SidebarUpdatePill />

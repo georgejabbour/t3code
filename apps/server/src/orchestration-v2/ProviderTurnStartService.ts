@@ -13,12 +13,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -49,6 +47,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorktreeRecovery from "./WorktreeRecovery.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -108,9 +107,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
-    const projects = yield* ProjectService.ProjectService;
+    const restoreWorktree = yield* WorktreeRecovery.make;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -461,43 +458,7 @@ export const layer: Layer.Layer<
           return;
         }
       }
-      const { worktreePath, branch } = projection.thread;
-      if (worktreePath !== null && branch !== null) {
-        const exists = yield* fileSystem
-          .exists(worktreePath)
-          .pipe(Effect.orElseSucceed(() => true));
-        if (!exists) {
-          const project = yield* projects.getById(projection.thread.projectId).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.orElseSucceed(() => undefined),
-          );
-          if (project !== undefined) {
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
-            });
-            yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
-              Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
-              ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
-              ),
-            );
-          }
-        }
-      }
+      yield* restoreWorktree(projection.thread.id, projection.thread.worktreePath);
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,
       ): ReturnType<typeof RunExecutionService.selectInheritedBackgroundTurnItems> =>

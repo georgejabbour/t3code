@@ -14,7 +14,6 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type MessageId,
 } from "@t3tools/contracts";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,7 +24,6 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
-import { randomHex } from "../lib/uuid";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
 import {
   retainAcknowledgedThreadMessage,
@@ -1073,7 +1071,6 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);

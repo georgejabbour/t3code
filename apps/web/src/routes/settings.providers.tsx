@@ -21,6 +21,7 @@ function SettingsProvidersRoute() {
       </p>
     );
   }
+  // The add dialog reads the add value from the URL.
   return (
     <ProviderSettingsPanel
       environmentId={environment.environmentId}
@@ -38,6 +39,8 @@ export const Route = createFileRoute("/settings/providers")({
     ...(typeof raw.instanceId === "string" && raw.instanceId.trim()
       ? { instanceId: ProviderInstanceId.make(raw.instanceId) }
       : {}),
+    // The subscription panel uses `?add=1` to open the add-provider dialog.
+    ...(raw.add === true || raw.add === "true" || raw.add === "1" ? { add: true as const } : {}),
   }),
   component: SettingsProvidersRoute,
 });

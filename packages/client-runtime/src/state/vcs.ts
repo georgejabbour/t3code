@@ -26,7 +26,12 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
-import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
+import {
+  vcsCommandConcurrency,
+  vcsCommandScheduler,
+  worktreeArchiveScriptConcurrency,
+  worktreeArchiveScriptScheduler,
+} from "./vcsCommandScheduler.ts";
 import {
   invalidateCachedVcsRefs,
   vcsRefsCacheStateAtom,
@@ -333,6 +338,15 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
+    }),
+    // Its own lane, not the shared VCS one: this can run for minutes and would
+    // otherwise queue every git command for the workspace behind it.
+    // No onSettled either — the worktree and its refs are untouched, only its services.
+    runWorktreeArchiveScript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:run-worktree-archive-script",
+      tag: WS_METHODS.vcsRunWorktreeArchiveScript,
+      scheduler: worktreeArchiveScriptScheduler,
+      concurrency: worktreeArchiveScriptConcurrency,
     }),
     createRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-ref",

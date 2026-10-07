@@ -6,7 +6,7 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
@@ -118,6 +118,7 @@ import {
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import {
+  BUNDLED_FONT_FAMILIES,
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
   isFontFamilyAvailable,
@@ -650,6 +651,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
+      ...(settings.deleteArchivedThreadsNightly !==
+      DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly
+        ? ["Delete archived threads daily"]
+        : []),
+      ...(Duration.toMillis(settings.providerSessionIdleTimeout) !==
+      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout)
+        ? ["Agent idle timeout"]
+        : []),
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
@@ -683,6 +692,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
+      settings.deleteArchivedThreadsNightly,
+      settings.providerSessionIdleTimeout,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -831,6 +842,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      deleteArchivedThreadsNightly: DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+      providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -1872,6 +1885,7 @@ function FontFamilySettingsRow({
     onChange: (v: number) => void;
   };
 }) {
+  const suggestionsId = useId();
   const trimmed = value.trim();
   // The fallback input edits a draft; the preference only commits once typing
   // pauses and the text probes as an available font (or is an explicit
@@ -1954,6 +1968,7 @@ function FontFamilySettingsRow({
         autoCapitalize="off"
         autoComplete="off"
         className="min-w-0 flex-1"
+        list={requireMonospace ? undefined : suggestionsId}
         maxLength={200}
         onFocus={() => {
           inputFocusedRef.current = true;
@@ -1998,6 +2013,13 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
       <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
+      {!requireMonospace && (
+        <datalist id={suggestionsId}>
+          {BUNDLED_FONT_FAMILIES.map((family) => (
+            <option key={family} value={family} />
+          ))}
+        </datalist>
+      )}
       <Select
         value={String(size.value)}
         onValueChange={(next) => {
@@ -3155,6 +3177,76 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Confirm thread archiving"
             />
+          }
+        />
+
+        <SettingsRow
+          className="bg-muted/20 sm:pl-9"
+          title={searchableSetting("delete-archived-nightly").title}
+          description="Deletes idle archived conversations once a day. Worktree removal follows your separate cleanup rules and safety checks. Conversation deletion cannot be undone."
+          resetAction={
+            settings.deleteArchivedThreadsNightly !==
+            DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly ? (
+              <SettingResetButton
+                label="delete archived threads daily"
+                onClick={() =>
+                  updateSettings({
+                    deleteArchivedThreadsNightly:
+                      DEFAULT_UNIFIED_SETTINGS.deleteArchivedThreadsNightly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.deleteArchivedThreadsNightly}
+              onCheckedChange={(checked) =>
+                updateSettings({ deleteArchivedThreadsNightly: Boolean(checked) })
+              }
+              aria-label="Delete archived threads daily"
+            />
+          }
+        />
+
+        <SettingsRow
+          title={searchableSetting("agent-idle-timeout").title}
+          description="Stop the agent behind a thread once it has been idle this long, so it stops holding memory. Set 0 to keep idle agents running. A thread with a turn in progress, or with subagents or workflows still working, is never stopped."
+          resetAction={
+            Duration.toMillis(settings.providerSessionIdleTimeout) !==
+            Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout) ? (
+              <SettingResetButton
+                label="agent idle timeout"
+                onClick={() =>
+                  updateSettings({
+                    providerSessionIdleTimeout: DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeout,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={Math.round(Duration.toMillis(settings.providerSessionIdleTimeout) / 60_000)}
+                min={0}
+                step={5}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings({
+                    providerSessionIdleTimeout: Duration.minutes(normalizeIntervalSeconds(value)),
+                  })
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease agent idle timeout" />
+                  <NumberFieldInput aria-label="Agent idle timeout in minutes" />
+                  <NumberFieldIncrement aria-label="Increase agent idle timeout" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">minutes</span>
+            </div>
           }
         />
 

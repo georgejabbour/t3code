@@ -15,13 +15,14 @@ import {
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
+  WorktreeArchiveScriptError,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef } from "react";
+import { type ComponentPropsWithoutRef, useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -60,6 +61,83 @@ import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+
+/** A toast body is short, so keep the tail — where a failing script reports itself. */
+const MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS = 1500;
+
+const isWorktreeArchiveScriptError = Schema.is(WorktreeArchiveScriptError);
+
+function worktreeArchiveScriptError(result: {
+  readonly _tag: string;
+}): WorktreeArchiveScriptError | null {
+  if (result._tag !== "Failure") return null;
+  const error = squashAtomCommandFailure(result as never);
+  return isWorktreeArchiveScriptError(error) ? error : null;
+}
+
+/**
+ * What the teardown toast should report once the archive-script call settles.
+ *
+ * `nothing-to-do` covers a project that has no archive script, and a worktree
+ * folder that is already gone. Neither one stopped a service, so the toast
+ * leaves rather than claiming work that never happened. A server too old to
+ * report `ran` leaves it undefined, and that result still reads as a real run.
+ */
+export function archiveScriptOutcome(result: {
+  readonly _tag: string;
+  readonly value?: { readonly ran?: boolean | undefined } | undefined;
+}):
+  | { readonly kind: "failed"; readonly error: WorktreeArchiveScriptError }
+  | { readonly kind: "ran" }
+  | { readonly kind: "nothing-to-do" } {
+  const error = worktreeArchiveScriptError(result);
+  if (error) return { kind: "failed", error };
+  return result.value?.ran === false ? { kind: "nothing-to-do" } : { kind: "ran" };
+}
+
+function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
+  const output = [error.stderr, error.stdout]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  if (output === "") return "The script produced no output.";
+  return output.length > MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS
+    ? `…\n${output.slice(-MAX_ARCHIVE_SCRIPT_OUTPUT_CHARS)}`
+    : output;
+}
+
+/** One shape for the teardown toast, so archive and delete cannot drift apart. */
+function teardownStartedToast(label: string) {
+  return stackedThreadToast({
+    type: "loading",
+    title: "Stopping workspace services",
+    description: `Running the archive script for ${label}.`,
+    timeout: 0,
+  });
+}
+
+function teardownSucceededToast(label: string) {
+  return stackedThreadToast({
+    type: "success",
+    title: "Workspace services stopped",
+    description: label,
+    data: { hideCopyButton: true, dismissAfterVisibleMs: 4000 },
+  });
+}
+
+function teardownFailedToast(
+  error: WorktreeArchiveScriptError,
+  title: string,
+  actionProps?: ComponentPropsWithoutRef<"button">,
+) {
+  return stackedThreadToast({
+    type: "error",
+    title,
+    description: `${error.message}\n\n${formatArchiveScriptOutput(error)}`,
+    timeout: 0,
+    ...(actionProps ? { actionProps } : {}),
+  });
+}
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -312,6 +390,43 @@ export function useThreadActions() {
   const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
     reportFailure: false,
   });
+  const runWorktreeArchiveScript = useAtomCommand(vcsEnvironment.runWorktreeArchiveScript, {
+    reportFailure: false,
+  });
+
+  /**
+   * Teardown can take minutes (compose down, volume and image pruning), so it
+   * never blocks the thread leaving the UI. The toast is the only signal the
+   * user gets that anything is happening — without it a slow archive looks
+   * exactly like a broken one.
+   */
+  const runArchiveScriptInBackground = useCallback(
+    (input: {
+      environmentId: EnvironmentId;
+      workspaceRoot: string;
+      worktreePath: string;
+      label: string;
+    }) => {
+      const toastId = toastManager.add(teardownStartedToast(input.label));
+      void (async () => {
+        const result = await runWorktreeArchiveScript({
+          environmentId: input.environmentId,
+          input: { cwd: input.workspaceRoot, path: input.worktreePath },
+        });
+        const outcome = archiveScriptOutcome(result);
+        if (outcome.kind === "failed") {
+          toastManager.update(toastId, teardownFailedToast(outcome.error, "Archive script failed"));
+          return;
+        }
+        if (outcome.kind === "nothing-to-do") {
+          toastManager.close(toastId);
+          return;
+        }
+        toastManager.update(toastId, teardownSucceededToast(input.label));
+      })();
+    },
+    [runWorktreeArchiveScript],
+  );
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -388,6 +503,23 @@ export function useThreadActions() {
         );
       }
 
+      // Archiving retires the thread but leaves the worktree on disk, so nothing
+      // else ever stops its services. Run the project's runOnWorktreeRemove
+      // script first — but only when no OTHER live thread still uses this
+      // worktree, and treat already-archived siblings as gone.
+      const liveThreads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        if (shell === null) return [];
+        return shell.id === threadRef.threadId || shell.archivedAt === null ? [shell] : [];
+      });
+      const archivingWorktreePath = getOrphanedWorktreePathForThread(
+        liveThreads,
+        threadRef.threadId,
+      );
+      const archivingProject = readProject({
+        environmentId: threadRef.environmentId,
+        projectId: thread.projectId,
+      });
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -415,6 +547,17 @@ export function useThreadActions() {
         failureTitle: "Failed to undo archive",
       });
 
+      // AFTER the thread leaves the UI, never before: teardown is slow, and
+      // making the archive button wait on it reads as a dead button.
+      if (archivingWorktreePath && archivingProject) {
+        runArchiveScriptInBackground({
+          environmentId: threadRef.environmentId,
+          workspaceRoot: archivingProject.workspaceRoot,
+          worktreePath: archivingWorktreePath,
+          label: thread.title ?? formatWorktreePathForDisplay(archivingWorktreePath),
+        });
+      }
+
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
           handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -432,6 +575,7 @@ export function useThreadActions() {
       getCurrentRouteThreadRef,
       markThreadVisited,
       resolveThreadTarget,
+      runArchiveScriptInBackground,
       unarchiveThread,
     ],
   );
@@ -577,6 +721,11 @@ export function useThreadActions() {
         return deleteResult;
       }
 
+      // The thread is already gone from the UI by here, and the server runs the
+      // project's runOnWorktreeRemove script before it touches the worktree, so
+      // this can take minutes. Report progress rather than appearing to hang.
+      const removeLabel = displayWorktreePath ?? orphanedWorktreePath;
+      const removeToastId = toastManager.add(teardownStartedToast(removeLabel));
       const removeResult = readEnvironmentScope(
         threadRef.environmentId,
         AuthSourceControlWriteScope,
@@ -597,6 +746,42 @@ export function useThreadActions() {
               }),
             ),
           );
+
+      // A failed script means the server deliberately left the worktree behind.
+      // Offer the override as a toast action instead of a modal: the thread has
+      // already disappeared, so a blocking dialog arrives out of nowhere.
+      const archiveScriptError = worktreeArchiveScriptError(removeResult);
+      if (archiveScriptError) {
+        toastManager.update(
+          removeToastId,
+          teardownFailedToast(archiveScriptError, "Archive script failed — worktree kept", {
+            children: "Delete worktree anyway",
+            onClick: () => {
+              void (async () => {
+                toastManager.close(removeToastId);
+                const forced = await removeWorktree({
+                  environmentId: threadRef.environmentId,
+                  input: {
+                    cwd: threadProject.workspaceRoot,
+                    path: orphanedWorktreePath,
+                    force: true,
+                    skipArchiveScript: true,
+                  },
+                });
+                if (forced._tag === "Success") {
+                  await refreshVcsStatus({
+                    environmentId: threadRef.environmentId,
+                    input: { cwd: threadProject.workspaceRoot },
+                  });
+                }
+              })();
+            },
+          }),
+        );
+        return removeResult;
+      }
+      toastManager.update(removeToastId, teardownSucceededToast(removeLabel));
+
       const refreshResult =
         removeResult._tag === "Success"
           ? await refreshVcsStatus({

@@ -1072,6 +1072,12 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    // Keep closed-window history available between popover mounts.
+    subscriptionUsageHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:subscription-usage-history",
+      tag: WS_METHODS.serverGetSubscriptionUsageHistory,
+      idleTtlMs: 60 * 60_000,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

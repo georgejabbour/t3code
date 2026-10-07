@@ -133,6 +133,9 @@ import {
   GitPullRequestRefInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
+  VcsRunWorktreeArchiveScriptInput,
+  VcsRunWorktreeArchiveScriptResult,
+  WorktreeArchiveScriptError,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   VcsStatusInput,
@@ -303,6 +306,7 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import { SubscriptionUsageHistory } from "./subscriptionUsage.ts";
 import {
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
@@ -412,6 +416,7 @@ export const WS_METHODS = {
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsRunWorktreeArchiveScript: "vcs.runWorktreeArchiveScript",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -468,6 +473,7 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverGetSubscriptionUsageHistory: "server.getSubscriptionUsageHistory",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -733,6 +739,15 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
+
+const WsServerGetSubscriptionUsageHistoryRpc = Rpc.make(
+  WS_METHODS.serverGetSubscriptionUsageHistory,
+  {
+    payload: Schema.Struct({}),
+    success: SubscriptionUsageHistory,
+    error: Schema.Union([EnvironmentAuthorizationError]),
+  },
+);
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
@@ -1345,9 +1360,15 @@ const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsRunWorktreeArchiveScriptRpc = Rpc.make(WS_METHODS.vcsRunWorktreeArchiveScript, {
+  payload: VcsRunWorktreeArchiveScriptInput,
+  success: VcsRunWorktreeArchiveScriptResult,
+  error: Schema.Union([EnvironmentAuthorizationError, WorktreeArchiveScriptError]),
+});
+
 const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
   payload: VcsRemoveWorktreeInput,
-  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError, WorktreeArchiveScriptError]),
 });
 
 const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
@@ -1828,6 +1849,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerGetSubscriptionUsageHistoryRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
@@ -1932,6 +1954,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
+  WsVcsRunWorktreeArchiveScriptRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,

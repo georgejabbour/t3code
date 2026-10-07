@@ -1108,6 +1108,7 @@ export interface BranchNamingOptions {
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+export const DEFAULT_PROVIDER_SESSION_IDLE_TIMEOUT = Duration.minutes(30);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -1421,6 +1422,37 @@ export const ServerSettings = Schema.Struct({
   worktreeSubmodules: ForwardCompatibleNullable(WorktreeSubmodules).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Delete idle archived conversations once a day. Worktree removal follows
+   * the separate cleanup rules and their safety checks. Off by default:
+   * deleting a conversation cannot be undone.
+   */
+  deleteArchivedThreadsNightly: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
+   * How long a provider session may sit idle before the server stops its agent
+   * process. Zero means never stop one.
+   *
+   * Stopping a session is not free: the next message restarts the agent from
+   * its transcript, not from the live process, so anything the old process was
+   * still doing is lost. Raise this when long background runs matter more than
+   * the memory an idle agent holds.
+   */
+  providerSessionIdleTimeout: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_SESSION_IDLE_TIMEOUT)),
+    ),
+  ),
+  /**
+   * The subscription new threads use, named by its provider instance. Either
+   * a claude.ai plan or a ChatGPT plan; the instance decides which.
+   *
+   * Empty means no choice has been made, and a new thread falls back to the
+   * order it used before this setting existed. Nothing routes automatically:
+   * the subscription changes when a person changes it in the selector.
+   */
+  activeSubscriptionInstanceId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1751,6 +1783,9 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
+  deleteArchivedThreadsNightly: Schema.optionalKey(Schema.Boolean),
+  activeSubscriptionInstanceId: Schema.optionalKey(TrimmedString),
+  providerSessionIdleTimeout: Schema.optionalKey(Schema.DurationFromMillis),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

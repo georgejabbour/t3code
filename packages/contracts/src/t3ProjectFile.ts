@@ -13,17 +13,41 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+const T3_PROJECT_FILE_BRANCH_PREFIX_MAX_LENGTH = 64;
+
+/**
+ * Slash-separated segments, each starting with a letter or digit and holding
+ * only letters, digits, `_` and `-`. This accepts `george` and `team/george`,
+ * and rejects the shapes git refuses in a ref name: a leading or trailing
+ * slash, an empty segment, `..`, and whitespace.
+ */
+const T3_PROJECT_FILE_BRANCH_PREFIX_PATTERN = /^[A-Za-z0-9][\w-]*(?:\/[A-Za-z0-9][\w-]*)*$/;
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
-const trimmedNonEmpty = (annotations: { readonly description: string }, maxLength?: number) => {
-  const annotated = Schema.String.annotate(annotations);
-  const encoded =
-    maxLength === undefined
-      ? annotated.check(Schema.isNonEmpty())
-      : annotated.check(Schema.isNonEmpty(), Schema.isMaxLength(maxLength));
+const trimmedNonEmpty = (
+  annotations: { readonly description: string },
+  maxLength?: number,
+  pattern?: RegExp,
+) => {
+  let encoded = Schema.String.annotate(annotations).check(Schema.isNonEmpty());
+  if (maxLength !== undefined) {
+    encoded = encoded.check(Schema.isMaxLength(maxLength));
+  }
+  if (pattern !== undefined) {
+    encoded = encoded.check(Schema.isPattern(pattern));
+  }
   return encoded.pipe(Schema.decodeTo(encoded, SchemaTransformation.trim()));
 };
+
+export const T3ProjectFileBranchPrefix = trimmedNonEmpty(
+  {
+    description:
+      'Prefix for temporary branches and static generated names. Overrides the project naming prefix. For example "george" produces "george/fix-login". Preserves case. Defaults to the project naming prefix.',
+  },
+  T3_PROJECT_FILE_BRANCH_PREFIX_MAX_LENGTH,
+  T3_PROJECT_FILE_BRANCH_PREFIX_PATTERN,
+);
 
 export const T3ProjectFileScript = Schema.Struct({
   name: trimmedNonEmpty({
@@ -53,6 +77,12 @@ export const T3ProjectFileScript = Schema.Struct({
     Schema.Boolean.annotate({
       description:
         "Only for runOnWorktreeCreate scripts. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
+    }),
+  ),
+  runOnWorktreeRemove: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, the script runs to completion before a worktree is removed, and a non-zero exit cancels the removal.",
     }),
   ),
   previewUrl: Schema.optionalKey(
@@ -99,6 +129,7 @@ export const T3ProjectFile = Schema.Struct({
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
     }),
   ),
+  branchPrefix: Schema.optionalKey(T3ProjectFileBranchPrefix),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

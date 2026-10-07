@@ -43,6 +43,8 @@ import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/ProviderEventLoggers.ts";
+import { ArchivedThreadReaperLive } from "./orchestration/Layers/ArchivedThreadReaper.ts";
+import * as ArchivedThreadReaper from "./orchestration/Services/ArchivedThreadReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./provider/OpenCodeServerLedger.ts";
 import * as AcpRegistryCatalog from "./provider/AcpRegistryCatalog.ts";
@@ -86,6 +88,7 @@ import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIng
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as SubscriptionUsageHistoryStore from "./provider/SubscriptionUsageHistoryStore.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -104,6 +107,9 @@ import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as WorktreeBranchDrift from "./orchestration-v2/WorktreeBranchDrift.ts";
+import * as WorktreeArchiveScriptRunner from "./project/WorktreeArchiveScriptRunner.ts";
+import * as WorktreeRemoval from "./project/WorktreeRemoval.ts";
 import * as Observability from "./observability/Observability.ts";
 import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
@@ -430,6 +436,12 @@ const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const layerWorktreeArchiveScriptRunner = WorktreeArchiveScriptRunner.layer.pipe(
+  Layer.provide(RuntimeLayer.layerProjectService),
+  Layer.provide(T3ProjectFileLoader.layer),
+  Layer.provide(ProcessRunner.layer),
+);
+
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   layerRelayClient,
   CloudManagedEndpointRuntime.layer.pipe(
@@ -531,6 +543,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  WorktreeBranchDrift.layer,
+  Layer.effectDiscard(
+    Effect.flatMap(ArchivedThreadReaper.ArchivedThreadReaper, (service) => service.start()),
+  ).pipe(Layer.provide(ArchivedThreadReaperLive)),
   layerThreadSettlementWorker,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
@@ -616,9 +632,17 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layer))),
+  Layer.provideMerge(WorktreeRemoval.layer),
+  Layer.provideMerge(layerWorktreeArchiveScriptRunner),
   Layer.provideMerge(layerWorkspace),
   Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      NativeAppIconResolver.layer,
+      layerProjectFaviconResolver,
+      SubscriptionUsageHistoryStore.layer,
+    ),
+  ),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),

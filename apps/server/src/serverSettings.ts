@@ -296,8 +296,12 @@ export class ServerSettingsService extends Context.Service<
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
-    const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
-      overrides;
+    const {
+      automaticGitFetchInterval,
+      providerHealthRefreshInterval,
+      providerSessionIdleTimeout,
+      ...overridesForMerge
+    } = overrides;
     const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
     const initialSettings = yield* normalizeServerSettings({
       ...merged,
@@ -306,6 +310,11 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
       ...(providerHealthRefreshInterval !== undefined
         ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
+        : {}),
+      // Durations are opaque objects, so a deep merge would tear them apart.
+      // Pass them through whole, the way the two intervals above already do.
+      ...(providerSessionIdleTimeout !== undefined
+        ? { providerSessionIdleTimeout: providerSessionIdleTimeout as Duration.Duration }
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
@@ -487,11 +496,11 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   };
 }
 
-// Values under these keys are compared as a whole — never stripped field-by-field.
+// Plain records under these keys are compared as a whole — never stripped
+// field-by-field. A value built from a class needs no entry here: `isPlainRecord`
+// below already holds every one of those together.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
-  "automaticGitFetchInterval",
-  "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
@@ -508,6 +517,22 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
   },
 };
 
+/**
+ * Answer whether a value is an object literal, and so safe to take apart key by
+ * key.
+ *
+ * A `Duration` is not one. It is built from a class, and its one own key holds
+ * private parts. Copying those keys into a new object literal produces a value
+ * the settings schema rejects with "Expected Duration". The whole settings file
+ * is written at once, so that one field then blocks every settings write, and
+ * the user sees a toggle that does nothing. This guard keeps such a value whole
+ * and compares it with `Equal.equals` instead.
+ */
+function isPlainRecord(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
     return Equal.equals(current, defaults) ? undefined : current;
@@ -519,6 +544,10 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
     typeof current === "object" &&
     typeof defaults === "object"
   ) {
+    if (!isPlainRecord(current) || !isPlainRecord(defaults)) {
+      return Equal.equals(current, defaults) ? undefined : current;
+    }
+
     const currentRecord = current as Record<string, unknown>;
     const defaultsRecord = defaults as Record<string, unknown>;
     const next: Record<string, unknown> = {};
@@ -1215,37 +1244,49 @@ const make = Effect.gen(function* () {
   const updateAndPersistSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    writeSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const current = yield* getSettingsFromCache;
-        const updated = yield* update(current);
-        const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
-        const next = yield* normalizeServerSettings(persisted.settings);
-        const materialized = yield* Effect.uninterruptibleMask(() =>
-          Effect.gen(function* () {
-            const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
-              persisted.changes,
-            );
-            const materializedExit = yield* Effect.exit(
-              materializeProviderEnvironmentSecrets(next),
-            );
-            if (Exit.isFailure(materializedExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(materializedExit.cause);
-            }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
-            if (Exit.isFailure(writeExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(writeExit.cause);
-            }
-            return materializedExit.value;
+    writeSemaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache;
+          const updated = yield* update(current);
+          const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
+          const next = yield* normalizeServerSettings(persisted.settings);
+          const materialized = yield* Effect.uninterruptibleMask(() =>
+            Effect.gen(function* () {
+              const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
+                persisted.changes,
+              );
+              const materializedExit = yield* Effect.exit(
+                materializeProviderEnvironmentSecrets(next),
+              );
+              if (Exit.isFailure(materializedExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(materializedExit.cause);
+              }
+              const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+              if (Exit.isFailure(writeExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(writeExit.cause);
+              }
+              return materializedExit.value;
+            }),
+          );
+          yield* Cache.set(settingsCache, cacheKey, next);
+          yield* emitChange(next);
+          return resolveTextGenerationProvider(materialized);
+        }),
+      )
+      .pipe(
+        Effect.tapError((error: ServerSettingsError) =>
+          Effect.logError("failed to update settings, no setting was saved", {
+            path: error.settingsPath,
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
+            cause: error.cause,
           }),
-        );
-        yield* Cache.set(settingsCache, cacheKey, next);
-        yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
-      }),
-    );
+        ),
+      );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(

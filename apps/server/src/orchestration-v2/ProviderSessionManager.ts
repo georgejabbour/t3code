@@ -423,7 +423,19 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
-      const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      const readIdleTimeoutMs = Effect.gen(function* () {
+        if (options.idleTimeoutMs !== undefined) return Math.max(0, options.idleTimeoutMs);
+        if (Option.isNone(serverSettings)) return DEFAULT_IDLE_TIMEOUT_MS;
+        return yield* serverSettings.value.getSettings.pipe(
+          Effect.map((settings) => Duration.toMillis(settings.providerSessionIdleTimeout)),
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not read the provider idle timeout.", { cause }).pipe(
+              Effect.as(DEFAULT_IDLE_TIMEOUT_MS),
+            ),
+          ),
+        );
+      });
+      const idleSettingsCheckIntervalMs = 5 * 60 * 1000;
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
@@ -1061,6 +1073,19 @@ export const layerWithOptions = (
           ) {
             return;
           }
+          const idleTimeoutMs = yield* readIdleTimeoutMs;
+          const now = yield* Clock.currentTimeMillis;
+          const remainingMs = idleTimeoutMs - (now - entry.lastActivityAtMs);
+          if (idleTimeoutMs <= 0 || remainingMs > 0) {
+            yield* Effect.sleep(
+              Duration.millis(
+                idleTimeoutMs <= 0
+                  ? idleSettingsCheckIntervalMs
+                  : Math.min(remainingMs, idleSettingsCheckIntervalMs),
+              ),
+            );
+            return yield* releaseIfStillIdle(input);
+          }
           // Capture runtime identity before yielding: a replacement session
           // can reuse the same providerSessionId while this fiber is parked.
           const probedRuntime = entry.runtime;
@@ -1070,6 +1095,20 @@ export const layerWithOptions = (
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
+          // Provider checks can wait while the user changes the timeout.
+          const latestIdleTimeoutMs = yield* readIdleTimeoutMs;
+          const checkedAt = yield* Clock.currentTimeMillis;
+          const latestRemainingMs = latestIdleTimeoutMs - (checkedAt - entry.lastActivityAtMs);
+          if (latestIdleTimeoutMs <= 0 || latestRemainingMs > 0) {
+            yield* Effect.sleep(
+              Duration.millis(
+                latestIdleTimeoutMs <= 0
+                  ? idleSettingsCheckIntervalMs
+                  : Math.min(latestRemainingMs, idleSettingsCheckIntervalMs),
+              ),
+            );
+            return yield* releaseIfStillIdle(input);
+          }
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
@@ -1100,7 +1139,9 @@ export const layerWithOptions = (
               // Re-check on this fiber after another idle window. Do not call
               // scheduleIdleReleaseInternal: that cancels entry.idleFiber, which
               // is this fiber, and can self-deadlock on Fiber.interrupt.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+              yield* Effect.sleep(
+                Duration.millis(Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs)),
+              );
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
@@ -1153,7 +1194,14 @@ export const layerWithOptions = (
 
           yield* cancelIdleFiber(entry.idleFiber);
           const generation = entry.idleGeneration + 1;
-          const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+          const idleTimeoutMs = yield* readIdleTimeoutMs;
+          const idleFiber = yield* Effect.sleep(
+            Duration.millis(
+              idleTimeoutMs <= 0
+                ? idleSettingsCheckIntervalMs
+                : Math.min(idleTimeoutMs, idleSettingsCheckIntervalMs),
+            ),
+          ).pipe(
             Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
             Effect.forkIn(layerScope),
           );
@@ -2025,7 +2073,17 @@ export const layerWithOptions = (
               if (cwd !== null) {
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
-                  Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+                  Effect.catch((cause) =>
+                    cause.reason._tag === "NotFound"
+                      ? Effect.succeed(false)
+                      : Effect.fail(
+                          new ProviderSessionOpenError({
+                            instanceId: input.modelSelection.instanceId,
+                            providerSessionId: input.providerSessionId,
+                            cause,
+                          }),
+                        ),
+                  ),
                 );
                 if (!workspaceIsDirectory) {
                   return yield* new ProviderWorkspaceMissingError({

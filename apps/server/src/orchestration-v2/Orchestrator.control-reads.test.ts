@@ -624,3 +624,214 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect.each(["reopened", "queued", "idle"] as const)(
+  "scheduled deletion rechecks the archive state for %s threads",
+  (state) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`thread:scheduled-delete:${state}`);
+      const dispatch = orchestrator.dispatch;
+      yield* dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${state}`),
+        threadId,
+        projectId: ProjectId.make("project:scheduled-delete"),
+        title: "Archived conversation",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature",
+        worktreePath: "/managed/feature",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      if (state === "queued") {
+        yield* dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`queue:${state}`),
+          threadId,
+          messageId: MessageId.make(`message:${state}`),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      yield* dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`archive:${state}`),
+        threadId,
+      });
+      const expectedArchivedAt = (yield* projections.getThread(threadId)).archivedAt!;
+      if (state === "reopened") {
+        yield* dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make(`reopen:${state}`),
+          threadId,
+        });
+      }
+      const result = yield* dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`sweep:${state}`),
+        threadId,
+        expectedArchivedAt,
+      }).pipe(Effect.result);
+      assert.equal(result._tag, state === "idle" ? "Success" : "Failure");
+      const thread = yield* projections.getThread(threadId);
+      if (state === "idle") assert.isNotNull(thread.deletedAt);
+      else assert.isNull(thread.deletedAt);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["background", "watch"] as const)(
+  "scheduled deletion preserves %s work that arrives after the archive snapshot",
+  (work) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`thread:archive-race:${work}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:archive-race:${work}`),
+        threadId,
+        projectId: ProjectId.make("project:archive-race"),
+        title: "Archived conversation",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature",
+        worktreePath: "/managed/feature",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const now = yield* DateTime.now;
+      const runId = RunId.make(`run:archive-race:${work}`);
+      yield* projections.apply({
+        id: EventId.make(`run:archive-race:${work}`),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:archive-race:${work}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`archive:race:${work}`),
+        threadId,
+      });
+      const snapshot = yield* orchestrator.getShellSnapshot({ location: "archive" });
+      const archived = snapshot.archivedThreads.find((thread) => thread.id === threadId)!;
+      assert.isEmpty(archived.pendingBackgroundTasks ?? []);
+      const item = {
+        id: TurnItemId.make(`item:archive-race:${work}`),
+        threadId,
+        runId,
+        nodeId: NodeId.make(`node:archive-race:${work}`),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running" as const,
+        title: "Background command",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution" as const,
+        input: "npm run dev",
+      };
+      if (work === "background") {
+        yield* projections.apply({
+          id: EventId.make("late-background"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: item,
+        });
+      } else {
+        const thread = yield* projections.getThread(threadId);
+        const iso = DateTime.formatIso(now);
+        yield* projections.apply({
+          id: EventId.make("late-watch"),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            pullRequests: [
+              {
+                host: "github.com",
+                repository: "pingdotgg/t3code",
+                number: 7,
+                url: "https://github.com/pingdotgg/t3code/pull/7",
+                source: "agent",
+                linkedAt: iso,
+                snapshot: null,
+                stack: null,
+                watch: {
+                  startedAt: iso,
+                  headSha: null,
+                  failedChecks: [],
+                  passed: false,
+                  passedChecks: [],
+                  remarksThrough: iso,
+                  remarkIds: [],
+                  conflicting: false,
+                  wakes: 0,
+                },
+              },
+            ],
+          },
+        });
+      }
+      const guarded = {
+        type: "thread.delete" as const,
+        commandId: CommandId.make(`delete:race:${work}`),
+        threadId,
+        expectedArchivedAt: archived.archivedAt!,
+      };
+      const result = yield* orchestrator.dispatch(guarded).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.isNull((yield* projections.getThread(threadId)).deletedAt);
+      if (work === "background") {
+        yield* projections.apply({
+          id: EventId.make("background-ended"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: { ...item, status: "completed", completedAt: now },
+        });
+        yield* orchestrator.dispatch({
+          ...guarded,
+          commandId: CommandId.make("delete:race:completed"),
+        });
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("delete:race:manual"),
+          threadId,
+        });
+      }
+      assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
+    }).pipe(Effect.provide(layerTest)),
+);

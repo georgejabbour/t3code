@@ -1,6 +1,8 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { resolveProjectScripts, setupProjectScript } from "@t3tools/shared/projectScripts";
+import { WorktreeRemoval } from "../project/WorktreeRemoval.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -32,12 +34,13 @@ import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
-  WORKTREE_BRANCH_PREFIX,
+  resolveBranchNamingOptions,
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -176,8 +179,10 @@ const make = Effect.gen(function* () {
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
+  const worktreeRemoval = yield* WorktreeRemoval;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -245,9 +250,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    const namingWorkspace =
+      input.workspaceStrategy.type === "existing_worktree"
+        ? input.workspaceStrategy.worktreePath
+        : project.workspaceRoot;
+    const projectFile = yield* projectFileLoader.load(namingWorkspace);
+    const branchPrefix = resolveBranchNamingOptions(
+      resolveProjectSettings(yield* serverSettings.getSettings, input.projectId).settings,
+      Option.isSome(projectFile) ? projectFile.value.branchPrefix : undefined,
+    ).prefix;
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
+    let createdWorktreeBranch: string | null = null;
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     if (input.workspaceStrategy.type === "worktree") {
@@ -275,6 +290,11 @@ const make = Effect.gen(function* () {
             yield* serverSettings.getSettings,
             input.projectId,
           ).settings;
+          const file = yield* projectFileLoader.load(cwd);
+          const naming = resolveBranchNamingOptions(
+            settings,
+            Option.isSome(file) ? file.value.branchPrefix : undefined,
+          );
           const modelSelection =
             settings.sourceControlWriterModelSelection === null
               ? settings.textGenerationModelSelection
@@ -284,11 +304,7 @@ const make = Effect.gen(function* () {
                 );
           return yield* textGeneration
             .generateBranchName({
-              naming: {
-                mode: settings.branchNamingMode,
-                prefix: settings.branchNamePrefix,
-                instructions: settings.branchNameInstructions,
-              },
+              naming,
               cwd,
               message: message.text,
               attachments: message.attachments,
@@ -304,13 +320,13 @@ const make = Effect.gen(function* () {
         });
 
       // The server owns worktree naming: without an explicit branch, provision
-      // under a temporary `t3/<hash>` name so the worktree never waits on
+      // under a temporary `<prefix>/<hash>` name so the worktree never waits on
       // name generation, then rename in the background below.
       const requestedBranch = input.workspaceStrategy.branch;
       let branch: string | null;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
         const uuid = yield* randomUuidV4;
-        branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+        branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""), branchPrefix);
       } else {
         branch = requestedBranch ?? null;
       }
@@ -368,19 +384,23 @@ const make = Effect.gen(function* () {
           }
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (
-          branch !== null &&
-          isTemporaryWorktreeBranch(branch) &&
-          (yield* git
-            .hasCommit({
-              cwd: project.workspaceRoot,
-              refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
-            })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
-        ) {
-          branch = flattenTemporaryWorktreeBranchName(branch);
+        if (branch !== null && isTemporaryWorktreeBranch(branch, branchPrefix)) {
+          const parents = branch.split("/").slice(0, -1);
+          for (let index = 0; index < parents.length; index++) {
+            const blocked = yield* git
+              .hasCommit({
+                cwd: project.workspaceRoot,
+                refName: `refs/heads/${parents.slice(0, index + 1).join("/")}`,
+              })
+              .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+            if (blocked) {
+              branch = flattenTemporaryWorktreeBranchName(branch);
+              break;
+            }
+          }
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        createdWorktreeBranch = branch;
         const worktree = yield* git
           .createWorktree(
             {
@@ -389,6 +409,9 @@ const make = Effect.gen(function* () {
               newRefName: branch!,
               baseRefName: input.workspaceStrategy.baseRef,
               path: null,
+              ...(isTemporaryWorktreeBranch(branch!, branchPrefix)
+                ? { directoryName: `thread-${threadId}` }
+                : {}),
             },
             {
               progress: {
@@ -433,7 +456,7 @@ const make = Effect.gen(function* () {
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
-        isTemporaryWorktreeBranch(branch)
+        isTemporaryWorktreeBranch(branch, branchPrefix)
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
@@ -480,12 +503,17 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
+      const setupScript = setupProjectScript(
+        resolveProjectScripts(yield* serverSettings.getSettings, project),
+      );
+      setupTerminalId = setupScript ? `setup-${setupScript.id}` : null;
       const setup = yield* setupScripts
         .runForThread({
           threadId,
           projectId: input.projectId,
           projectCwd: project.workspaceRoot,
           worktreePath: cwd,
+          ...(setupTerminalId ? { preferredTerminalId: setupTerminalId } : {}),
           ...(tracked
             ? {
                 observeCompletion: {
@@ -569,20 +597,65 @@ const make = Effect.gen(function* () {
             cancelled ? "cancelled" : "failed",
             cancelled ? null : failureDetail(Cause.squash(cause)),
           );
-          // A cancelled setup leaves nothing behind. A failed one keeps a worktree
-          // the thread recorded, so a retry reuses it, and removes one it never
-          // recorded, which a retry would otherwise duplicate.
-          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded)) {
-            if (setupTerminalId)
-              yield* terminals
-                .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })
-                .pipe(Effect.ignore);
+          // Cleanup waits for setup exit. A failed removal keeps the saved path
+          // so a retry can find the checkout and its resources.
+          const retainWorktree = (cleanupCause: unknown) =>
+            Effect.gen(function* () {
+              const detail = `${failureDetail(Cause.squash(cause))} Cleanup failed; the worktree remains. ${failureDetail(cleanupCause)}`;
+              yield* setupTracker.finish(threadId, "failed", detail);
+              if (!workspaceRecorded && createdWorktreePath) {
+                yield* threads
+                  .dispatch({
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`${input.commandId}:retain-workspace`),
+                    threadId,
+                    worktreePath: createdWorktreePath,
+                    branch: createdWorktreeBranch,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }));
+              }
+              yield* Effect.logWarning("Worktree cleanup failed; the saved checkout remains", {
+                threadId,
+                path: createdWorktreePath,
+                cause: cleanupCause,
+              });
+            });
+          if (tracked && setupTerminalId) {
+            const stopped = yield* terminals
+              .closeAndWait({ threadId, terminalId: setupTerminalId, deleteHistory: true })
+              .pipe(
+                Effect.as(true),
+                Effect.catchCause((shutdownCause) =>
+                  retainWorktree(Cause.squash(shutdownCause)).pipe(Effect.as(false)),
+                ),
+              );
+            if (!stopped) return;
+          }
+          if (
+            tracked &&
+            createdWorktreePath &&
+            (cancelled || !workspaceRecorded || setupTerminalId !== null)
+          ) {
             const removedPath = createdWorktreePath;
             // The thread forgets the worktree only once it is gone; a failed
             // removal leaves the directory for the user to clean up rather than
             // reusing a checkout that may be half written.
-            yield* git
-              .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
+            yield* worktreeRemoval
+              .remove(
+                {
+                  cwd: project.workspaceRoot,
+                  path: removedPath,
+                  force: true,
+                  skipArchiveScript: setupTerminalId === null,
+                },
+                Effect.succeed(
+                  git.removeWorktree({
+                    cwd: project.workspaceRoot,
+                    path: removedPath,
+                    force: true,
+                  }),
+                ),
+              )
               .pipe(
                 Effect.andThen(
                   threads
@@ -595,14 +668,7 @@ const make = Effect.gen(function* () {
                     })
                     .pipe(Effect.ignore),
                 ),
-                Effect.catchCause((removeCause) =>
-                  Effect.logWarning("Failed to remove an abandoned thread worktree", {
-                    commandId: input.commandId,
-                    threadId,
-                    path: removedPath,
-                    cause: removeCause,
-                  }),
-                ),
+                Effect.catchCause((removeCause) => retainWorktree(Cause.squash(removeCause))),
               );
           }
         }),
@@ -980,4 +1046,6 @@ const make = Effect.gen(function* () {
   return ThreadLaunchService.of({ launch, retryPreparation });
 });
 
-export const layer = Layer.effect(ThreadLaunchService, make);
+export const layer = Layer.effect(ThreadLaunchService, make).pipe(
+  Layer.provide(T3ProjectFileLoader.layer),
+);

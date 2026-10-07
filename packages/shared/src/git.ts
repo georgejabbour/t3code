@@ -1,5 +1,6 @@
 import type {
   BranchNamingOptions,
+  ServerSettings,
   VcsRef,
   SourceControlProviderInfo,
   VcsStatusLocalResult,
@@ -24,6 +25,59 @@ const TEMP_WORKTREE_UUID_V4_TOKEN =
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
   `^(?:${WORKTREE_BRANCH_PREFIX}[-/]${TEMP_WORKTREE_HEX_TOKEN}|t3code(?:[-/]${TEMP_WORKTREE_HEX_TOKEN}|\\/${TEMP_WORKTREE_UUID_V4_TOKEN}))$`,
 );
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// One compiled pattern per prefix. A project supplies its prefix from `t3.json`,
+// so the number of distinct keys stays as small as the number of open projects.
+const temporaryBranchPatterns = new Map<string, RegExp>();
+
+function temporaryBranchPattern(prefix: string): RegExp {
+  const cached = temporaryBranchPatterns.get(prefix);
+  if (cached) {
+    return cached;
+  }
+  const pattern = new RegExp(
+    `^(?:${escapeRegExpLiteral(prefix)}/(?:${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})|${escapeRegExpLiteral(prefix.replaceAll("/", "-"))}-${TEMP_WORKTREE_HEX_TOKEN})$`,
+  );
+  temporaryBranchPatterns.set(prefix, pattern);
+  return pattern;
+}
+
+/** Apply the repository prefix to the native project naming options. */
+export function resolveBranchNamingOptions(
+  settings: Pick<
+    ServerSettings,
+    "branchNamingMode" | "branchNamePrefix" | "branchNameInstructions"
+  >,
+  repositoryPrefix?: string | null,
+): BranchNamingOptions {
+  return {
+    mode: settings.branchNamingMode,
+    prefix: repositoryPrefix ?? settings.branchNamePrefix,
+    instructions: settings.branchNameInstructions,
+  };
+}
+
+function sanitizeBranchPrefix(prefix: string): string {
+  return prefix
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/");
+}
+
+/** Temporary branches require a namespace, even when final names have no prefix. */
+export function resolveWorktreeBranchPrefix(configuredPrefix?: string | null): string {
+  return sanitizeBranchPrefix(configuredPrefix ?? "") || WORKTREE_BRANCH_PREFIX;
+}
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -52,16 +106,7 @@ export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOpti
   if (naming?.mode === "custom") return raw.trim();
   const branch = sanitizeBranchFragment(raw);
   if (naming?.mode !== "static") return branch;
-  const prefix = naming.prefix
-    .split("/")
-    .map((part) =>
-      part
-        .replace(/[^a-zA-Z0-9_-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-+|-+$/g, ""),
-    )
-    .filter(Boolean)
-    .join("/");
+  const prefix = sanitizeBranchPrefix(naming.prefix);
   return prefix ? `${prefix}/${branch}` : branch;
 }
 
@@ -118,6 +163,7 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
+  configuredPrefix?: string | null,
 ): string {
   // Normalize to exactly 8 lowercase hex chars so a UUID-shaped callback
   // still produces the canonical temporary branch form.
@@ -125,23 +171,29 @@ export function buildTemporaryWorktreeBranchName(
     .toLowerCase()
     .replace(/[^0-9a-f]/g, "")
     .slice(0, 8);
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${resolveWorktreeBranchPrefix(configuredPrefix)}/${token}`;
 }
 
-/**
- * Git stores refs as paths, so a plain `t3` branch makes every `t3/<hex>`
- * ref impossible. This moves a temporary name to the flat `t3-<hex>` sibling.
- */
+/** Flatten a temporary namespace when a branch blocks one of its parent paths. */
 export function flattenTemporaryWorktreeBranchName(refName: string): string {
-  // Keep only the canonical 8-hex token so legacy `t3code/` and UUID names map cleanly.
-  const normalized = refName.trim().toLowerCase();
-  const tokenStart = normalized.search(/[-/]/) + 1;
-  const token = normalized.slice(tokenStart, tokenStart + 8);
-  return `${WORKTREE_BRANCH_PREFIX}-${token}`;
+  const match = new RegExp(
+    `^(.+?)[/-](${TEMP_WORKTREE_HEX_TOKEN}|${TEMP_WORKTREE_UUID_V4_TOKEN})$`,
+    "i",
+  ).exec(refName.trim());
+  if (!match) return refName;
+  const prefix = match[1]!.toLowerCase() === "t3code" ? WORKTREE_BRANCH_PREFIX : match[1]!;
+  return `${prefix.replaceAll("/", "-")}-${match[2]!.slice(0, 8).toLowerCase()}`;
 }
 
-export function isTemporaryWorktreeBranch(refName: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
+/** Recognize configured placeholders and native placeholders from earlier clients. */
+export function isTemporaryWorktreeBranch(
+  refName: string,
+  configuredPrefix?: string | null,
+): boolean {
+  const normalized = refName.trim().toLowerCase();
+  if (TEMP_WORKTREE_BRANCH_PATTERN.test(normalized)) return true;
+  const prefix = resolveWorktreeBranchPrefix(configuredPrefix).toLowerCase();
+  return prefix !== WORKTREE_BRANCH_PREFIX && temporaryBranchPattern(prefix).test(normalized);
 }
 
 /**

@@ -26,6 +26,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
  * behaviour rather than the runtime details of each provider.
  */
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -64,6 +66,11 @@ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
 
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -150,7 +157,15 @@ const makeTildeProviderFixtures = Effect.fn(
 )(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const homePath = expandHomePath("~");
+  const previousHome = NodeOS.homedir();
+  const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-provider-home-" });
+  vi.mocked(NodeOS.homedir).mockReturnValue(homePath);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      vi.mocked(NodeOS.homedir).mockReturnValue(previousHome);
+    }),
+  );
+  expect(expandHomePath("~")).toBe(homePath);
   const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
     directory: homePath,
     prefix: ".t3-provider-path-test-",
