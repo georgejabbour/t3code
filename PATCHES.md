@@ -81,7 +81,8 @@ Clipboard copying uses the native helper and Connections settings controls.
 The fork's iOS selection handling, page selection restoration, failure retry, and support helper are removed.
 Native plain HTTP copying, focus restoration, and rich clipboard formats remain.
 
-The remaining client preferences include additional fonts.
+The fork retains eight bundled iA Writer Duo and Quattro font files, picker suggestions, and license registration.
+Font settings recognize their installed names and reject them for code and terminal use because their character widths vary.
 Upstream already supplies workspace command discovery and project naming settings.
 Checked-in branch prefixes feed the native project naming policy.
 The server owns temporary naming, including mobile requests and namespace collision checks.

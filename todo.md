@@ -1,6 +1,6 @@
 # Fork consolidation TODO
 
-Assessment date: 2026-10-06. Two tasks remain after adoption of the October 6 nightly.
+Assessment date: 2026-10-06. One task remains after adoption of the October 6 nightly.
 This file tracks pending work. Task numbers remain unchanged for reference.
 “Keep” tasks retain and verify a feature; they do not require a rewrite.
 
@@ -21,24 +21,6 @@ Recheck current source in `t3/assess-fork-patches-against-nightly` before each c
 
 Browser and device checks require George's explicit authorization.
 Follow repository limits on checks and protect live T3 data.
-
-## Task 21: Retain the bundled fonts as one appearance change
-
-- [ ] Complete implementation and focused verification.
-
-**Decision:** Keep. **Original patch:** Additional.
-
-**Reason:** Keep if these fonts remain a fork preference.
-
-**Change:** The maintained remote adds eight font files, fallback suggestions, and license configuration. Upstream does not provide this bundle. Keep them as one independent appearance change. They do not depend on the server patches.
-
-**Completion check:** Focused font checks cover availability, fallback suggestions, monospace restrictions, and license registration. Keep all eight required files.
-
-**References:** [Fork font registration](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/apps/web/src/appearanceFonts.ts#L28); [Font license entry](https://github.com/georgejabbour/t3code/blob/20d0dbcbc52e82bce0fb15fd2e4dac0ef0235618/third-party-licenses.config.json#L111).
-
-**Result:** Pending.
-
-**Current reassessment:** All eight iA Writer Duo and Quattro font files remain present, with registration and license configuration. The bundle remains a fork preference. Keep it as one independent appearance change; verify availability and monospace rules when editing it.
 
 ## Task 22: Revalidate build workarounds against the current toolchain
 
