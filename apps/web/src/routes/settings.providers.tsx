@@ -39,8 +39,7 @@ export const Route = createFileRoute("/settings/providers")({
     ...(typeof raw.instanceId === "string" && raw.instanceId.trim()
       ? { instanceId: ProviderInstanceId.make(raw.instanceId) }
       : {}),
-    // Added by this fork. `?add=1` opens the add-provider dialog.
-    // The subscription panel link uses this value. See PATCHES.md.
+    // The subscription panel uses `?add=1` to open the add-provider dialog.
     ...(raw.add === true || raw.add === "true" || raw.add === "1" ? { add: true as const } : {}),
   }),
   component: SettingsProvidersRoute,

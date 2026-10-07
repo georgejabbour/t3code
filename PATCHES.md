@@ -2,12 +2,9 @@
 
 This ledger compares the fork with `fd1c3386c4d60f3477ab3f13c87537848de099f5`.
 That commit supplies `v0.0.46-nightly.20261006.2735`.
-The assessment worktree includes the maintained remote fork, four replayed changes, and the October 6 nightly integration.
 
 Retain each difference only while it supplies required behavior that upstream lacks.
 Remove a duplicate when focused behavior checks prove that upstream supplies the same behavior.
-The external updater and its marker requirements remain unverified.
-Use repository checks for behavior; marker strings alone cannot prove correctness.
 
 ## Cleanup and recovery
 
@@ -105,6 +102,6 @@ The existing Git error path retains a generic pre-push-hook hint without exposin
 Native structured Git failure classification remains.
 
 The adopted toolchain uses Effect 4.0.1 and Vite+ 1.0.0.
-The remaining web build and asset changes need separate assessment.
+Web build configuration, HEIC decoder loading, and repository test scheduling use the adopted nightly code.
+The fork's compiler filter, raw decoder URL, warning suppressions, and sequential test override are removed.
 Old Vite watcher patch and closed-folder marker requirements no longer describe repository changes.
-Unresolved maintenance records remain in `.papercuts`; remove a record only when its cause has a proven fix.

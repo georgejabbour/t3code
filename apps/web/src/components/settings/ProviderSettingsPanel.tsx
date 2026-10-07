@@ -1153,7 +1153,6 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      {/* Added by this fork. See the subscription selector in PATCHES.md. */}
       <OpenAddProviderDialogFromSearch onOpen={setIsAddInstanceDialogOpen} />
       <SettingsSection title="Subscriptions">
         <SubscriptionSelectorPanel

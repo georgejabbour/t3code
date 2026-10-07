@@ -6,7 +6,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
-import { defineConfig, type Connect, type Plugin } from "vite";
+import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 import {
@@ -176,7 +176,10 @@ export default defineConfig(() => {
       tanstackRouter({ autoCodeSplitting: true }),
       react(),
       babel({
-        include: /apps[\\/]web[\\/]src[\\/].*\.[jt]sx?(?:$|\?)/,
+        // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
+        // This is because the babel plugin only automatically parses typescript and jsx based on relative paths (e.g. "**/*.ts")
+        // whereas the previous version of the plugin parsed all files with a .ts extension.
+        // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
         parserOpts: { plugins: ["typescript", "jsx"] },
         presets: [reactCompilerPreset()],
       }),
@@ -282,16 +285,6 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
-      // Route splitting keeps optional screens out of the startup path. The
-      // remaining large files hold shared app code and on-demand syntax data.
-      chunkSizeWarningLimit: 1_700,
-      rolldownOptions: {
-        checks: {
-          // The React compiler processes each client module by design. Its
-          // work dominates this build after the client-only filter above.
-          pluginTimings: false,
-        },
-      },
     },
     test: {
       projects: [defineProject(unitTestProject)],

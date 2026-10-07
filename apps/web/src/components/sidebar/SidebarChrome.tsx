@@ -230,7 +230,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          {/* Added by this fork. See the subscription selector in PATCHES.md. */}
           <SubscriptionSidebarButton />
         </>
       )}
