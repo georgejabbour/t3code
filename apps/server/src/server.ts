@@ -521,8 +521,10 @@ const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));
 
-const layerThreadPullRequestWorker = Layer.effectDiscard(
-  ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
+const layerThreadPullRequestWorker = Layer.effect(
+  ThreadPullRequestService.ThreadPullRequestServiceV2,
+  // Start the worker and retain the same service for authenticated WebSocket handlers.
+  ThreadPullRequestService.make.pipe(Effect.tap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
 const layerProviderInstallationRefresh = Layer.effectDiscard(
@@ -597,6 +599,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
+  // History subscribes to ProviderRegistry during construction, so it must share this core group.
+  SubscriptionUsageHistoryStore.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   // Catches overrides left behind by a project deleted before this cleanup
@@ -675,13 +679,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerWorktreeArchiveScriptRunner),
   Layer.provideMerge(layerWorkspace),
   Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      NativeAppIconResolver.layer,
-      layerProjectFaviconResolver,
-      SubscriptionUsageHistoryStore.layer,
-    ),
-  ),
+  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
@@ -697,7 +695,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+export const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // Misc.
   // Usage reads provider history through the ProviderHost, which needs the
   // background policy below it.
