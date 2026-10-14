@@ -44,7 +44,7 @@ export const layer = Layer.effectDiscard(
               Option.isSome(file) ? file.value.branchPrefix : undefined,
             );
             if (isTemporaryWorktreeBranch(branch, naming.prefix)) return;
-            const uuid = yield* crypto.randomUUIDv4;
+            const uuid = yield* crypto.randomUUIDv4();
             yield* orchestrator.dispatch({
               type: "thread.metadata.update",
               commandId: CommandId.make(`server:worktree-branch-drift:${uuid}`),

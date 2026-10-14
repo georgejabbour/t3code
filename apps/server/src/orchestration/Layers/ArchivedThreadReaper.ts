@@ -45,9 +45,9 @@ const makeArchivedThreadReaper = (options?: ArchivedThreadReaperLiveOptions) =>
     const sweepPeriodMs = Duration.toMillis(options?.sweepPeriod ?? DEFAULT_SWEEP_PERIOD);
     const lastSweptAt = yield* Ref.make<number | null>(null);
 
-    const commandId = crypto.randomUUIDv4.pipe(
-      Effect.map((uuid) => CommandId.make(`server:archived-thread-reaper:${uuid}`)),
-    );
+    const commandId = crypto
+      .randomUUIDv4()
+      .pipe(Effect.map((uuid) => CommandId.make(`server:archived-thread-reaper:${uuid}`)));
 
     const sweep = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings;
