@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { WorktreeArchiveScriptError } from "@t3tools/contracts";
-import { isHostWindows } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
@@ -126,7 +126,7 @@ export const make = Effect.gen(function* () {
       return { status: "no-script" } as const;
     }
 
-    const windows = yield* isHostWindows;
+    const windows = yield* HostProcess.isWindows;
     // `/d /s /c` keeps cmd.exe from running AutoRun commands or re-quoting the
     // payload; `sh -c` is the POSIX equivalent.
     const command = windows ? "cmd.exe" : "/bin/sh";

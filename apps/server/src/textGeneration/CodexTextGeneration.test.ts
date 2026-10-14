@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { Environment as HostProcessEnvironment } from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
