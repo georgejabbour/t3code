@@ -106,6 +106,7 @@ const runSweep = (input: {
     const activation = yield* Deferred.make<void>();
     const deleted: string[] = [];
     const attempted: string[] = [];
+    const commandIds: string[] = [];
     let snapshotReads = 0;
     const layer = makeArchivedThreadReaperLive({ tickInterval: Duration.hours(24) }).pipe(
       Layer.provideMerge(
@@ -124,6 +125,7 @@ const runSweep = (input: {
             if (command.type !== "thread.delete") return Effect.die("unexpected command");
             assert.strictEqual(DateTime.formatIso(command.expectedArchivedAt!), NOW);
             attempted.push(command.threadId);
+            commandIds.push(command.commandId);
             if (input.failFirstDelete && attempted.length === 1) {
               return Effect.fail(
                 new Orchestrator.OrchestratorDispatchError({
@@ -166,7 +168,7 @@ const runSweep = (input: {
         if (input.advanceHours >= 24) yield* Queue.take(ticks);
         yield* reaper.drain;
       }
-      return { deleted, attempted, snapshotReads };
+      return { deleted, attempted, commandIds, snapshotReads };
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(
@@ -184,6 +186,20 @@ describe("ArchivedThreadReaper", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it.effect("allocates distinct UUID commands for archived deletions", () =>
+    Effect.gen(function* () {
+      const result = yield* runSweep({ threads: [makeThread("first"), makeThread("second")] });
+      assert.deepEqual(result.deleted, ["first", "second"]);
+      assert.strictEqual(new Set(result.commandIds).size, 2);
+      for (const id of result.commandIds) {
+        assert.match(
+          id,
+          /^server:archived-thread-reaper:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
+      }
+    }),
+  );
 
   it.effect("parks deletion until the server activates", () =>
     Effect.gen(function* () {

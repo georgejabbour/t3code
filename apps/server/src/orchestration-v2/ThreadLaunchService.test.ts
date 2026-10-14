@@ -1484,6 +1484,10 @@ it.effect.each(["repository", "project", "environment", "shared"] as const)(
         yield* Deferred.await(processed);
         assert.lengthOf(dispatch.mock.calls, source === "shared" ? 0 : 1);
         if (source !== "shared") {
+          assert.match(
+            dispatch.mock.calls[0]![0].commandId,
+            /^server:worktree-branch-drift:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+          );
           assert.deepInclude(dispatch.mock.calls[0]![0], {
             type: "thread.metadata.update",
             branch: "feature/final",
