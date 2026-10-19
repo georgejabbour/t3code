@@ -2,6 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   hasUnseenCompletion,
+  isSidebarSubagentThread,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
 } from "./components/Sidebar.logic";
@@ -15,7 +16,11 @@ export function getDocumentTitle(
 ): string {
   let count = 0;
   for (const thread of threads) {
-    if (thread.archivedAt !== null || thread.settledOverride === "settled") {
+    if (
+      thread.archivedAt !== null ||
+      thread.settledOverride === "settled" ||
+      isSidebarSubagentThread(thread)
+    ) {
       continue;
     }
     const status = resolveSidebarThreadStatus(thread);

@@ -83,6 +83,72 @@ describe("getDocumentTitle", () => {
     expect(getDocumentTitle("T3 Code", [], visits)).toBe("T3 Code");
   });
 
+  it.each<Partial<SidebarThreadSummary>>([
+    {},
+    { hasPendingApprovals: true },
+    { hasPendingUserInput: true },
+    { interactionMode: "plan", hasActionableProposedPlan: true },
+    { pendingSubagentRequest: "approval" },
+    { pendingSubagentRequest: "user_input" },
+  ])("excludes hidden subagent threads: %j", (overrides) => {
+    const child: SidebarThreadSummary = {
+      ...thread,
+      ...overrides,
+      id: ThreadId.make("child"),
+      lineage: {
+        rootThreadId: thread.id,
+        parentThreadId: thread.id,
+        relationshipToParent: "subagent",
+      },
+    };
+    expect(
+      getDocumentTitle("T3 Code", [{ ...thread, lastVisitedAt: after }, child], {
+        [key(child)]: before,
+      }),
+    ).toBe("T3 Code");
+  });
+
+  it.each(["approval", "user_input"] as const)(
+    "counts a visible parent's pending subagent %s once",
+    (pendingSubagentRequest) => {
+      const child: SidebarThreadSummary = {
+        ...thread,
+        id: ThreadId.make("child"),
+        hasPendingApprovals: pendingSubagentRequest === "approval",
+        hasPendingUserInput: pendingSubagentRequest === "user_input",
+        lineage: {
+          rootThreadId: thread.id,
+          parentThreadId: thread.id,
+          relationshipToParent: "subagent",
+        },
+      };
+      expect(
+        getDocumentTitle(
+          "T3 Code",
+          [{ ...thread, lastVisitedAt: after, pendingSubagentRequest }, child],
+          { [key(child)]: before },
+        ),
+      ).toBe("(1) T3 Code");
+    },
+  );
+
+  it("counts unseen completions in ordinary forked threads", () => {
+    const fork: SidebarThreadSummary = {
+      ...thread,
+      id: ThreadId.make("fork"),
+      lineage: {
+        rootThreadId: thread.id,
+        parentThreadId: thread.id,
+        relationshipToParent: "fork",
+      },
+    };
+    expect(
+      getDocumentTitle("T3 Code", [{ ...thread, lastVisitedAt: after }, fork], {
+        [key(fork)]: before,
+      }),
+    ).toBe("(1) T3 Code");
+  });
+
   it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     "counts %s until resolved, regardless of visits or turn completion",
     (flag) => {
