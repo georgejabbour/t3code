@@ -5,6 +5,7 @@ import {
   MessageId,
   NodeId,
   ProviderSessionId,
+  ProjectId,
   RunAttemptId,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
@@ -99,6 +100,14 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("scheduled-tasks.cleanup"),
   }),
   Schema.Struct({
+    type: Schema.Literal("workspace.cleanup"),
+    projectId: ProjectId,
+    worktreePath: Schema.NullOr(Schema.String),
+    archivedAt: Schema.String,
+    workspaceRoot: Schema.NullOr(Schema.String),
+    canonicalWorkspacePath: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
@@ -130,6 +139,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "scheduled-tasks.cleanup",
   "terminal.cleanup",
   "preview.cleanup",
+  "workspace.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",
@@ -231,8 +241,13 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly leaseDurationMs: number;
     readonly excludeRestartContinuations?: boolean;
+    readonly queue?: "lifecycle" | "workspace-cleanup";
   }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
   readonly nextClaimableAt: Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
+  readonly nextClaimableAtForQueue: (
+    queue: "lifecycle" | "workspace-cleanup",
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
+  readonly awaitCleanupAvailable: Effect.Effect<void>;
   readonly succeed: (input: {
     readonly effectId: string;
     readonly workerId: string;
@@ -301,6 +316,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const available = yield* Queue.dropping<void>(64);
+    const cleanupAvailable = yield* Queue.dropping<void>(64);
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const settledSignals = new Map<string, Deferred.Deferred<void>>();
     const signalSettled = (effectIds: ReadonlyArray<string>) =>
@@ -314,16 +330,28 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         },
         { discard: true },
       );
-    const notifyAvailable = (count = 1) =>
-      Queue.offerAll(
-        available,
-        Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
-      ).pipe(Effect.asVoid);
-    // An earlier effect waiting out a retry backoff still blocks later ones, so
-    // a turn cannot start while a failed rollback is about to restore files.
+    const notifyAvailable = (count = 1) => {
+      const notifications = Array.from(
+        { length: Math.min(64, Math.max(0, Math.floor(count))) },
+        () => undefined,
+      );
+      return Effect.all(
+        [Queue.offerAll(available, notifications), Queue.offerAll(cleanupAvailable, notifications)],
+        { discard: true },
+      );
+    };
+    // Each thread runs its effects one at a time, in enqueue (rowid) order. An earlier
+    // effect waiting out a retry backoff still blocks later ones, so a turn
+    // cannot start while a failed rollback is about to restore files. A claim
+    // that skips restart continuations is not blocked by them either.
+    // Title generation is correlated metadata work, so it has its own
+    // per-thread lane and cannot delay provider lifecycle effects. Workspace
+    // cleanup also has its own lane, but waits for every sibling archive's
+    // process shutdown before repository resources can be removed.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
+      queue?: "lifecycle" | "workspace-cleanup",
     ) =>
       sql`
         ${
@@ -332,6 +360,30 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             : sql`candidate.available_at <= ${availableBefore}`
         }
         AND candidate.status = 'pending'
+        AND ${
+          queue === undefined
+            ? sql`1 = 1`
+            : queue === "workspace-cleanup"
+              ? sql`candidate.effect_type = 'workspace.cleanup'`
+              : sql`candidate.effect_type != 'workspace.cleanup'`
+        }
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_effect_outbox AS prerequisite
+          WHERE candidate.effect_type = 'workspace.cleanup'
+            AND (
+              prerequisite.command_id = candidate.command_id
+              OR EXISTS (
+                SELECT 1 FROM orchestration_v2_effect_outbox AS owner
+                WHERE owner.command_id = prerequisite.command_id
+                  AND owner.effect_type = 'workspace.cleanup'
+                  AND owner.status != 'cancelled'
+                  AND json_extract(owner.payload_json, '$.canonicalWorkspacePath') =
+                      json_extract(candidate.payload_json, '$.canonicalWorkspacePath')
+              )
+            )
+            AND prerequisite.effect_type IN ('provider-session.detach', 'terminal.cleanup')
+            AND prerequisite.status NOT IN ('succeeded', 'cancelled')
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active
@@ -355,8 +407,13 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               )
               OR
               (
-                candidate.effect_type != 'thread-title.generate'
-                AND active.effect_type != 'thread-title.generate'
+                candidate.effect_type NOT IN ('thread-title.generate', 'workspace.cleanup')
+                AND active.effect_type NOT IN ('thread-title.generate', 'workspace.cleanup')
+              )
+              OR
+              (
+                candidate.effect_type = 'workspace.cleanup'
+                AND active.effect_type = 'workspace.cleanup'
               )
             )
         )
@@ -373,6 +430,31 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     const decodeRows = (operation: string, rows: ReadonlyArray<EffectRow>) =>
       Effect.forEach(rows, rowToEffect).pipe(
         Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
+      );
+
+    const nextClaimableAt = (queue?: "lifecycle" | "workspace-cleanup") =>
+      Effect.gen(function* () {
+        const rows = yield* sql<{ readonly available_at: string | null }>`
+          SELECT MIN(candidate.available_at) AS available_at
+          FROM orchestration_v2_effect_outbox AS candidate
+          WHERE ${claimableCandidatePredicate(undefined, false, queue)}
+        `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
+        const availableAt = rows[0]?.available_at;
+        if (availableAt === undefined || availableAt === null) return Option.none();
+        const parsed = DateTime.make(availableAt);
+        if (Option.isNone(parsed)) {
+          return yield* new EffectOutboxError({
+            operation: "next-claimable",
+            cause: `Invalid available_at timestamp: ${availableAt}`,
+          });
+        }
+        return parsed;
+      }).pipe(
+        Effect.mapError((cause) =>
+          isEffectOutboxError(cause)
+            ? cause
+            : new EffectOutboxError({ operation: "next-claimable", cause }),
+        ),
       );
 
     const service: EffectOutboxV2Shape = {
@@ -432,6 +514,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           Effect.mapError((cause) => new EffectOutboxError({ operation: "get", effectId, cause })),
         ),
       awaitAvailable: Queue.take(available),
+      awaitCleanupAvailable: Queue.take(cleanupAvailable),
       notifyAvailable,
       listByCommandId: (commandId) =>
         sql<EffectRow>`
@@ -534,7 +617,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ),
       // The worker polls for the next effect even when there is no work to claim.
       claimNext: Effect.fnUntraced(
-        function* ({ workerId, leaseDurationMs, excludeRestartContinuations = false }) {
+        function* ({ workerId, leaseDurationMs, excludeRestartContinuations = false, queue }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           const leaseExpiresAt = DateTime.formatIso(
@@ -555,7 +638,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
-              WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
+              WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations, queue)}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
@@ -570,29 +653,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
       ),
-      nextClaimableAt: Effect.gen(function* () {
-        const rows = yield* sql<{ readonly available_at: string | null }>`
-          SELECT MIN(candidate.available_at) AS available_at
-          FROM orchestration_v2_effect_outbox AS candidate
-          WHERE ${claimableCandidatePredicate()}
-        `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
-        const availableAt = rows[0]?.available_at;
-        if (availableAt === undefined || availableAt === null) return Option.none();
-        const parsed = DateTime.make(availableAt);
-        if (Option.isNone(parsed)) {
-          return yield* new EffectOutboxError({
-            operation: "next-claimable",
-            cause: `Invalid available_at timestamp: ${availableAt}`,
-          });
-        }
-        return parsed;
-      }).pipe(
-        Effect.mapError((cause) =>
-          isEffectOutboxError(cause)
-            ? cause
-            : new EffectOutboxError({ operation: "next-claimable", cause }),
-        ),
-      ),
+      nextClaimableAt: nextClaimableAt(),
+      nextClaimableAtForQueue: nextClaimableAt,
       succeed: Effect.fn("EffectOutbox.succeed")(
         function* ({ effectId, workerId }) {
           const now = DateTime.formatIso(yield* DateTime.now);

@@ -45,6 +45,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -86,8 +88,15 @@ import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-const layerPlatformTest = Layer.merge(
+const layerPlatformTest = Layer.mergeAll(
   NodeServices.layer,
+  Layer.succeed(ProcessRunner.ProcessRunner, {
+    run: () => Effect.die("Repository cleanup commands cannot run in runtime unit tests"),
+  }),
+  Layer.mock(TerminalManager.TerminalManager)({
+    subscribeMetadata: (listener) =>
+      listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),
+  }),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),

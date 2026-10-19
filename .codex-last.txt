@@ -1,0 +1,18 @@
+Restored [the endpoint](http://hermes.tailae8a98.ts.net:3773/). **The failed layer was server startup, with high confidence.**
+
+Confirmed evidence, all times CDT on October 8:
+
+- The `.2833` package installed successfully. `launchctl kickstart -k gui/501/codes.t3.server` completed at **12:52:19**. This confirmed command completion, not service health.
+- LaunchAgent repeatedly exited with code **1**, reporting `Service not found: t3/provider/ProviderRegistry`. No process listened on port 3773.
+- The configured address, **100.121.12.115**, matched Hermes’s Tailscale IP. DNS resolved correctly, routing used `utun4`, and another tailnet device answered a direct ping.
+- The same failure began at **09:47:40**, after the earlier `.2819` installation. The outage therefore preceded `.2833`.
+
+**Root cause:** The installed bundle initialized `SubscriptionUsageHistoryStore` outside the startup group supplying `ProviderRegistry`. Inspection, an isolated dependency test, and successful recovery after correcting that ordering support this conclusion. Tailscale and DNS did not cause the observed refusal.
+
+At **16:09:35**, I backed up the installed bundle and applied two narrow replacements to correct that ordering. LaunchAgent recovered automatically. I sent no restart signals and changed no repository files, service configuration, or network settings. No commit or push occurred. The [repair record and backup location](/Users/georgejabbour/.hermes/.scratch/t3-outage-repair-20261008T210935Z/repair.json) document the reversible change.
+
+Normal startup recovery marked one interrupted run and one session stopped. I did not modify session data directly.
+
+At **16:10:41**, PID **43006**, started at **16:09:38**, remained healthy with no further startup errors. Both the bound IP and Tailscale hostname returned **HTTP 200**, including the application’s JavaScript asset. Loopback refusal remains expected because the service binds specifically to its Tailscale IP.
+
+These HTTP checks ran on Hermes; remote-client access was not independently tested. A future install can overwrite the runtime repair. The requested `superskill.md` file was absent.

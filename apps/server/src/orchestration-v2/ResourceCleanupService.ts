@@ -57,7 +57,7 @@ export const layer = Layer.effect(
           ),
       cleanupTerminals: (threadId: string) =>
         terminals
-          .close({ threadId, deleteHistory: true })
+          .closeAndWait({ threadId, deleteHistory: true })
           .pipe(
             Effect.mapError(
               (cause) => new ResourceCleanupError({ operation: "terminal", threadId, cause }),

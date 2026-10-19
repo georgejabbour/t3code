@@ -3435,15 +3435,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         ([process, pending]) =>
           Deferred.await(pending.exited).pipe(
             Effect.timeout("10 seconds"),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.fail(
-                new TerminalShutdownError({
-                  threadId: input.threadId,
-                  terminalId: pending.terminalId,
-                  processPid: process.pid,
-                }),
-              ),
-            ),
+            Effect.catchTags({
+              TimeoutError: () =>
+                Effect.fail(
+                  new TerminalShutdownError({
+                    threadId: input.threadId,
+                    terminalId: pending.terminalId,
+                    processPid: process.pid,
+                  }),
+                ),
+            }),
             Effect.andThen(clearKillFiber(process)),
           ),
         { concurrency: "unbounded", discard: true },

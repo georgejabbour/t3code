@@ -22,7 +22,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
-import { type ComponentPropsWithoutRef, useCallback } from "react";
+import { type ComponentPropsWithoutRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -73,26 +73,6 @@ function worktreeArchiveScriptError(result: {
   if (result._tag !== "Failure") return null;
   const error = squashAtomCommandFailure(result as never);
   return isWorktreeArchiveScriptError(error) ? error : null;
-}
-
-/**
- * What the teardown toast should report once the archive-script call settles.
- *
- * `nothing-to-do` covers a project that has no archive script, and a worktree
- * folder that is already gone. Neither one stopped a service, so the toast
- * leaves rather than claiming work that never happened. A server too old to
- * report `ran` leaves it undefined, and that result still reads as a real run.
- */
-export function archiveScriptOutcome(result: {
-  readonly _tag: string;
-  readonly value?: { readonly ran?: boolean | undefined } | undefined;
-}):
-  | { readonly kind: "failed"; readonly error: WorktreeArchiveScriptError }
-  | { readonly kind: "ran" }
-  | { readonly kind: "nothing-to-do" } {
-  const error = worktreeArchiveScriptError(result);
-  if (error) return { kind: "failed", error };
-  return result.value?.ran === false ? { kind: "nothing-to-do" } : { kind: "ran" };
 }
 
 function formatArchiveScriptOutput(error: WorktreeArchiveScriptError): string {
@@ -369,43 +349,6 @@ export function useThreadActions() {
   const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
     reportFailure: false,
   });
-  const runWorktreeArchiveScript = useAtomCommand(vcsEnvironment.runWorktreeArchiveScript, {
-    reportFailure: false,
-  });
-
-  /**
-   * Teardown can take minutes (compose down, volume and image pruning), so it
-   * never blocks the thread leaving the UI. The toast is the only signal the
-   * user gets that anything is happening — without it a slow archive looks
-   * exactly like a broken one.
-   */
-  const runArchiveScriptInBackground = useCallback(
-    (input: {
-      environmentId: EnvironmentId;
-      workspaceRoot: string;
-      worktreePath: string;
-      label: string;
-    }) => {
-      const toastId = toastManager.add(teardownStartedToast(input.label));
-      void (async () => {
-        const result = await runWorktreeArchiveScript({
-          environmentId: input.environmentId,
-          input: { cwd: input.workspaceRoot, path: input.worktreePath },
-        });
-        const outcome = archiveScriptOutcome(result);
-        if (outcome.kind === "failed") {
-          toastManager.update(toastId, teardownFailedToast(outcome.error, "Archive script failed"));
-          return;
-        }
-        if (outcome.kind === "nothing-to-do") {
-          toastManager.close(toastId);
-          return;
-        }
-        toastManager.update(toastId, teardownSucceededToast(input.label));
-      })();
-    },
-    [runWorktreeArchiveScript],
-  );
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -472,19 +415,6 @@ export function useThreadActions() {
       );
     }
 
-    const liveThreads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
-      const shell = readThreadShell(ref);
-      if (shell === null) return [];
-      return shell.id === threadRef.threadId || shell.archivedAt === null ? [shell] : [];
-    });
-    const archivingWorktreePath = getOrphanedWorktreePathForThread(
-      liveThreads,
-      threadRef.threadId,
-    );
-    const archivingProject = readProject({
-      environmentId: threadRef.environmentId,
-      projectId: thread.projectId,
-    });
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
       currentRouteThreadRef?.threadId === threadRef.threadId &&
@@ -510,15 +440,6 @@ export function useThreadActions() {
       undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
       failureTitle: "Failed to undo archive",
     });
-
-    if (archivingWorktreePath && archivingProject) {
-      runArchiveScriptInBackground({
-        environmentId: threadRef.environmentId,
-        workspaceRoot: archivingProject.workspaceRoot,
-        worktreePath: archivingWorktreePath,
-        label: thread.title ?? formatWorktreePathForDisplay(archivingWorktreePath),
-      });
-    }
 
     if (shouldNavigateToDraft) {
       const navigationResult = await settlePromise(() =>

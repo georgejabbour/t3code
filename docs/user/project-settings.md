@@ -168,6 +168,31 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Archive cleanup
+
+To remove workspace services after its last live thread is archived, set
+`workspaceCleanupCommand` in the project's root `t3.json`:
+
+```json
+{
+  "workspaceCleanupCommand": "node scripts/cleanup-workspace.mjs"
+}
+```
+
+The command runs from the project root with `--workspace-path <canonical absolute path>`.
+It receives `T3CODE_PROJECT_ROOT` and `T3CODE_WORKTREE_PATH`, and must also accept `--dry-run`.
+Your script owns resource selection: remove that workspace's containers, local databases,
+caches, networks, and unused images. Preserve its Git checkout and all source changes.
+Make the command safe to repeat and able to handle an already-missing workspace.
+
+Cleanup runs on the server, including archives from mobile and agents. Another live thread,
+provider session, or terminal using the workspace prevents cleanup. Undo cancels queued cleanup;
+if cleanup has started, reopening waits for it to finish. Failed commands retry with fresh
+workspace checks, and interrupted cleanup resumes after a server restart.
+
+Automatic cleanup reads only this root setting. Worktree removal hooks remain separate and
+run when you explicitly remove a worktree.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,

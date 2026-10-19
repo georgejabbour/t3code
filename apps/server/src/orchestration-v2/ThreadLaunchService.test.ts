@@ -2353,6 +2353,250 @@ it.effect("cancels tracked setup before provider work is released", () =>
   }),
 );
 
+const configuredSetup = {
+  defaultProjectScripts: [
+    {
+      id: "bootstrap",
+      name: "Bootstrap",
+      command: "docker compose up",
+      icon: "configure" as const,
+      runOnWorktreeCreate: true,
+      async: false,
+    },
+  ],
+};
+
+it.effect.each(["failed", "cancelled"] as const)(
+  "%s setup waits for terminal shutdown before running removal hooks",
+  (outcome) =>
+    Effect.gen(function* () {
+      const setupEntered = yield* Deferred.make<void>();
+      const failSetup = yield* Deferred.make<void>();
+      const shutdownEntered = yield* Deferred.make<void>();
+      const confirmShutdown = yield* Deferred.make<void>();
+      const order: string[] = [];
+      const harness = makeHarness({
+        serverSettings: configuredSetup,
+        runSetup: () =>
+          Deferred.succeed(setupEntered, undefined).pipe(
+            Effect.andThen(outcome === "cancelled" ? Effect.never : Deferred.await(failSetup)),
+            Effect.andThen(Effect.fail(new Error("setup failed") as never)),
+          ),
+        closeAndWait: () =>
+          Deferred.succeed(shutdownEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(confirmShutdown)),
+            Effect.andThen(
+              Effect.sync(() => {
+                order.push("shutdown");
+              }),
+            ),
+          ),
+        runArchiveScript: () =>
+          Effect.sync(() => {
+            order.push("hook");
+            return { status: "no-script" as const };
+          }),
+        removeWorktree: () =>
+          Effect.sync(() => {
+            order.push("remove");
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const input = launchInput({
+          command: `launch:ordered-cleanup:${outcome}`,
+          thread: `thread:ordered-cleanup:${outcome}`,
+          message: "Start setup",
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+        const launched = yield* launches.launch(input);
+        yield* Deferred.await(setupEntered);
+        const cancel =
+          outcome === "cancelled"
+            ? yield* tracker.cancel(launched.threadId).pipe(Effect.forkScoped)
+            : null;
+        if (outcome === "failed") yield* Deferred.succeed(failSetup, undefined);
+        yield* Deferred.await(shutdownEntered);
+        assert.equal(harness.runSetup.mock.calls[0]?.[0].preferredTerminalId, "setup-bootstrap");
+        assert.deepEqual(harness.closeAndWait.mock.calls[0]?.[0], {
+          threadId: launched.threadId,
+          terminalId: "setup-bootstrap",
+          deleteHistory: true,
+        });
+        assert.isEmpty(harness.runArchiveScript.mock.calls);
+        assert.isEmpty(harness.removeWorktree.mock.calls);
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+          "/repo-worktrees/feature",
+        );
+        yield* Deferred.succeed(confirmShutdown, undefined);
+        if (cancel) assert.isTrue(yield* Fiber.join(cancel));
+        yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+          ),
+          Stream.runHead,
+        );
+        assert.deepEqual(order, ["shutdown", "hook", "remove"]);
+        assert.deepEqual(harness.runArchiveScript.mock.calls[0]?.[0], {
+          workspaceRoot: "/repo",
+          worktreePath: "/repo-worktrees/feature",
+        });
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.isNull(projection.thread.worktreePath);
+        assert.isNull(projection.thread.branch);
+        assert.equal(projection.messages[0]?.text, "Start setup");
+        assert.equal((yield* tracker.get(launched.threadId))?.phase, outcome);
+        assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect.each(["hook", "shutdown"] as const)(
+  "%s failure retains the checkout and reports cleanup failure",
+  (failurePoint) => {
+    const removals: string[] = [];
+    const harness = makeHarness({
+      serverSettings: configuredSetup,
+      removeWorktree: (input) =>
+        Effect.sync(() => {
+          removals.push(input.path);
+        }),
+      runSetup: () => Effect.fail(new Error("setup failed") as never),
+      closeAndWait: (input) => {
+        if (failurePoint !== "shutdown") return Effect.void;
+        if (input.terminalId === undefined) return Effect.die("The setup terminal is missing.");
+        return Effect.fail(
+          new TerminalManager.TerminalShutdownError({
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+            processPid: 123,
+          }),
+        );
+      },
+      runArchiveScript: () =>
+        Effect.fail(
+          new WorktreeArchiveScriptError({
+            scriptName: "Remove containers",
+            command: "docker compose down",
+            worktreePath: "/repo-worktrees/feature",
+            exitCode: 1,
+            timedOut: false,
+            stdout: "",
+            stderr: "Cannot remove containers",
+          }),
+        ),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: `launch:retain-checkout:${failurePoint}`,
+          thread: `thread:retain-checkout:${failurePoint}`,
+          message: "Keep the failed checkout visible",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(harness.closeAndWait.mock.calls.length, 1);
+      assert.equal(harness.runArchiveScript.mock.calls.length, failurePoint === "hook" ? 1 : 0);
+      assert.isEmpty(removals);
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.isNotNull(projection.thread.branch);
+      assert.isNull(projection.thread.deletedAt);
+      assert.equal(projection.runs[0]?.status, "failed");
+      assert.equal(projection.messages[0]?.text, "Keep the failed checkout visible");
+      const snapshot = yield* tracker.get(launched.threadId);
+      assert.equal(snapshot?.phase, "failed");
+      assert.include(snapshot?.error ?? "", "Cleanup failed; the worktree remains");
+      assert.include(
+        snapshot?.error ?? "",
+        failurePoint === "hook" ? "Remove containers" : "did not confirm process 123 shutdown",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("cancelling retry setup stops its terminal and keeps the reused checkout", () =>
+  Effect.gen(function* () {
+    const retrySetupEntered = yield* Deferred.make<void>();
+    let attempts = 0;
+    const removals: string[] = [];
+    const harness = makeHarness({
+      serverSettings: configuredSetup,
+      removeWorktree: (input) =>
+        Effect.sync(() => {
+          removals.push(input.path);
+        }),
+      runSetup: () =>
+        ++attempts === 1
+          ? Effect.fail(new Error("first setup failed") as never)
+          : Deferred.succeed(retrySetupEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      runArchiveScript: () =>
+        Effect.fail(
+          new WorktreeArchiveScriptError({
+            scriptName: "Remove containers",
+            command: "docker compose down",
+            worktreePath: "/repo-worktrees/feature",
+            exitCode: 1,
+            timedOut: false,
+            stdout: "",
+            stderr: "Cannot remove containers",
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:retry-cleanup",
+          thread: "thread:retry-cleanup",
+          message: "Retry retained setup",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      const failed = yield* threads.getThreadProjection(launched.threadId);
+      yield* launches.retryPreparation({
+        commandId: CommandId.make("launch:retry-cleanup:retry"),
+        threadId: launched.threadId,
+        runId: failed.runs[0]!.id,
+      });
+      yield* Deferred.await(retrySetupEntered);
+      assert.isTrue(yield* tracker.cancel(launched.threadId));
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
+      assert.equal(harness.closeAndWait.mock.calls.length, 2);
+      assert.equal(harness.runArchiveScript.mock.calls.length, 1);
+      assert.isEmpty(removals);
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.worktreePath, failed.thread.worktreePath);
+      assert.equal(projection.thread.branch, failed.thread.branch);
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("stops an in-flight branch rename when tracked setup is cancelled", () =>
   Effect.gen(function* () {
     const setupEntered = yield* Deferred.make<void>();

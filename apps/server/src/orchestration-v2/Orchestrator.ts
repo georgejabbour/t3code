@@ -3794,6 +3794,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           request: { type: "terminal.cleanup" },
         } satisfies PendingOrchestrationEffectV2,
+        {
+          id: `effect:${command.commandId}:workspace.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "workspace.cleanup",
+            projectId: thread.projectId,
+            worktreePath: thread.worktreePath,
+            archivedAt: DateTime.formatIso(now),
+            // EventSink captures filesystem identity before the archive transaction.
+            workspaceRoot: null,
+            canonicalWorkspacePath: null,
+          },
+        } satisfies PendingOrchestrationEffectV2,
       ]);
     }
   });
@@ -11542,6 +11556,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        if (command.type === "thread.unarchive") {
+          cancelUnsettledEffects = {
+            effectTypes: ["workspace.cleanup", "terminal.cleanup"],
+            reason: "Workspace cleanup cancelled because the thread was unarchived.",
+          };
+        }
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);

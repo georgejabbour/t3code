@@ -17,6 +17,7 @@ import {
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as WorkspaceCleanup from "./WorkspaceCleanup.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -80,10 +81,12 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
+  | WorkspaceCleanup.WorkspaceCleanup
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
+    const workspaceCleanup = yield* WorkspaceCleanup.WorkspaceCleanup;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -473,6 +476,17 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "workspace.cleanup":
+            return workspaceCleanup.execute(effect).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "terminal.cleanup":
             return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
               Effect.mapError(
@@ -560,6 +574,12 @@ const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerErro
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly awaitCleanupWork: Effect.Effect<void>;
+  readonly runCleanupOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly nextCleanupClaimableAt: Effect.Effect<
+    Option.Option<DateTime.Utc>,
+    OrchestrationEffectWorkerError
+  >;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly nextClaimableAt: Effect.Effect<
     Option.Option<DateTime.Utc>,
@@ -686,9 +706,12 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
+        function* (
+          excludeRestartContinuations = false,
+          queue: "lifecycle" | "workspace-cleanup" = "lifecycle",
+        ) {
           const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations }),
+            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations, queue }),
           );
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
@@ -806,9 +829,19 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
+        awaitCleanupWork: outbox.awaitCleanupAvailable,
+        runCleanupOnce: runOnce(false, "workspace-cleanup"),
+        nextCleanupClaimableAt: outbox
+          .nextClaimableAtForQueue("workspace-cleanup")
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationEffectWorkerError({ operation: "next-cleanup-claimable", cause }),
+            ),
+          ),
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+        nextClaimableAt: outbox.nextClaimableAtForQueue("lifecycle").pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -819,7 +852,8 @@ export const layerWithOptions = (
         ),
         drain: Effect.fn("EffectWorker.drain")(function* (maxEffects = Number.MAX_SAFE_INTEGER) {
           let completed = 0;
-          while (completed < maxEffects && (yield* runOnce())) {
+          while (completed < maxEffects &&
+            ((yield* runOnce()) || (yield* runOnce(false, "workspace-cleanup")))) {
             completed += 1;
           }
           return completed;
@@ -854,53 +888,58 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // Post-commit notifications are the low-latency path. `availableAt` is the
       // durable retry schedule, and the long liveness poll only recovers from a
       // missed in-process notification or work inserted by another process.
-      const runWorker = Effect.gen(function* () {
-        while (true) {
-          const outcome = yield* worker.runOnce.pipe(
-            Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Orchestration effect worker failed", cause).pipe(
-                Effect.as("failed" as const),
+      const runWorker = (cleanup = false) =>
+        Effect.gen(function* () {
+          while (true) {
+            const outcome = yield* (cleanup ? worker.runCleanupOnce : worker.runOnce).pipe(
+              Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Orchestration effect worker failed", cause).pipe(
+                  Effect.as("failed" as const),
+                ),
               ),
-            ),
-          );
-          if (outcome === "worked") {
-            yield* Effect.yieldNow;
-            continue;
-          }
-          if (outcome === "failed") {
-            // A due row can remain visible when a claim UPDATE fails. Do not
-            // feed that past deadline back into the scheduler and retry at the
-            // one-millisecond floor; let transient database failures cool off.
-            yield* Effect.sleep(Duration.millis(Math.min(1_000, livenessPollIntervalMs)));
-            continue;
-          }
+            );
+            if (outcome === "worked") {
+              yield* Effect.yieldNow;
+              continue;
+            }
+            if (outcome === "failed") {
+              // A due row can remain visible when a claim UPDATE fails. Do not
+              // feed that past deadline back into the scheduler and retry at the
+              // one-millisecond floor; let transient database failures cool off.
+              yield* Effect.sleep(Duration.millis(Math.min(1_000, livenessPollIntervalMs)));
+              continue;
+            }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "Failed to read the next orchestration effect deadline",
-                cause,
-              ).pipe(Effect.as(Option.none<DateTime.Utc>())),
-            ),
-          );
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
-          const sleepMs = Option.match(nextClaimableAt, {
-            onNone: () => livenessPollIntervalMs,
-            onSome: (availableAt) => {
-              const untilAvailable = DateTime.toEpochMillis(availableAt) - now;
-              return Math.min(livenessPollIntervalMs, untilAvailable > 0 ? untilAvailable : 25);
-            },
-          });
-          yield* Effect.raceFirst(
-            worker.awaitWork.pipe(Effect.as("notified" as const)),
-            Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
-          );
-        }
-      });
+            const nextClaimableAt = yield* (
+              cleanup ? worker.nextCleanupClaimableAt : worker.nextClaimableAt
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "Failed to read the next orchestration effect deadline",
+                  cause,
+                ).pipe(Effect.as(Option.none<DateTime.Utc>())),
+              ),
+            );
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            const sleepMs = Option.match(nextClaimableAt, {
+              onNone: () => livenessPollIntervalMs,
+              onSome: (availableAt) => {
+                const untilAvailable = DateTime.toEpochMillis(availableAt) - now;
+                return Math.min(livenessPollIntervalMs, untilAvailable > 0 ? untilAvailable : 25);
+              },
+            });
+            yield* Effect.raceFirst(
+              (cleanup ? worker.awaitCleanupWork : worker.awaitWork).pipe(
+                Effect.as("notified" as const),
+              ),
+              Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
+            );
+          }
+        });
 
       return yield* Effect.all(
-        Array.from({ length: concurrency }, () => runWorker),
+        [...Array.from({ length: concurrency }, () => runWorker()), runWorker(true)],
         {
           concurrency: "unbounded",
           discard: true,

@@ -33,6 +33,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -459,6 +460,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
+  readonly mcpRegistryLayer?: typeof layerTestMcpRegistry;
   readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
@@ -526,9 +528,10 @@ function layerTest(input: {
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
-    input.pauseResolve === undefined
+    input.mcpRegistryLayer ??
+    (input.pauseResolve === undefined
       ? layerTestMcpRegistry
-      : layerPausingMcpRegistry(input.pauseResolve);
+      : layerPausingMcpRegistry(input.pauseResolve));
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -2167,6 +2170,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(yield* registry.resolve(token!));
 
+      // Archive/delete detaches revoke the token and close an unused shared runtime.
       yield* manager.detach({
         providerSessionId,
         threadId,
@@ -3614,6 +3618,156 @@ it.effect.each([Duration.zero, Duration.hours(1)])(
             settingsLayer,
           ),
         ),
+      );
+    }),
+);
+
+it.effect("waits for exclusive workspace cleanup before admitting a provider session", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped();
+    const state = yield* Ref.make(emptyState);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const providerEntered = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const threadId = ThreadId.make("workspace-cleanup-startup");
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const cleanup = yield* withWorkspaceLease(
+        cwd,
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const opening = yield* manager
+        .open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd },
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* Deferred.isDone(providerEntered));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(cleanup);
+      yield* Fiber.join(opening);
+      assert.isTrue(yield* Deferred.isDone(providerEntered));
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen: () => Deferred.succeed(providerEntered, undefined).pipe(Effect.asVoid),
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("closes a shared provider runtime after its final archive detach", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const first = ThreadId.make("archive-shared-a");
+      const second = ThreadId.make("archive-shared-b");
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: first,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: first, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: second, now }),
+        ],
+      });
+      yield* manager.open({ threadId: first, providerSessionId, modelSelection, runtimePolicy });
+      yield* manager.open({ threadId: second, providerSessionId, modelSelection, runtimePolicy });
+      yield* manager.detach({ threadId: first, providerSessionId, revokeMcpCredential: true });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      yield* manager.detach({ threadId: second, providerSessionId, revokeMcpCredential: true });
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal(
+        (yield* projections.getThreadProviderContext(second)).providerSessions[0]?.status,
+        "stopped",
+      );
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect(
+  "preserves a shared runtime when another thread attaches during final archive detach",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const first = ThreadId.make("archive-race-a");
+      const second = ThreadId.make("archive-race-b");
+      const armed = yield* Ref.make(false);
+      const revoking = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const registry = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const actual = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...actual,
+            revokeThread: (threadId) =>
+              Effect.gen(function* () {
+                if (threadId === first && (yield* Ref.getAndSet(armed, false))) {
+                  yield* Deferred.succeed(revoking, undefined);
+                  yield* Deferred.await(resume);
+                }
+                yield* actual.revokeThread(threadId);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(layerTestMcpRegistry));
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: first,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: first, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: second, now }),
+          ],
+        });
+        yield* manager.open({ threadId: first, providerSessionId, modelSelection, runtimePolicy });
+        yield* Ref.set(armed, true);
+        const detaching = yield* manager
+          .detach({ threadId: first, providerSessionId, revokeMcpCredential: true })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(revoking);
+        yield* manager.open({ threadId: second, providerSessionId, modelSelection, runtimePolicy });
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(detaching);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, mcpRegistryLayer: registry })),
       );
     }),
 );

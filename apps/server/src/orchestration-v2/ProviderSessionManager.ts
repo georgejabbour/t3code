@@ -1,4 +1,5 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { withWorkspaceUse } from "../workspace/workspaceLease.ts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -398,7 +399,6 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
-      const threadIdleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const readIdleTimeoutMs = Effect.gen(function* () {
         if (options.idleTimeoutMs !== undefined) return Math.max(0, options.idleTimeoutMs);
         if (Option.isNone(serverSettings)) return DEFAULT_IDLE_TIMEOUT_MS;
@@ -934,6 +934,7 @@ export const layerWithOptions = (
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly onlyIfIdleGeneration?: number;
+          readonly onlyIfUnattached?: boolean;
         }): Effect.fn.Return<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
@@ -945,6 +946,9 @@ export const layerWithOptions = (
               const existing = current.get(key);
               if (existing !== candidate) {
                 return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (input.onlyIfUnattached === true && existing.attachedThreadIds.size > 0) {
+                return ["kept", current] as const;
               }
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -1012,6 +1016,7 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        readonly onlyIfUnattached?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1045,7 +1050,18 @@ export const layerWithOptions = (
                     reason: input.reason,
                   });
                   const records = {
-                    entry,
+                    // The final detach removes its binding before release. Route
+                    // the stopped event to it so the shared projection also stops.
+                    entry:
+                      input.detachedThreadId === undefined
+                        ? entry
+                        : {
+                            ...entry,
+                            attachedThreadIds: new Set([
+                              ...entry.attachedThreadIds,
+                              input.detachedThreadId,
+                            ]),
+                          },
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
                     releasedBackgroundTasks,
@@ -1616,7 +1632,10 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
-          const fiber = yield* Effect.sleep(Duration.millis(threadIdleTimeoutMs)).pipe(
+          const idleTimeoutMs = yield* readIdleTimeoutMs;
+          const fiber = yield* Effect.sleep(
+            Duration.millis(idleTimeoutMs <= 0 ? idleSettingsCheckIntervalMs : idleTimeoutMs),
+          ).pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );
@@ -1654,6 +1673,7 @@ export const layerWithOptions = (
               ) {
                 return "skipped" as const;
               }
+              if ((yield* readIdleTimeoutMs) <= 0) return "deferred" as const;
               // Unloading stops the native thread's background terminals, so a
               // thread still running background work stays loaded.
               const hasPendingWork =
@@ -1703,7 +1723,10 @@ export const layerWithOptions = (
           // Re-check on this fiber after another idle window, outside the
           // lock so the thread's next attach is not held up meanwhile.
           if (outcome === "deferred") {
-            yield* Effect.sleep(Duration.millis(threadIdleTimeoutMs));
+            const idleTimeoutMs = yield* readIdleTimeoutMs;
+            yield* Effect.sleep(
+              Duration.millis(idleTimeoutMs <= 0 ? idleSettingsCheckIntervalMs : idleTimeoutMs),
+            );
             return yield* unloadIdleThread(input);
           }
         },
@@ -1794,7 +1817,12 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(runtime.ensureThread(input)),
+              Effect.andThen(
+                withWorkspaceUse(
+                  input.runtimePolicy.cwd ?? runtime.providerSession.cwd,
+                  runtime.ensureThread(input),
+                ),
+              ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -1810,7 +1838,10 @@ export const layerWithOptions = (
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
             if (threadId === null || threadId === undefined) {
-              return runtime.resumeThread(input);
+              return withWorkspaceUse(
+                input.runtimePolicy?.cwd ?? runtime.providerSession.cwd,
+                runtime.resumeThread(input),
+              );
             }
             const providerThreadKey = providerThreadLoadKey({
               providerThread: input.providerThread,
@@ -1838,7 +1869,12 @@ export const layerWithOptions = (
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+                loaded
+                  ? Effect.succeed(input.providerThread)
+                  : withWorkspaceUse(
+                      input.runtimePolicy?.cwd ?? runtime.providerSession.cwd,
+                      runtime.resumeThread(input),
+                    ),
               ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
@@ -1866,7 +1902,12 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(runtime.forkThread(input)),
+              Effect.andThen(
+                withWorkspaceUse(
+                  input.runtimePolicy?.cwd ?? runtime.providerSession.cwd,
+                  runtime.forkThread(input),
+                ),
+              ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -1911,7 +1952,12 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    withWorkspaceUse(
+                      input.runtimePolicy.cwd ?? runtime.providerSession.cwd,
+                      runtime
+                        .startTurn(input)
+                        .pipe(turnMetrics("send", input.modelSelection.model)),
+                    ),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -2147,11 +2193,21 @@ export const layerWithOptions = (
         ),
       );
 
+      const withSessionWorkspaceLease = <A, E, R>(
+        input: Parameters<ProviderSessionManagerV2Shape["open"]>[0],
+        operation: Effect.Effect<A, E, R>,
+      ) => {
+        const opening = sessionOpen.withLock(input.providerSessionId, operation);
+        return input.runtimePolicy.cwd === null
+          ? opening
+          : withWorkspaceUse(input.runtimePolicy.cwd, opening);
+      };
+
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
-          sessionOpen.withLock(
-            input.providerSessionId,
+          withSessionWorkspaceLease(
+            input,
             Effect.gen(function* () {
               const cwd = input.runtimePolicy.cwd;
               if (cwd !== null) {
@@ -2514,14 +2570,19 @@ export const layerWithOptions = (
             }
             if (
               detached.value.attachedThreadIds.size === 0 &&
-              !detached.value.supportsMultipleProviderThreads
+              (input.revokeMcpCredential === true ||
+                !detached.value.supportsMultipleProviderThreads)
             ) {
-              yield* releaseEntry({
-                providerSessionId: input.providerSessionId,
-                reason: "manual_shutdown",
-                ...(input.detail === undefined ? {} : { detail: input.detail }),
-                detachedThreadId: input.threadId,
-              });
+              yield* sessionOpen.withLock(
+                input.providerSessionId,
+                releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detachedThreadId: input.threadId,
+                  onlyIfUnattached: true,
+                  ...(input.detail === undefined ? {} : { detail: input.detail }),
+                }),
+              );
               return;
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;

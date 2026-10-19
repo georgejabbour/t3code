@@ -128,6 +128,12 @@ export const T3ProjectFile = Schema.Struct({
     }),
   ),
   branchPrefix: Schema.optionalKey(T3ProjectFileBranchPrefix),
+  workspaceCleanupCommand: Schema.optionalKey(
+    trimmedNonEmpty({
+      description:
+        "Root-owned, idempotent cleanup command for the last live thread archive. Runs from the project root with --workspace-path <canonical absolute path>; must support --dry-run and preserve the checkout and source changes. Removes workspace containers, local databases, caches, networks, and unused images. Never falls back to worktree removal hooks.",
+    }),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

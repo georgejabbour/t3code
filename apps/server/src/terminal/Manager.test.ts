@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { expect, vi } from "vite-plus/test";
 
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -416,6 +417,37 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each(["open", "restart"] as const)(
+    "waits for workspace cleanup before terminal %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped();
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput({ cwd, worktreePath: cwd });
+        if (operation === "restart") yield* manager.open(input);
+        const before = ptyAdapter.spawnInputs.length;
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const cleanup = yield* withWorkspaceLease(
+          cwd,
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const launching = yield* (
+          operation === "open"
+            ? manager.open(input)
+            : manager.restart(restartInput({ cwd, worktreePath: cwd }))
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        assert.equal(ptyAdapter.spawnInputs.length, before);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(cleanup);
+        yield* Fiber.join(launching);
+        assert.equal(ptyAdapter.spawnInputs.length, before + 1);
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

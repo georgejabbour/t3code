@@ -23,6 +23,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { canonicalPath } from "../project/ManagedWorktree.ts";
+import { withWorkspaceLeases } from "../workspace/workspaceLease.ts";
+
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
@@ -637,9 +640,33 @@ const layerBase: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    const captureCleanupPaths = (
+      effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
+    ) =>
+      Effect.forEach(effects, (effect) =>
+        Effect.gen(function* () {
+          if (effect.request.type !== "workspace.cleanup") return effect;
+          const project = yield* projectStore
+            .get(effect.request.projectId, { includeDeleted: true })
+            .pipe(Effect.withTracerEnabled(false));
+          if (Option.isNone(project)) return effect;
+          return {
+            ...effect,
+            request: {
+              ...effect.request,
+              workspaceRoot: canonicalPath(project.value.workspaceRoot),
+              canonicalWorkspacePath: canonicalPath(
+                effect.request.worktreePath ?? project.value.workspaceRoot,
+              ),
+            },
+          };
+        }),
+      );
+
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
-      input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
+      original: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
+      const input = { ...original, effects: yield* captureCleanupPaths(original.effects) };
       const result = yield* commitThenPublish(
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
@@ -877,9 +904,74 @@ const layerBase: Layer.Layer<
       );
     };
 
+    const referencePaths = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const paths = new Set<string>();
+        for (const event of events) {
+          if (
+            event.type !== "thread.created" &&
+            event.type !== "thread.unarchived" &&
+            event.type !== "thread.metadata-updated"
+          )
+            continue;
+          if (event.payload.deletedAt !== null || event.payload.archivedAt !== null) continue;
+          if (event.payload.worktreePath !== null) paths.add(event.payload.worktreePath);
+          else {
+            const project = yield* projectStore.get(event.payload.projectId, {
+              includeDeleted: true,
+            });
+            if (Option.isSome(project)) paths.add(project.value.workspaceRoot);
+          }
+        }
+        return [...paths].map((cwd) => canonicalPath(cwd) ?? cwd).sort();
+      }).pipe(Effect.withTracerEnabled(false));
+
+    const withReferenceLeases = <A, E, R>(
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      effect: Effect.Effect<A, E, R>,
+    ) =>
+      Effect.gen(function* () {
+        for (;;) {
+          const paths = yield* referencePaths(events);
+          if (paths.length === 0) return yield* effect;
+          const result = yield* withWorkspaceLeases(
+            paths,
+            Effect.gen(function* () {
+              // Local threads inherit their project root. It can move while this
+              // reference waits for cleanup, so acquire the new path before committing.
+              const current = yield* referencePaths(events);
+              if (
+                paths.length !== current.length ||
+                paths.some((cwd, index) => cwd !== current[index])
+              )
+                return Option.none<A>();
+              return Option.some(yield* effect);
+            }),
+            "shared",
+          );
+          if (Option.isSome(result)) return result.value;
+        }
+      });
+
+    const withProjectReferenceLeases = (
+      input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0],
+    ) =>
+      Effect.gen(function* () {
+        const event = input.event;
+        if (!("workspaceRoot" in event.payload) || event.payload.workspaceRoot === undefined) {
+          return yield* commitProjectCommandEffect(input);
+        }
+        const existing = yield* projectStore
+          .get(input.projectId, { includeDeleted: true })
+          .pipe(Effect.withTracerEnabled(false));
+        const paths = [event.payload.workspaceRoot];
+        if (Option.isSome(existing)) paths.push(existing.value.workspaceRoot);
+        return yield* withWorkspaceLeases(paths, commitProjectCommandEffect(input));
+      });
+
     return EventSinkV2.of({
       write: (input) =>
-        writeEffect({ ...input, effects: [] }).pipe(
+        withReferenceLeases(input.events, writeEffect({ ...input, effects: [] })).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({
@@ -890,7 +982,7 @@ const layerBase: Layer.Layer<
           ),
         ),
       writeWithEffects: (input) =>
-        writeEffect(input).pipe(
+        withReferenceLeases(input.events, writeEffect(input)).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({
@@ -929,7 +1021,7 @@ const layerBase: Layer.Layer<
           ),
         ),
       commitCommand: (input) =>
-        commitCommandEffect(input).pipe(
+        withReferenceLeases(input.events, commitCommandEffect(input)).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({
@@ -951,7 +1043,7 @@ const layerBase: Layer.Layer<
           ),
         ),
       commitProjectCommand: (input) =>
-        commitProjectCommandEffect(input).pipe(
+        withProjectReferenceLeases(input).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({ commandId: input.commandId, eventCount: 1, cause }),
