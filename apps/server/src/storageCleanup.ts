@@ -723,29 +723,6 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => ({ force: false, reason: "submodules could not be inspected" })),
   );
 
-  const cleanupGit = Effect.fn("StorageCleanup.cleanupGit")(function* (
-    cwd: string,
-    args: string[],
-    command: string,
-  ) {
-    const result = yield* git.execute({
-      operation: "StorageCleanup.cleanupGit",
-      cwd,
-      args,
-      allowNonZeroExit: true,
-      timeoutMs: 300_000,
-    });
-    if (result.exitCode !== 0)
-      return yield* Effect.fail(
-        new GitCommandError({
-          operation: "StorageCleanup.cleanupGit",
-          command,
-          cwd,
-          detail: result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
-        }),
-      );
-  });
-
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
