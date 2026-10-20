@@ -4585,7 +4585,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("pushes to the requested remote instead of the primary remote", () =>
+    it.effect("pushes to the requested remote and skips hooks when requested", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const originRemote = yield* makeTmpDir("git-origin-remote-");
@@ -4597,8 +4597,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(publishRemote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", originRemote]);
         yield* git(cwd, ["remote", "add", "origin-1", publishRemote]);
+        yield* writeTextFile(cwd, ".git/hooks/pre-push", "#!/bin/sh\nexit 1\n");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.chmod(path.join(cwd, ".git/hooks/pre-push"), 0o755);
 
-        const pushed = yield* driver.pushCurrentBranch(cwd, null, { remoteName: "origin-1" });
+        const pushed = yield* driver.pushCurrentBranch(cwd, null, {
+          remoteName: "origin-1",
+          noVerify: true,
+        });
 
         assert.deepInclude(pushed, {
           status: "pushed",

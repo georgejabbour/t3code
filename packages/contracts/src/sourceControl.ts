@@ -93,6 +93,7 @@ export const SourceControlPublishRepositoryInput = Schema.Struct({
   visibility: SourceControlRepositoryVisibility,
   remoteName: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
+  noVerify: Schema.optional(Schema.Boolean),
 });
 export type SourceControlPublishRepositoryInput = typeof SourceControlPublishRepositoryInput.Type;
 

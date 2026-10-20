@@ -24,6 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { type MouseEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -44,6 +45,7 @@ import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { useT3ProjectFileBranchPrefix } from "~/hooks/useT3ProjectFileScripts";
+import { getLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
@@ -82,9 +84,11 @@ import { Group, GroupSeparator } from "~/components/ui/group";
 import { Input } from "~/components/ui/input";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuItem,
   MenuItemLabel,
   MenuPopup,
+  MenuSeparator,
   MenuSub,
   MenuSubTrigger,
   MenuSubPopup,
@@ -141,6 +145,7 @@ interface PendingDefaultBranchAction {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
+  noVerify: boolean;
   commitMessage?: string;
   onConfirmed?: () => void;
   filePaths?: string[];
@@ -155,6 +160,7 @@ interface RunGitActionWithToastInput {
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
+  noVerify?: boolean;
   filePaths?: string[];
 }
 
@@ -165,6 +171,15 @@ interface InlineGitActionSuccess {
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
+const NO_VERIFY_STORAGE_KEY = "t3code:git-no-verify";
+
+function readNoVerifyPreference(): boolean {
+  try {
+    return getLocalStorageItem(NO_VERIFY_STORAGE_KEY, Schema.Boolean) ?? false;
+  } catch {
+    return false;
+  }
+}
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
@@ -461,6 +476,7 @@ interface PublishRepositoryDialogProps {
   readonly environmentId: ScopedThreadRef["environmentId"] | null;
   readonly threadRef: ScopedThreadRef | null;
   readonly gitCwd: string;
+  readonly noVerify: boolean;
 }
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
@@ -573,6 +589,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         visibility: publishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
         protocol: publishProtocol,
+        ...(props.noVerify ? { noVerify: true } : {}),
       });
 
       if (result._tag === "Failure") {
@@ -1006,6 +1023,11 @@ export default function GitActionsControl({
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  const [isNoVerifyEnabled, setIsNoVerifyEnabled] = useLocalStorage(
+    NO_VERIFY_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1226,6 +1248,7 @@ export default function GitActionsControl({
     skipDefaultBranchPrompt = false,
     statusOverride,
     featureBranch = false,
+    noVerify = isNoVerifyEnabled,
     filePaths,
   }: RunGitActionWithToastInput) {
     if (
@@ -1261,6 +1284,7 @@ export default function GitActionsControl({
         action,
         branchName: actionBranch,
         includesCommit,
+        noVerify,
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -1278,6 +1302,7 @@ export default function GitActionsControl({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(featureBranch ? { featureBranch } : {}),
+      ...(noVerify ? { noVerify } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
@@ -1331,6 +1356,7 @@ export default function GitActionsControl({
           closeResultToast();
           void runGitActionWithToast({
             action: toastCta.action.kind,
+            noVerify: readNoVerifyPreference(),
           });
         },
       };
@@ -1378,10 +1404,11 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, filePaths, noVerify } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
+      noVerify,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(filePaths ? { filePaths } : {}),
@@ -1621,6 +1648,17 @@ export default function GitActionsControl({
           <MenuItemLabel>Publish repository...</MenuItemLabel>
         </MenuItem>
       ) : null}
+      <MenuSeparator />
+      <MenuCheckboxItem
+        variant="switch"
+        checked={isNoVerifyEnabled}
+        onCheckedChange={setIsNoVerifyEnabled}
+        disabled={!canWriteSourceControl || isGitActionRunning}
+        closeOnClick={false}
+        title="Skip pre-commit and pre-push hooks"
+      >
+        <MenuItemLabel>No verify</MenuItemLabel>
+      </MenuCheckboxItem>
       {gitStatusForActions?.refName === null && (
         <p className="px-2 py-1.5 text-xs text-warning">
           Detached HEAD: create and check out a branch to enable push and{" "}
@@ -2063,6 +2101,7 @@ export default function GitActionsControl({
         environmentId={activeEnvironmentId}
         threadRef={activeThreadRef}
         gitCwd={gitCwd}
+        noVerify={isNoVerifyEnabled}
       />
 
       <Dialog

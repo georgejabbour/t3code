@@ -2498,6 +2498,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* stageCommitChanges(cwd, options.stage.filePaths);
     }
     const args = ["commit", "-m", subject];
+    if (options?.noVerify) {
+      args.push("--no-verify");
+    }
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
@@ -2527,6 +2530,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
+    const pushArgs = options?.noVerify ? ["push", "--no-verify"] : ["push"];
     const details = yield* statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -2546,7 +2550,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
-        ["push", "-u", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        [...pushArgs, "-u", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
         { timeoutMs: null },
       );
       return {
@@ -2622,7 +2626,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
-        ["push", "-u", "--", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        [...pushArgs, "-u", "--", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
         { timeoutMs: null },
       );
       return {
@@ -2670,7 +2674,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* runGit(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
-          ["push", "-u", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
+          [...pushArgs, "-u", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
           { timeoutMs: null },
         );
         return {
@@ -2684,7 +2688,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
-        ["push", "--", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
+        [
+          ...pushArgs,
+          "--",
+          currentUpstream.remoteName,
+          `HEAD:refs/heads/${currentUpstream.branchName}`,
+        ],
         { timeoutMs: null },
       );
       return {
@@ -2695,7 +2704,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, pushArgs, { timeoutMs: null });
     return {
       status: "pushed" as const,
       branch,

@@ -273,6 +273,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     visibility: SourceControlRepositoryVisibility;
     remoteName: string;
     protocol: SourceControlCloneProtocol;
+    noVerify?: boolean;
   }) => {
     const target = resolveScope(scope);
     if (target === null) {

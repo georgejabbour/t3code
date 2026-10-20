@@ -498,8 +498,12 @@ it.effect("preserves destination probe failures instead of treating them as miss
   );
 });
 
-it.effect("publishes to the remote name returned by ensureRemote", () => {
-  const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
+it.effect("publishes to the returned remote name and skips hooks when requested", () => {
+  const pushCalls: Array<{
+    cwd: string;
+    remoteName: string | null | undefined;
+    noVerify: boolean | undefined;
+  }> = [];
 
   return Effect.gen(function* () {
     const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -510,10 +514,13 @@ it.effect("publishes to the remote name returned by ensureRemote", () => {
       visibility: "private",
       remoteName: "origin",
       protocol: "ssh",
+      noVerify: true,
     });
 
     assert.equal(result.remoteName, "origin-1");
-    assert.deepStrictEqual(pushCalls, [{ cwd: "/workspace", remoteName: "origin-1" }]);
+    assert.deepStrictEqual(pushCalls, [
+      { cwd: "/workspace", remoteName: "origin-1", noVerify: true },
+    ]);
   }).pipe(
     Effect.provide(
       layer({
@@ -521,7 +528,7 @@ it.effect("publishes to the remote name returned by ensureRemote", () => {
           ensureRemote: () => Effect.succeed("origin-1"),
           pushCurrentBranch: (cwd, _fallbackBranch, options) =>
             Effect.sync(() => {
-              pushCalls.push({ cwd, remoteName: options?.remoteName });
+              pushCalls.push({ cwd, remoteName: options?.remoteName, noVerify: options?.noVerify });
               return {
                 status: "pushed" as const,
                 branch: "feature/remote-v1",

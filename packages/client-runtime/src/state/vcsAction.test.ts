@@ -527,6 +527,7 @@ describe("vcsActionState", () => {
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
+            noVerify: true,
             threadId,
             projectId,
           }),
@@ -537,7 +538,14 @@ describe("vcsActionState", () => {
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
         expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
+          {
+            actionId: successfulTransportActionId,
+            cwd,
+            action,
+            noVerify: true,
+            threadId,
+            projectId,
+          },
         ]);
 
         const failedResult = yield* Effect.promise(() =>

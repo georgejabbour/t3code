@@ -521,7 +521,10 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
+      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, {
+        remoteName,
+        ...(input.noVerify ? { noVerify: true } : {}),
+      }).pipe(
         Effect.mapError(
           (cause) =>
             new SourceControlRepositoryError({

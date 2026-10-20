@@ -14,7 +14,12 @@ import "~/index.css";
 import { act, render } from "../../test/render";
 
 type Branched = { readonly branch: string };
-type GitActionInput = { featureBranch?: boolean; threadId?: string; action: string };
+type GitActionInput = {
+  featureBranch?: boolean;
+  noVerify?: boolean;
+  threadId?: string;
+  action: string;
+};
 type Toast = { actionProps?: { onClick: () => void } };
 
 const state = vi.hoisted(() => ({
@@ -185,6 +190,7 @@ const button = (name: string | RegExp) =>
 
 // The mocked modules read `state`, so every test starts by resetting all of it.
 function setup() {
+  localStorage.clear();
   state.scopes = new Set([AuthSourceControlWriteScope]);
   state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
   state.shell = { branch: "main" };
@@ -208,8 +214,99 @@ function setup() {
   });
 }
 
+describe("Default branch prompt", () => {
+  function setupDefaultRef() {
+    setup();
+    state.isDefaultRef = true;
+    state.scopes.add(AuthOrchestrationOperateScope);
+  }
+
+  it("preserves No verify when continuing on a feature branch", async () => {
+    setupDefaultRef();
+    await using _screen = await render(control());
+    await userEvent.click(button("Git action options"));
+    const noVerify = page.getByRole("menuitemcheckbox", { name: "No verify" });
+    await expect.element(noVerify).not.toBeChecked();
+    await userEvent.click(noVerify);
+    await expect.element(noVerify).toBeChecked();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(button(/^Commit & push/));
+    await userEvent.click(button("Check out feature branch & continue"));
+
+    await vi.waitFor(() =>
+      expect(state.actions[0]?.input).toMatchObject({
+        action: "commit_push",
+        featureBranch: true,
+        noVerify: true,
+      }),
+    );
+  });
+
+});
+
 describe("Git action targets across thread navigation", () => {
   const quickAction = () => button(/^Commit, push & /);
+
+  it("remembers the last No verify setting after remounting in another workspace", async () => {
+    setup();
+    const noVerify = page.getByRole("menuitemcheckbox", { name: "No verify" });
+
+    for (const enabled of [true, false]) {
+      await using screen = await render(
+        control(enabled ? "thread" : "second", enabled ? "/repo" : "/second"),
+      );
+      await userEvent.click(button("Git action options"));
+      await userEvent.click(noVerify);
+      await userEvent.keyboard("{Escape}");
+
+      await screen.unmount();
+      await using _remounted = await render(
+        control(enabled ? "second" : "third", enabled ? "/second" : "/third"),
+      );
+      await userEvent.click(button("Git action options"));
+      if (enabled) {
+        await expect.element(noVerify).toBeChecked();
+      } else {
+        await expect.element(noVerify).not.toBeChecked();
+      }
+      await userEvent.keyboard("{Escape}");
+    }
+  });
+
+  it("uses one No verify setting across checkouts", async () => {
+    setup();
+    await using screen = await render(control("first", "/first"));
+    await userEvent.click(button("Git action options"));
+    const noVerify = page.getByRole("menuitemcheckbox", { name: "No verify" });
+    await userEvent.click(noVerify);
+    await userEvent.click(noVerify);
+    await expect.element(noVerify).not.toBeChecked();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(quickAction());
+    await vi.waitFor(() => expect(commits()).toBe(1));
+    expect(state.actions[0]?.input.noVerify).not.toBe(true);
+
+    await userEvent.click(button("Git action options"));
+    await userEvent.click(noVerify);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(quickAction());
+    await vi.waitFor(() => expect(commits()).toBe(2));
+    expect(state.actions[1]?.input.noVerify).toBe(true);
+
+    await screen.rerender(control("second", "/second"));
+    await userEvent.click(quickAction());
+    await vi.waitFor(() => expect(commits()).toBe(3));
+    expect(state.actions[2]?.input.noVerify).toBe(true);
+
+    await userEvent.click(button("Git action options"));
+    await userEvent.click(noVerify);
+    await userEvent.keyboard("{Escape}");
+
+    await screen.rerender(control("first", "/first"));
+    await userEvent.click(quickAction());
+    await vi.waitFor(() => expect(commits()).toBe(4));
+    expect(state.actions[3]?.input.noVerify).not.toBe(true);
+  });
 
   it("runs a retained PR toast in the thread that produced it", async () => {
     setup();
@@ -226,4 +323,29 @@ describe("Git action targets across thread navigation", () => {
       input: { threadId: "first", action: "commit_push_pr" },
     });
   });
+
+  it("uses the current No verify option for a retained PR toast", async () => {
+    setup();
+    await using screen = await render(control("first", "/first"));
+    await userEvent.click(button("Git action options"));
+    await userEvent.click(page.getByRole("menuitemcheckbox", { name: "No verify" }));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(quickAction());
+    await vi.waitFor(() => expect(state.toasts.some((toast) => toast.actionProps)).toBe(true));
+    expect(state.actions[0]?.input.noVerify).toBe(true);
+    const toast = state.toasts.find((toast) => toast.actionProps)!;
+
+    await screen.rerender(control("second", "/second"));
+    await userEvent.click(button("Git action options"));
+    await userEvent.click(page.getByRole("menuitemcheckbox", { name: "No verify" }));
+    await userEvent.keyboard("{Escape}");
+    await act(async () => toast.actionProps!.onClick());
+
+    expect(state.actions.at(-1)).toMatchObject({
+      scope: { cwd: "/first" },
+      input: { threadId: "first", action: "commit_push_pr" },
+    });
+    expect(state.actions.at(-1)?.input.noVerify).not.toBe(true);
+  });
+
 });

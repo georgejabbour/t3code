@@ -736,8 +736,13 @@ export const make = Effect.gen(function* () {
   const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
     cwd: string,
     branch: string | null,
+    noVerify?: boolean,
   ) {
-    const result = yield* gitCore.pushCurrentBranch(cwd, branch);
+    const result = yield* gitCore.pushCurrentBranch(
+      cwd,
+      branch,
+      noVerify ? { noVerify: true } : undefined,
+    );
     if (result.status === "pushed" && result.branch) {
       yield* shareBranchBase(cwd, result.branch);
     }
@@ -2135,6 +2140,7 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    noVerify?: boolean,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2220,6 +2226,7 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
+      ...(noVerify ? { noVerify } : {}),
       stage: filePaths ? { filePaths } : {},
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
@@ -3172,6 +3179,7 @@ export const make = Effect.gen(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  input.noVerify,
                 ),
               ),
             )
@@ -3186,7 +3194,9 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() =>
+                  pushCurrentBranch(input.cwd, currentBranch, input.noVerify),
+                ),
               )
           : { status: "skipped_not_requested" as const };
 

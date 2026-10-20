@@ -555,6 +555,7 @@ function runStackedAction(
     actionId?: string;
     commitMessage?: string;
     featureBranch?: boolean;
+    noVerify?: boolean;
     filePaths?: readonly string[];
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
@@ -5060,6 +5061,66 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
 
       expect(errorMessage).toContain("already checked out in the main repo");
+    }),
+  );
+
+  it.effect("skips commit and push hooks only when noVerify is enabled", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      const remoteDir = yield* makeTempDir("t3code-git-remote-");
+      yield* initRepo(repoDir);
+      yield* runGit(remoteDir, ["init", "--bare", "--initial-branch=main"]);
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hooked.txt"), "hooked\n");
+      for (const hook of ["pre-commit", "pre-push"]) {
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".git", "hooks", hook),
+          `#!/bin/sh\necho "${hook} rejected" >&2\nexit 1\n`,
+          { mode: 0o755 },
+        );
+      }
+      const { manager } = yield* makeManager();
+
+      const commitError = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push",
+        commitMessage: "Add hooked file",
+      }).pipe(Effect.flip);
+      expect(commitError.message).toContain("GitVcsDriver.commit.commit");
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push",
+        commitMessage: "Add hooked file",
+        noVerify: true,
+      });
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      expect((yield* runGit(remoteDir, ["--git-dir=.", "rev-parse", "HEAD"])).stdout.trim()).toBe(
+        head,
+      );
+
+      yield* runGit(repoDir, ["commit", "--allow-empty", "--no-verify", "-m", "Next commit"]);
+      const pushError = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+        noVerify: false,
+      }).pipe(Effect.flip);
+      expect(pushError.message).toContain("GitVcsDriver.pushCurrentBranch");
+      expect((yield* runGit(remoteDir, ["--git-dir=.", "rev-parse", "HEAD"])).stdout.trim()).toBe(
+        head,
+      );
+
+      const pushResult = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+        noVerify: true,
+      });
+      expect(pushResult.push.status).toBe("pushed");
+      expect((yield* runGit(remoteDir, ["--git-dir=.", "rev-parse", "HEAD"])).stdout.trim()).toBe(
+        (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim(),
+      );
     }),
   );
 
