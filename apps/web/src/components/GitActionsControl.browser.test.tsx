@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { memo } from "react";
+import { memo, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -20,15 +20,21 @@ type GitActionInput = {
   threadId?: string;
   action: string;
 };
-type Toast = { actionProps?: { onClick: () => void } };
+type Toast = { title?: string; description?: string; actionProps?: { onClick: () => void } };
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   primaryScopes: new Set<string>(),
   shell: null as Branched | null,
   detail: null as Branched | null,
-  draft: null as (Branched & { worktreePath: null; envMode: "local" }) | null,
-  branch: "main",
+  draft: null as (Branched & { worktreePath: string | null; envMode: "local" | "worktree" }) | null,
+  branch: "main" as string | null,
+  isRepo: true,
+  hasUpstream: true,
+  isGitActionRunning: false,
+  pulls: [] as { environmentId: string | null; cwd: string | null }[],
+  pullError: null as string | null,
+  pullStatus: "pulled" as "pulled" | "skipped_up_to_date",
   isDefaultRef: false,
   actions: [] as { scope: { cwd: string | null }; input: GitActionInput }[],
   metadataRequests: [] as { environmentId: string; branch: string }[],
@@ -63,7 +69,7 @@ vi.mock(import("~/state/query"), async (original) => ({
   useEnvironmentQuery: (() => ({
     data: {
       sourceControlProviders: [],
-      isRepo: true,
+      isRepo: state.isRepo,
       refName: state.branch,
       isDefaultRef: state.isDefaultRef,
       hasPrimaryRemote: true,
@@ -74,7 +80,7 @@ vi.mock(import("~/state/query"), async (original) => ({
         insertions: 1,
         deletions: 0,
       },
-      hasUpstream: true,
+      hasUpstream: state.hasUpstream,
       aheadCount: 0,
       behindCount: 0,
       pr: null,
@@ -123,7 +129,19 @@ vi.mock(import("~/state/server"), async (original) => {
 });
 vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
   ...(await original()),
-  useSourceControlActionRunning: () => false,
+  useSourceControlActionRunning: () => state.isGitActionRunning,
+  useVcsPullAction: ((scope: (typeof state.pulls)[number]) => ({
+    run: async () => {
+      state.pulls.push(scope);
+      return state.pullError
+        ? AsyncResult.failure(Cause.fail(new Error(state.pullError)))
+        : AsyncResult.success({
+            status: state.pullStatus,
+            refName: state.branch,
+            upstreamRef: `origin/${state.branch}`,
+          });
+    },
+  })) as never,
   useGitStackedAction: ((scope: { cwd: string | null }) => ({
     run: async (input: GitActionInput) => {
       state.actions.push({ scope, input });
@@ -173,7 +191,11 @@ import GitActionsControl from "./GitActionsControl";
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
 const MemoGitActionsControl = memo(GitActionsControl);
 
-function control(thread = "thread", cwd = "/repo") {
+function control(
+  thread = "thread",
+  cwd = "/repo",
+  props: Pick<ComponentProps<typeof GitActionsControl>, "displayMode" | "compact"> = {},
+) {
   return (
     <MemoGitActionsControl
       gitCwd={cwd}
@@ -181,12 +203,14 @@ function control(thread = "thread", cwd = "/repo") {
         environmentId: EnvironmentId.make("environment"),
         threadId: ThreadId.make(thread),
       }}
+      {...props}
     />
   );
 }
 
 const button = (name: string | RegExp) =>
   page.getByRole("button", { name, exact: typeof name === "string" });
+const commits = () => state.actions.length;
 
 // The mocked modules read `state`, so every test starts by resetting all of it.
 function setup() {
@@ -197,6 +221,12 @@ function setup() {
   state.detail = null;
   state.draft = null;
   state.branch = "main";
+  state.isRepo = true;
+  state.hasUpstream = true;
+  state.isGitActionRunning = false;
+  state.pulls = [];
+  state.pullError = null;
+  state.pullStatus = "pulled";
   state.isDefaultRef = false;
   state.actions = [];
   state.metadataRequests = [];
@@ -213,6 +243,96 @@ function setup() {
     },
   });
 }
+
+describe("Draft checkout pull", () => {
+  function setupDraft() {
+    setup();
+    state.shell = null;
+    state.draft = { branch: "main", worktreePath: null, envMode: "local" };
+  }
+
+  it("pulls with local edits and no known incoming commits, then confirms the result", async () => {
+    setupDraft();
+    await using _screen = await render(control("draft", "/repo", { displayMode: "panel" }));
+    await expect.element(button("Pull latest")).toBeEnabled();
+
+    await userEvent.click(button("Pull latest"));
+
+    await expect.element(page.getByText("Pulled", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByText("Updated main from origin/main", { exact: true }))
+      .toBeVisible();
+    expect(state.pulls).toEqual([{ environmentId: "environment", cwd: "/repo" }]);
+    expect(state.actions).toEqual([]);
+    expect(state.metadataRequests).toEqual([]);
+  });
+
+  it("uses the current checkout when selecting a base for a new worktree", async () => {
+    setupDraft();
+    state.draft = { branch: "release/next", worktreePath: null, envMode: "worktree" };
+    state.pullStatus = "skipped_up_to_date";
+    await using _screen = await render(
+      control("draft", "/repo", { displayMode: "panel", compact: true }),
+    );
+
+    await userEvent.click(button("Pull latest"));
+
+    await expect.element(page.getByText("Already up to date", { exact: true })).toBeVisible();
+    expect(state.pulls).toEqual([{ environmentId: "environment", cwd: "/repo" }]);
+    expect(state.draft.branch).toBe("release/next");
+  });
+
+  it("shows pull failures and allows another attempt", async () => {
+    setupDraft();
+    state.pullError = "Local changes would be overwritten by merge.";
+    await using _screen = await render(control("draft", "/repo", { displayMode: "panel" }));
+
+    await userEvent.click(button("Pull latest"));
+
+    await vi.waitFor(() =>
+      expect(state.toasts).toContainEqual(
+        expect.objectContaining({
+          title: "Pull failed",
+          description: state.pullError,
+        }),
+      ),
+    );
+    await expect.element(button("Pull latest")).toBeEnabled();
+    state.pullError = null;
+    await userEvent.click(button("Pull latest"));
+    await expect.element(page.getByText("Pulled", { exact: true })).toBeVisible();
+    expect(state.pulls).toHaveLength(2);
+  });
+
+  it.each(["no upstream", "detached HEAD", "read only", "busy"])(
+    "disables pull when %s",
+    async (condition) => {
+      setupDraft();
+      if (condition === "no upstream") state.hasUpstream = false;
+      if (condition === "detached HEAD") state.branch = null;
+      if (condition === "read only") state.scopes.clear();
+      if (condition === "busy") state.isGitActionRunning = true;
+      await using _screen = await render(control("draft", "/repo", { displayMode: "panel" }));
+
+      await expect.element(button("Pull latest")).toBeDisabled();
+      expect(state.pulls).toEqual([]);
+    },
+  );
+
+  it("does not show draft pull on an existing thread or outside a repository", async () => {
+    setupDraft();
+    state.shell = { branch: "main" };
+    state.draft = null;
+    await using screen = await render(control("thread", "/repo", { displayMode: "panel" }));
+    await expect.element(button("Pull latest")).not.toBeInTheDocument();
+
+    state.shell = null;
+    state.draft = { branch: "main", worktreePath: null, envMode: "local" };
+    state.isRepo = false;
+    await screen.rerender(control("draft", "/other", { displayMode: "panel" }));
+    await expect.element(button("Pull latest")).not.toBeInTheDocument();
+  });
+});
 
 describe("Default branch prompt", () => {
   function setupDefaultRef() {
@@ -241,7 +361,6 @@ describe("Default branch prompt", () => {
       }),
     );
   });
-
 });
 
 describe("Git action targets across thread navigation", () => {
@@ -347,5 +466,4 @@ describe("Git action targets across thread navigation", () => {
     });
     expect(state.actions.at(-1)?.input.noVerify).not.toBe(true);
   });
-
 });

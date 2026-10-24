@@ -1187,6 +1187,17 @@ export default function GitActionsControl({
     : quickAction.disabled
       ? (quickAction.hint ?? "This action is currently unavailable.")
       : null;
+  const pullDisabledReason = !canWriteSourceControl
+    ? "This connection cannot change source control."
+    : !gitStatusForActions
+      ? "Git status is unavailable."
+      : gitStatusForActions.refName === null
+        ? "Check out a branch before pulling."
+        : !gitStatusForActions.hasUpstream
+          ? "This branch has no upstream configured."
+          : isGitActionRunning
+            ? "Git action in progress."
+            : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
@@ -1435,57 +1446,60 @@ export default function GitActionsControl({
     });
   };
 
+  const runPull = async () => {
+    if (pullDisabledReason) return;
+    setInlineSuccess(null);
+    const result = await pullAction.run();
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
+      const errorToastTiming = resolveGitActionResultToastTiming("error");
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Pull failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          timeout: errorToastTiming.timeout,
+          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+        }),
+      );
+      return;
+    }
+
+    const pullResult = result.value;
+    const title = pullResult.status === "pulled" ? "Pulled" : "Already up to date";
+    const description =
+      pullResult.status === "pulled"
+        ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
+        : `${pullResult.refName} is already synchronized.`;
+    if (isPanel) {
+      setInlineSuccess({ title, description, scopeKey: successScopeKey });
+      return;
+    }
+    const successToastTiming = resolveGitActionResultToastTiming("success");
+    toastManager.add({
+      type: "success",
+      title,
+      description,
+      timeout: successToastTiming.timeout,
+      data: {
+        ...threadToastData,
+        ...(successToastTiming.dismissAfterVisibleMs !== null
+          ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
+          : {}),
+      },
+    });
+  };
+
   const runQuickAction = () => {
     if (quickAction.kind === "open_publish") {
       setIsPublishDialogOpen(true);
       return;
     }
     if (quickAction.kind === "run_pull") {
-      void (async () => {
-        setInlineSuccess(null);
-        const result = await pullAction.run();
-        if (result._tag === "Failure") {
-          if (isAtomCommandInterrupted(result)) {
-            return;
-          }
-          const error = squashAtomCommandFailure(result);
-          const errorToastTiming = resolveGitActionResultToastTiming("error");
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Pull failed",
-              description: error instanceof Error ? error.message : "An error occurred.",
-              timeout: errorToastTiming.timeout,
-              ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-            }),
-          );
-          return;
-        }
-
-        const pullResult = result.value;
-        const title = pullResult.status === "pulled" ? "Pulled" : "Already up to date";
-        const description =
-          pullResult.status === "pulled"
-            ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
-            : `${pullResult.refName} is already synchronized.`;
-        if (isPanel) {
-          setInlineSuccess({ title, description, scopeKey: successScopeKey });
-          return;
-        }
-        const successToastTiming = resolveGitActionResultToastTiming("success");
-        toastManager.add({
-          type: "success",
-          title,
-          description,
-          timeout: successToastTiming.timeout,
-          data: {
-            ...threadToastData,
-            ...(successToastTiming.dismissAfterVisibleMs !== null
-              ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
-              : {}),
-          },
-        });
-      })();
+      void runPull();
       return;
     }
     if (quickAction.kind === "show_hint") {
@@ -1896,6 +1910,27 @@ export default function GitActionsControl({
           )}
         </ActionGroup>
       )}
+
+      {isPanel && isRepo && isLocalDraftThread ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex" />}>
+            <ThreadDetailsControl
+              variant="ghost"
+              size="sm"
+              part="row"
+              disabled={pullDisabledReason !== null}
+              aria-description={pullDisabledReason ?? undefined}
+              onClick={() => void runPull()}
+            >
+              <CloudDownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Pull latest</span>
+            </ThreadDetailsControl>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {pullDisabledReason ?? `Pull into ${gitStatusForActions?.refName} in this checkout`}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
 
       {isPanel && isRepo ? (
         <ThreadDetailsControl
